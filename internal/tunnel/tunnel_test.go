@@ -2,7 +2,9 @@ package tunnel
 
 import (
 	"context"
+	"io"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -99,5 +101,81 @@ func TestEnsureRefusesToChangeAnExistingTunnel(t *testing.T) {
 	}
 	if public, _, _ := unstructured.NestedBool(got.Object, "spec", "public"); public {
 		t.Error("the existing tunnel became public")
+	}
+}
+
+// expiresIn is how far ahead the Tunnel's expiry in the cluster is.
+func expiresIn(t *testing.T, c client.Client) time.Duration {
+	t.Helper()
+	got := existing(false, "")
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(got), got); err != nil {
+		t.Fatal(err)
+	}
+	at, err := time.Parse(time.RFC3339, got.GetAnnotations()[expiresAnnotation])
+	if err != nil {
+		t.Fatalf("annotations = %v: %v", got.GetAnnotations(), err)
+	}
+	return time.Until(at)
+}
+
+func TestEnsureGivesANewTunnelAnExpiry(t *testing.T) {
+	c := fake.NewClientBuilder().Build()
+	if _, _, err := ensure(context.Background(), c, "team", "my-app", spec{}); err != nil {
+		t.Fatal(err)
+	}
+	if in := expiresIn(t, c); in < expiresAfter-time.Minute || in > expiresAfter {
+		t.Errorf("expires in %s, want about %s", in, expiresAfter)
+	}
+}
+
+func TestEnsureGivesAnExistingTunnelNoExpiry(t *testing.T) {
+	c := fake.NewClientBuilder().WithObjects(existing(false, "kubernetes")).Build()
+	got, _, err := ensure(context.Background(), c, "team", "my-app", spec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := got.GetAnnotations(); len(a) != 0 {
+		t.Errorf("annotations = %v, want none", a)
+	}
+}
+
+func TestExtendMovesTheExpiryForward(t *testing.T) {
+	old := existing(false, "kubernetes")
+	old.SetAnnotations(map[string]string{expiresAnnotation: time.Now().Add(time.Minute).UTC().Format(time.RFC3339)})
+	c := fake.NewClientBuilder().WithObjects(old).Build()
+	if err := extend(context.Background(), c, "team", "my-app"); err != nil {
+		t.Fatal(err)
+	}
+	if in := expiresIn(t, c); in < expiresAfter-time.Minute {
+		t.Errorf("expires in %s, want about %s", in, expiresAfter)
+	}
+}
+
+func TestKeepAliveExtendsUntilStopped(t *testing.T) {
+	old := existing(false, "kubernetes")
+	old.SetAnnotations(map[string]string{expiresAnnotation: time.Now().Add(time.Minute).UTC().Format(time.RFC3339)})
+	c := fake.NewClientBuilder().WithObjects(old).Build()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- keepAlive(ctx, io.Discard, c, "team", "my-app", time.Millisecond, time.Millisecond) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for expiresIn(t, c) < expiresAfter-time.Minute {
+		if time.Now().After(deadline) {
+			t.Fatal("the expiry did not move forward")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Errorf("keepAlive after cancel = %v, want nil", err)
+	}
+}
+
+func TestKeepAliveStopsWhenTheTunnelIsGone(t *testing.T) {
+	c := fake.NewClientBuilder().Build()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := keepAlive(ctx, io.Discard, c, "team", "my-app", time.Millisecond, time.Millisecond); err == nil {
+		t.Error("keepAlive = nil, want an error for a Tunnel that is gone")
 	}
 }
