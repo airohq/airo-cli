@@ -106,7 +106,7 @@ Tunnel my-project/sam-3000 forwards to localhost:3000
 | `--no-auth` | off | Let callers in without a token (`spec.callerAuth: none`). The tenant needs open tunnels turned on |
 
 **The command creates a Tunnel, serves it, and deletes it on exit.** The
-Tunnel it creates has only the fields the flags set:
+Tunnel it creates has only the fields the flags set, and an expiry:
 
 ```sh
 kubectl apply -f - <<EOF
@@ -114,16 +114,27 @@ apiVersion: tunnels.airohq.dev/v1alpha1
 kind: Tunnel
 metadata:
   name: sam-3000
+  annotations:
+    airohq.dev/expires: "2026-11-16T12:15:00Z"   # 15 minutes ahead
 spec:
   public: true
   callerAuth: none
 EOF
 ```
 
-**An existing Tunnel is used as it is and stays after exit.** The command
-refuses a `--public` or `--no-auth` that differs from it, so it never exposes
-someone else's Tunnel. Two people who serve the same Tunnel share its
-requests, which is why the default name holds your username.
+**If the command is killed, the cluster deletes the Tunnel within about 15
+minutes.** The command moves the expiry 15 minutes ahead every 5 minutes
+while it runs. It stops with an error when the Tunnel is gone, such as after
+the machine slept past the expiry. Run it again then.
+
+**An existing Tunnel without an expiry is used as it is and stays after
+exit.** The command refuses a `--public` or `--no-auth` that differs from it,
+so it never exposes someone else's Tunnel. Two people who serve the same
+Tunnel share its requests, which is why the default name holds your username.
+
+**An existing Tunnel with an expiry is one a killed `airo tunnel` left
+behind.** The command serves it as its own: it moves the expiry forward and
+deletes the Tunnel on exit.
 
 **Without `--no-auth`, a caller needs a Kubernetes token and the `call` verb
 on the Tunnel.**
