@@ -39,8 +39,13 @@ homebrew_casks:
     repository:
       owner: airohq
       name: homebrew-tap
-      # The workflow's own token reaches only this repository.
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      branch: main
+      # The workflow's own token reaches only this repository, so the cask
+      # is pushed over SSH with a deploy key of the tap. The key belongs to
+      # that repository and to no person.
+      git:
+        url: "git@github.com:airohq/homebrew-tap.git"
+        private_key: "{{ .Env.HOMEBREW_TAP_DEPLOY_KEY }}"
     # The binaries are not signed or notarized, so macOS would refuse to run
     # them. Remove this once they are:
     # https://goreleaser.com/customization/homebrew_casks/#signing-and-notarizing

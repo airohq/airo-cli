@@ -173,8 +173,10 @@ The workflow `Release` runs the tests and govulncheck, then
 binaries on the GitHub release and updates the cask in
 [airohq/homebrew-tap](https://github.com/airohq/homebrew-tap). A tag with a
 suffix, such as `v0.2.0-rc.1`, becomes a pre-release and leaves Homebrew as it
-is. The workflow needs the repository secret `HOMEBREW_TAP_TOKEN`, a token
-that may write contents in the tap.
+is. The workflow pushes the cask with the repository secret
+`HOMEBREW_TAP_DEPLOY_KEY`, the private half of the deploy key `airo-cli
+release` on the tap. To rotate it, add a new deploy key with write access
+there, replace the secret, and delete the old key.
 
 ## License
 
