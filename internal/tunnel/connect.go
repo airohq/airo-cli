@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -13,7 +12,8 @@ import (
 
 	"github.com/andydunstall/piko/client"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/transport"
+
+	"github.com/airohq/airo-cli/internal/bearer"
 )
 
 // Tunnel client protocol v1: what the tunnel server and its clients agree on.
@@ -107,7 +107,7 @@ func connect(ctx context.Context, out io.Writer, cfg *rest.Config, ns, name, cli
 
 // listen connects the pool and direct endpoints with a fresh token.
 func listen(ctx context.Context, cfg *rest.Config, base *url.URL, to string) ([]*client.Forwarder, error) {
-	tok, err := token(cfg)
+	tok, err := bearer.Token(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -125,33 +125,3 @@ func listen(ctx context.Context, cfg *rest.Config, base *url.URL, to string) ([]
 	}
 	return fs, nil
 }
-
-// token returns the bearer token the kubeconfig sends to the API server,
-// running its exec plugin if it has one.
-func token(cfg *rest.Config) (string, error) {
-	tc, err := cfg.TransportConfig()
-	if err != nil {
-		return "", err
-	}
-	var captured string
-	rt, err := transport.HTTPWrappersForConfig(tc, roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		captured = r.Header.Get("Authorization")
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
-	}))
-	if err != nil {
-		return "", err
-	}
-	req, _ := http.NewRequest(http.MethodGet, "https://kubernetes.invalid/", nil)
-	if _, err := rt.RoundTrip(req); err != nil {
-		return "", err
-	}
-	tok, ok := strings.CutPrefix(captured, "Bearer ")
-	if !ok || tok == "" {
-		return "", errors.New("the kubeconfig's user has no bearer token: sign in with a token or an exec plugin, not a client certificate")
-	}
-	return tok, nil
-}
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
