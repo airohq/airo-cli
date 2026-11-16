@@ -81,6 +81,64 @@ airo apply -f agent.yaml           # create or update from a file, a directory, 
 `agents.api.kagent.dev` when two groups have the same kind. `airo apply` is a
 server-side apply with the field manager `airo`.
 
+## Agent
+
+**`airo agent create` makes an agent from a prompt and waits until it is
+ready.**
+
+```sh
+airo agent create reviewer --prompt "You review pull requests."
+airo agent create reviewer --prompt-file prompt.md --model sonnet-5.5
+airo agent list
+airo agent delete reviewer
+```
+
+```text
+Created agent my-project/reviewer
+  harness:  main (claude)
+  model:    sonnet-5.5
+  ready
+```
+
+| Argument or flag | Default | Meaning |
+| --- | --- | --- |
+| `NAME` | required | The Agent's name |
+| `--prompt` | none | The system prompt (`spec.template.inline.systemPrompt`) |
+| `--prompt-file` | none | A file with the system prompt, or `-` for standard input |
+| `--description` | none | What the agent is for, in a line (`spec.template.inline.description`) |
+| `--model` | the project's only ModelConfig | The model to use (`spec.template.inline.modelConfig.name`) |
+| `--harness` | the project's only Harness | What runs the agent (`spec.harnessRef.name`) |
+| `--template` | none | An AgentTemplate to use in place of a prompt, a description and a model (`spec.template.ref.name`) |
+
+**The Harness, the ModelConfig and the AgentTemplate exist in the project
+already.** `airo` never guesses between several: it stops and lists the
+names, and for a Harness what it runs, such as `claude`. A Harness that runs
+its own image (`byo`) gets a model only with `--model`.
+
+**The Agent has only the fields the flags set:**
+
+```sh
+kubectl apply -f - <<EOF
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: reviewer
+spec:
+  harnessRef:
+    name: main
+  template:
+    inline:
+      systemPrompt: You review pull requests.
+      modelConfig:
+        name: sonnet-5.5
+EOF
+```
+
+**An agent the cluster turns down stays in the project.** The command stops
+with the cluster's reason, such as a model its Harness cannot use. Delete the
+agent, or change it with `airo apply -f`. Tools, skills and the other fields
+of an Agent go in a file for `airo apply -f` too.
+
 ## Tunnel
 
 **`airo tunnel` gives a local port a URL in your project until you stop it**,
