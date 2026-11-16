@@ -1,0 +1,15 @@
+# Pull requests for new versions of the Go modules and the workflows' actions.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # The Kubernetes modules are released together.
+      kubernetes:
+        patterns: ["k8s.io/*", "sigs.k8s.io/*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

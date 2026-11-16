@@ -1,0 +1,52 @@
+# Releases airo on a version tag (README.md#release).
+version: 2
+
+project_name: airo
+
+before:
+  hooks:
+    - go mod tidy -diff
+
+builds:
+  - main: ./cmd/airo
+    binary: airo
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+
+archives:
+  - formats: [tar.gz]
+    name_template: "airo_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+
+release:
+  # A tag such as v0.2.0-rc.1 becomes a pre-release.
+  prerelease: auto
+
+homebrew_casks:
+  - name: airo
+    homepage: https://github.com/airohq/airo-cli
+    description: Work with the Airo platform from your machine
+    # Homebrew follows stable releases only.
+    skip_upload: auto
+    repository:
+      owner: airohq
+      name: homebrew-tap
+      # The workflow's own token reaches only this repository.
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    # The binaries are not signed or notarized, so macOS would refuse to run
+    # them. Remove this once they are:
+    # https://goreleaser.com/customization/homebrew_casks/#signing-and-notarizing
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/airo"]
+          end
