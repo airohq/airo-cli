@@ -5,7 +5,7 @@ go 1.26.11
 require (
 	github.com/andydunstall/piko v0.10.1
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/oauth2 v0.36.0
+	golang.org/x/oauth2 v0.38.0
 	k8s.io/api v0.37.2
 	k8s.io/apimachinery v0.37.2
 	k8s.io/cli-runtime v0.37.2
