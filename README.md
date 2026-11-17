@@ -175,8 +175,8 @@ the first that applies:
 1. The project's only Agent.
 2. The Agent with the annotation `airohq.dev/default-agent: "true"`, when
    exactly one has it.
-3. The one you pick from a numbered list, on a terminal. Elsewhere the
-   command stops and lists the names.
+3. The one you choose in a picker, on a terminal: type to filter and press
+   Enter. Elsewhere the command stops and lists the names.
 
 **A session stays in the cluster after the command ends.** Nothing is
 deleted. `--resume` takes the session's ID, which every run prints and

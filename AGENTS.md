@@ -12,6 +12,7 @@ coding agents and people changing this repository; keep it short.
 | `internal/generic` | `list`, `get` and `delete` for any kind in the cluster, and `airo apply` |
 | `internal/agent` | `airo agent`: a session with an agent, and `airo agent create`. `a2a.go` holds the whole wire protocol of the agents' API, and `api.go` what other packages get of it |
 | `internal/session` | `airo session`: list and view the person's sessions, and cancel a running turn. It reaches the agents' API only through `internal/agent` |
+| `internal/picker` | The picker every command shows for a choice from a list |
 | `internal/bearer` | The signed-in person's token, for a call to a component's own API |
 | `internal/tunnel` | `airo tunnel`: the Tunnel resource and the client connection |
 | `.goreleaser.yaml` | The release: binaries and the Homebrew cask |

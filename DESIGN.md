@@ -62,13 +62,16 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
   `airo context customer` takes the context's name, because the name is all
   the task needs. `-` switches back to the previous one, as in `cd -`.
 - **A verb wins over an argument.** `airo agent list` lists agents. A prompt
-  that equals a verb goes after `--`, as in `airo agent -- list`.- **A missing choice is resolved in the cluster, then by asking.** With no
+  that equals a verb goes after `--`, as in `airo agent -- list`.
+- **A missing choice is resolved in the cluster, then by asking.** With no
   `--agent`, `airo agent` takes the project's only agent, then the one marked
   as default with the annotation `airohq.dev/default-agent: "true"`, then
   shows a picker. Where nobody can answer, such as in a script, it stops and
   lists the names. `airo agent create` finds its Harness and ModelConfig the
   same way, with `airohq.dev/default-harness` and `airohq.dev/default-model`,
   and without a picker.
+- **Every picker is the same one**, from `internal/picker`: the person types
+  to filter, Enter chooses and Esc leaves. It opens only on a terminal.
 
 ## Arguments and flags
 
