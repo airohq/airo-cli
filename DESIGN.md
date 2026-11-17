@@ -96,6 +96,88 @@ not end up in it.
 session ID of `airo agent` and `airo session list` goes into `airo session
 view`, `airo session cancel` and `airo agent -r`.
 
+## Terminal
+
+How `airo` looks and behaves when a person sits at it. The models are `gh`
+for commands that print and end, and Claude Code and Codex for a
+conversation.
+
+**A person at a terminal gets style, and everything else gets plain text.**
+A stream is styled only when it is a terminal, and never when `NO_COLOR` is
+set or `TERM` is `dumb`. A pipe, a file and a script get the same words
+without colour, symbols that move, or escape codes.
+
+**Style never changes the words, and never carries meaning alone.** A colour
+comes with a word or a symbol that says the same, so the output reads the
+same in a pipe, in a log and to someone who does not see the colour.
+
+**A command is interactive only when both its input and its output are
+terminals.** Everything a person can choose in a picker or a prompt is also
+a flag. Where nobody can answer, the command stops and names the choices.
+
+**A command stays in the scrollback.** No full-screen mode. A conversation
+keeps a live region at the bottom, for the input and the status, and what
+was said scrolls up as ordinary text. On exit the live region is gone, and
+what the person needs next, such as how to resume, is the last thing
+printed.
+
+**Colours are named for what they mean, in one place.** `internal/ui` holds
+them, and a command writes no escape code of its own.
+
+| Role | Used for |
+| --- | --- |
+| Default | Most text. What the person reads is not coloured |
+| Muted | What supports the text: IDs, hints, keys, timestamps |
+| Accent | The one thing to see first: the prompt mark, the selected row |
+| Success, warning, error | An outcome, with `✓`, `!` or `✗` |
+
+- **Take the terminal's own 16 colours**, so the person's theme decides the
+  shades and the output reads on light and on dark.
+- **Colour little.** A screen with one accent reads faster than a screen
+  with five.
+
+**Waiting is shown.** What takes longer than a moment shows a spinner on
+standard error, with what it waits for and for how long. It leaves no trace
+when it ends.
+
+**An agent's text is rendered as markdown on a terminal, and is the agent's
+own text in a pipe.**
+
+**Keys mean what people know from other tools.** A line under the input
+names the ones that matter now.
+
+| Key | Does |
+| --- | --- |
+| Enter | Sends |
+| Shift-Enter, Ctrl-J | A new line in the prompt. Ctrl-J works where the terminal does not tell Shift-Enter from Enter |
+| Up, Down | The earlier prompts |
+| Esc | Stops what runs now, such as the agent's turn |
+| Ctrl-C | Clears the prompt. On an empty prompt, or while something runs, it asks for a second Ctrl-C |
+| Ctrl-C twice | Leaves. What outlives the terminal goes on ([Cleanup](#cleanup)) |
+| Ctrl-D | Ends the input, on an empty prompt |
+
+**Leaving never stops work by surprise.** People press Ctrl-C to stop an
+agent, as in other agent CLIs. While a turn runs, the first Ctrl-C says what
+each key does, such as "Esc stops the agent · Ctrl-C again leaves, the agent
+works on", and only a second one leaves.
+
+**A resource looks as kubectl prints it.** `list` and `get` keep the
+cluster's table: its columns, their order and their upper-case headers. On a
+terminal, style may mute the header and colour a status word, and adds or
+removes nothing.
+
+- **`-o yaml` and `-o json` are data, and are never styled**, also on a
+  terminal.
+- **A name or an ID is never cut**, because the person copies it into the
+  next command. A table that is too wide cuts free text, such as a
+  description, and only on a terminal.
+
+**Text fits the terminal's width.** Prose wraps at words, and everything
+works at 80 columns.
+
+**One library family draws everything**: Charm's Bubble Tea, Bubbles, Lip
+Gloss and Glamour. No second one for pickers, prompts or colour.
+
 ## Cleanup
 
 **A command removes what exists only for its task, and the cluster removes

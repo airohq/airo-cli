@@ -42,8 +42,8 @@ coding agents and people changing this repository; keep it short.
 ## Command design
 
 **Read [DESIGN.md](DESIGN.md) before adding or changing a command.** It holds
-the grammar, default tasks, flags, output, cleanup and which APIs a command
-may call.
+the grammar, default tasks, flags, output, the look on a terminal, cleanup
+and which APIs a command may call.
 
 ## Checks
 
