@@ -14,10 +14,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"k8s.io/client-go/kubernetes"
 	clientauthv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -166,15 +164,10 @@ func run(ctx context.Context, out, prompt io.Writer, flags *genericclioptions.Co
 	}
 	rc.ExecProvider = nil
 	rc.BearerToken = id
-	cs, err := kubernetes.NewForConfig(rc)
+	user, err := currentUser(ctx, rc)
 	if err != nil {
-		return err
+		return fmt.Errorf("signed in, but could not verify your identity: %w", err)
 	}
-	me, err := cs.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("signed in, but the platform refused the token: %w", err)
-	}
-	user := me.Status.UserInfo
 
 	// A customer's first sign-in starts in the tenant's default project. A
 	// namespace already in the context is the person's own choice and stays.
@@ -339,10 +332,8 @@ func execUser(o oidc, origin string) *clientcmdapi.AuthInfo {
 
 // defaultProject is the default project of the first customer group.
 func defaultProject(groups []string) string {
-	for _, g := range groups {
-		if tenant, ok := strings.CutPrefix(g, customerGroupPrefix); ok && tenant != "" {
-			return tenant + defaultProjectSuffix
-		}
+	if tenants := tenantsOf(groups); len(tenants) > 0 {
+		return tenants[0] + defaultProjectSuffix
 	}
 	return ""
 }

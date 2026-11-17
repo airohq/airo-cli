@@ -24,7 +24,7 @@ airo agent "fix the build"   # the default task of another noun
 | `list`, `get`, `delete` | Work for every kind the cluster serves, also kinds this binary does not know |
 | `create` | Hand-written for each noun, with flags |
 | Other verbs | Actions of one noun, such as `airo agent logs` |
-| No noun | Only what belongs to no resource: `airo login`, `airo apply -f`, `airo version` |
+| No noun | Only what belongs to no resource: `airo login`, `airo status`, `airo whoami`, `airo apply -f`, `airo version` |
 
 **Every noun takes its plural.** `airo sessions list` is `airo session
 list`, and `airo tunnels 3000` is `airo tunnel 3000`. A noun with its own
