@@ -14,6 +14,7 @@ import (
 	"github.com/airohq/airo-cli/internal/agent"
 	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/login"
+	"github.com/airohq/airo-cli/internal/session"
 	"github.com/airohq/airo-cli/internal/tunnel"
 )
 
@@ -54,6 +55,7 @@ also the kinds not listed below:
 		login.NewCredentialCommand(),
 		generic.NewApplyCommand(flags),
 		agent.NewCommand(flags),
+		session.NewCommand(flags),
 		tunnel.NewCommand(flags),
 		&cobra.Command{
 			Use:   "version",
