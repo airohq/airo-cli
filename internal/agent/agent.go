@@ -1,5 +1,5 @@
-// Package agent implements airo agent: create an Agent from flags, next to
-// the verbs every kind has.
+// Package agent implements airo agent: talk to an agent of the project, and
+// create an Agent from flags, next to the verbs every kind has.
 package agent
 
 import (
@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -46,14 +48,40 @@ const readyTimeout = 3 * time.Minute
 
 // NewCommand returns the agent command.
 func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
+	var o chatOptions
 	cmd := &cobra.Command{
-		Use:   "agent",
-		Short: "Create and manage the agents of the project",
-		Example: `  airo agent create reviewer --prompt "You review pull requests."
-  airo agent list
-  airo agent get reviewer -o yaml
-  airo agent delete reviewer`,
+		Use:   "agent [PROMPT]",
+		Short: "Talk to an agent of the project, or create and manage agents",
+		Long: `Agent sends a prompt to an agent of the project and prints the answer as it
+arrives. Without a prompt, on a terminal, it is a conversation: each line you
+type is a prompt of the same session, until ctrl-D.
+
+The prompt starts a new session. The session stays in the cluster, and
+--continue or --resume sends the next prompt to it. Ctrl-C detaches: the
+agent works on in the cluster.
+
+Without --agent, airo takes the project's only agent, then the one with the
+annotation ` + defaultAnnotation + `: "true", then asks.
+
+A prompt that equals a verb goes after --, as in airo agent -- list.`,
+		Example: `  airo agent "Why does the build fail?"      # a new session
+  airo agent -c "Fix it."                    # the same session
+  airo agent -a reviewer                     # a conversation with one agent
+  airo agent -r SESSION "And the tests?"     # a session by its ID
+  airo agent create reviewer --prompt "You review pull requests."
+  airo agent list`,
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Ctrl-C detaches from the session. It is not an error.
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return runChat(ctx, cmd, flags, o, strings.Join(args, " "))
+		},
 	}
+	cmd.Flags().StringVarP(&o.agent, "agent", "a", "", "name of the Agent to talk to (default: the project's only one, or its default)")
+	cmd.Flags().BoolVarP(&o.cont, "continue", "c", false, "continue your last session with the agent from this machine")
+	cmd.Flags().StringVarP(&o.resume, "resume", "r", "", "continue the session with this ID")
+	cmd.MarkFlagsMutuallyExclusive("continue", "resume")
 	cmd.AddCommand(newCreateCommand(flags))
 	cmd.AddCommand(generic.Commands(flags, strings.ToLower(agentGVK.Kind)+"."+agentGVK.Group)...)
 	return cmd
@@ -228,6 +256,7 @@ type choice struct {
 }
 
 var (
+	agents    = choice{gvk: agentGVK, noun: "agent", plural: "agents", flag: "--agent"}
 	harnesses = choice{gvk: harnessGVK, noun: "harness", plural: "harnesses", flag: "--harness", note: runtime}
 	models    = choice{gvk: modelConfigGVK, noun: "model", plural: "models", flag: "--model"}
 	templates = choice{gvk: templateGVK, noun: "template", plural: "templates", flag: "--template"}
@@ -236,18 +265,13 @@ var (
 // choose returns the resource of a kind that the Agent refers to: the one
 // named, or the project's only one. It never guesses between several.
 func choose(ctx context.Context, c client.Client, ns string, k choice, name string) (*unstructured.Unstructured, error) {
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(k.gvk.GroupVersion().WithKind(k.gvk.Kind + "List"))
-	if err := c.List(ctx, list, client.InNamespace(ns)); err != nil {
-		if meta.IsNoMatchError(err) {
-			// A cluster whose kinds differ from what this version knows.
-			return nil, fmt.Errorf("the cluster does not serve %s in %s: agents may be turned off, or this airo does not match the cluster, update it", k.gvk.Kind, k.gvk.GroupVersion())
-		}
-		return nil, fmt.Errorf("list the %s of %s: %w", k.plural, ns, err)
+	items, err := list(ctx, c, ns, k)
+	if err != nil {
+		return nil, err
 	}
 	var names []string
-	for i := range list.Items {
-		item := &list.Items[i]
+	for i := range items {
+		item := &items[i]
 		if item.GetName() == name {
 			return item, nil
 		}
@@ -268,7 +292,21 @@ func choose(ctx context.Context, c client.Client, ns string, k choice, name stri
 	case len(names) > 1:
 		return nil, fmt.Errorf("project %s has %d %s, name one with %s: %s", ns, len(names), k.plural, k.flag, strings.Join(names, ", "))
 	}
-	return &list.Items[0], nil
+	return &items[0], nil
+}
+
+// list returns the project's resources of a kind.
+func list(ctx context.Context, c client.Client, ns string, k choice) ([]unstructured.Unstructured, error) {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(k.gvk.GroupVersion().WithKind(k.gvk.Kind + "List"))
+	if err := c.List(ctx, list, client.InNamespace(ns)); err != nil {
+		if meta.IsNoMatchError(err) {
+			// A cluster whose kinds differ from what this version knows.
+			return nil, fmt.Errorf("the cluster does not serve %s in %s: agents may be turned off, or this airo does not match the cluster, update it", k.gvk.Kind, k.gvk.GroupVersion())
+		}
+		return nil, fmt.Errorf("list the %s of %s: %w", k.plural, ns, err)
+	}
+	return list.Items, nil
 }
 
 // runtime is what a Harness runs agents with, such as claude, or empty for a

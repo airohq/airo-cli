@@ -37,7 +37,9 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
   that equals a verb goes after `--`, as in `airo agent -- list`.
 - **A missing choice is resolved in the cluster, then by asking.** With no
   `--agent`, `airo agent` takes the project's only agent, then the one marked
-  as default, then shows a picker.
+  as default with the annotation `airohq.dev/default-agent: "true"`, then
+  shows a picker. Where nobody can answer, such as in a script, it stops and
+  lists the names.
 
 ## Arguments and flags
 
@@ -51,6 +53,10 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
 ## Output
 
 **Output starts with what the person needs next**, such as the URL.
+
+**What a task produces goes to standard output, and notes about it to
+standard error.** An agent's answer can be piped, and the session's ID does
+not end up in it.
 
 ## Cleanup
 
@@ -73,7 +79,9 @@ it is created.
 an agent's sessions and chat, may use the component's own API on two
 conditions:
 
-- **The address comes from the cluster**, such as a resource's status, not
-  from a flag or a built-in URL.
+- **The address comes from the cluster**, such as a resource's status or a
+  ConfigMap in the project, not from a flag or a built-in URL. An address
+  that is not `https` is refused, because the call carries the person's
+  token.
 - **The caller is the person signed in with `airo login`.** No self-declared
   identity.

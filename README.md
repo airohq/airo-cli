@@ -3,10 +3,11 @@
 > [!CAUTION]
 > **Early alpha.** Commands and flags may change.
 
-`airo` is the command-line tool of the Airo platform: sign in, manage the
-resources of your project, and give a local port a URL. Each command reads
-and writes Kubernetes resources as you, so everything it does can also be
-done with `kubectl`, and you do not need `kubectl` to use it.
+`airo` is the command-line tool of the Airo platform: sign in, talk to an
+agent, manage the resources of your project, and give a local port a URL.
+Each command reads and writes Kubernetes resources as you, so everything it
+does to a resource can also be done with `kubectl`, and you do not need
+`kubectl` to use it.
 
 ## Install
 
@@ -82,6 +83,71 @@ airo apply -f agent.yaml           # create or update from a file, a directory, 
 server-side apply with the field manager `airo`.
 
 ## Agent
+
+**`airo agent` sends a prompt to an agent of your project and prints the
+answer as it arrives.** The prompt starts a new session.
+
+```sh
+airo agent "Why does the build fail?"    # a new session
+airo agent -c "Fix it."                  # the next prompt of the same session
+airo agent                               # a conversation, on a terminal
+```
+
+```text
+The build fails in the step lint: main.go has an unused import.
+Session 7c9e6679-7425-40de-944b-e07fc1f90ae7
+  continue: airo agent -a reviewer -c "PROMPT"
+```
+
+| Argument or flag | Default | Meaning |
+| --- | --- | --- |
+| `PROMPT` | a conversation | What to ask the agent. Without it, each line you type is a prompt of one session, until ctrl-D. Input that is not a terminal, such as a pipe, is one prompt |
+| `-a`, `--agent` | see below | The Agent's name |
+| `-c`, `--continue` | off | Send the prompt to your last session with the agent |
+| `-r`, `--resume` | none | Send the prompt to the session with this ID |
+
+**Without `--agent`, the cluster decides which agent answers.** `airo` takes
+the first that applies:
+
+1. The project's only Agent.
+2. The Agent with the annotation `airohq.dev/default-agent: "true"`, when
+   exactly one has it.
+3. The one you pick from a numbered list, on a terminal. Elsewhere the
+   command stops and lists the names.
+
+**A session stays in the cluster after the command ends.** Nothing is
+deleted. `--resume` takes the session's ID, which every run prints.
+`--continue` takes the last session this machine started or resumed with
+the agent. `airo` remembers one ID for each agent in `airo/sessions.json` in
+your cache directory.
+
+**Ctrl-C detaches, and the agent works on in the cluster.** The command
+prints how to come back and exits without an error:
+
+```text
+Detached. The agent works on in the cluster.
+  resume: airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+```
+
+**The answer goes to standard output and everything else to standard
+error**, so the answer can be piped. The command fails when the agent fails,
+turns the prompt down or the turn is canceled. In a conversation it prints
+the failure and takes the next prompt.
+
+**A prompt that equals a verb goes after `--`**, as in `airo agent -- list`.
+
+**The command talks to the agents' API as you**, with the
+[A2A](https://a2a-protocol.org) protocol 1.0. A session is not a resource,
+so this command does not go through the Kubernetes API alone:
+
+| What | Where it comes from |
+| --- | --- |
+| The address | The key `url` of the ConfigMap `kagent` in your project. It must be `https` |
+| The agent's endpoint | `<url>/agents/<namespace>/<agent>` |
+| The caller | Your sign-in: the token `airo login` got, read again for every prompt |
+
+A project without that ConfigMap has no agent endpoint. Ask a platform
+admin.
 
 **`airo agent create` makes an agent from a prompt and waits until it is
 ready.**
