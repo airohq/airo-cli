@@ -96,7 +96,8 @@ and works in the context's namespace by default.
 ## Context
 
 **`airo context` switches between your sign-ins**, for every later command of
-`airo` and `kubectl`. `airo ctx` is the short form.
+`airo` and `kubectl`. `airo ctx` is the short form, and `airo contexts` also
+works.
 
 ```sh
 airo context             # choose from a picker
@@ -150,6 +151,57 @@ such as a local cluster's, are not listed and not switched to. Use `kubectl
 config use-context` for them.
 
 A context named like a verb goes after `--`, as in `airo context -- list`.
+
+## Status and identity
+
+**`airo status` shows where you are working and checks your connection.**
+
+```sh
+airo status
+airo status --context customer    # inspect another sign-in
+airo status -n acme-web           # inspect another project
+```
+
+```text
+User:        auth0:abc123
+Tenant:      acme
+Project:     acme-default
+Context:     airo
+Server:      https://api.example.com:6443
+Connection:  Connected
+```
+
+Project is currently the Kubernetes namespace. `--context`, `-n`,
+`--server`, and `--kubeconfig` select the values for this invocation without
+changing the saved context. An unset project uses `default`, as other
+commands do. Connected means the Kubernetes API answered the identity
+check; it does not check access to the project or the health of its resources.
+
+If the identity check fails, status still prints the selected project,
+context, and server, with `unknown` for user and tenant and `Unverified` for
+the connection. It reports the error on standard error and exits nonzero.
+
+**`airo whoami` shows your user, tenant, and groups**, like `kubectl auth
+whoami` with tenant membership included.
+
+```sh
+airo whoami
+airo whoami --context customer
+```
+
+```text
+User:    auth0:abc123
+Tenant:  acme
+Groups:  customer:acme, system:authenticated
+```
+
+Both commands ask the Kubernetes API for your identity using a
+`SelfSubjectReview`, with the credentials and impersonation flags of this
+invocation. Tenant names come from the returned `customer:<tenant>` groups.
+All tenant memberships are shown when there is more than one; `none` means
+there is no customer group, such as for a platform admin. Groups are shown
+as returned by the API, or `none` when empty. An identity check that fails
+makes either command exit nonzero.
 
 ## Resources
 

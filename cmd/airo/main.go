@@ -60,6 +60,8 @@ also the kinds not listed below:
 	o.AddFlags(root)
 	root.AddCommand(
 		login.NewCommand(flags),
+		login.NewStatusCommand(flags),
+		login.NewWhoamiCommand(flags),
 		login.NewContextCommand(flags),
 		login.NewCredentialCommand(),
 		generic.NewApplyCommand(flags),
