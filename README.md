@@ -107,6 +107,9 @@ airo agent delete my-agent
 airo apply -f agent.yaml           # create or update from a file, a directory, a URL or -
 ```
 
+**A noun works in the singular and the plural.** `airo agents list` is `airo
+agent list`, and the same holds for `airo sessions` and `airo tunnels`.
+
 **A kind takes the names kubectl takes**: `agent`, `agents`, a short name, or
 `agents.api.kagent.dev` when two groups have the same kind. `airo apply` is a
 server-side apply with the field manager `airo`.

@@ -58,8 +58,9 @@ type options struct {
 // NewCommand returns the session command.
 func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "session",
-		Short: "List and view your sessions with agents, or cancel a running turn",
+		Use:     "session",
+		Aliases: []string{"sessions"},
+		Short:   "List and view your sessions with agents, or cancel a running turn",
 		Long: `Session shows your sessions with the agents of the project. A session is a
 conversation with one agent: airo agent starts one and prints its ID.
 

@@ -7,7 +7,8 @@ daily tasks and managing resources, without kubectl.
 ## Grammar
 
 **Every command is `airo <noun> [verb] [argument]`**, like `gh issue list`.
-The noun is a kind of resource, in the singular.
+The noun is a kind of resource. The docs and the help write it in the
+singular, and the plural works too.
 
 ```sh
 airo tunnel 3000             # the noun's default task
@@ -18,12 +19,18 @@ airo agent "fix the build"   # the default task of another noun
 
 | Part | Rule |
 | --- | --- |
-| Noun | A kind of resource, such as `tunnel` or `agent` |
+| Noun | A kind of resource, such as `tunnel` or `agent`. `tunnels` and `agents` mean the same |
 | No verb | The noun's default task, if it has one. Otherwise the help |
 | `list`, `get`, `delete` | Work for every kind the cluster serves, also kinds this binary does not know |
 | `create` | Hand-written for each noun, with flags |
 | Other verbs | Actions of one noun, such as `airo agent logs` |
 | No noun | Only what belongs to no resource: `airo login`, `airo apply -f`, `airo version` |
+
+**Every noun takes its plural.** `airo sessions list` is `airo session
+list`, and `airo tunnels 3000` is `airo tunnel 3000`. A noun with its own
+command names the plural as an alias, and a test fails when one does not. A
+kind without a command takes the plural from the cluster. What is not a noun,
+such as `airo login`, has one name.
 
 **A noun that is not a kind in the cluster has only hand-written verbs.**
 `airo session` is one: a session lives in the agents' API. It has `list`,

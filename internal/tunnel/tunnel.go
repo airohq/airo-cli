@@ -59,8 +59,9 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		noAuth bool
 	)
 	cmd := &cobra.Command{
-		Use:   "tunnel PORT|HOST:PORT",
-		Short: "Give a local port a URL in the cluster, or on the internet with --public",
+		Use:     "tunnel PORT|HOST:PORT",
+		Aliases: []string{"tunnels"},
+		Short:   "Give a local port a URL in the cluster, or on the internet with --public",
 		Long: `Tunnel serves a Tunnel in your project with a local port until you stop it.
 
 It creates the Tunnel when it does not exist, and deletes it again on exit.

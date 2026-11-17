@@ -22,6 +22,13 @@ import (
 var version string
 
 func main() {
+	if err := newRoot().Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+// newRoot returns the airo command with every command below it.
+func newRoot() *cobra.Command {
 	// kubectl's flags, such as -n, --context and --kubeconfig.
 	flags := genericclioptions.NewConfigFlags(true)
 	var o generic.Options
@@ -30,8 +37,9 @@ func main() {
 		Short: "Work with the Airo platform from your machine",
 		Long: `Work with the Airo platform from your machine.
 
-Commands are airo NOUN [VERB]. Every kind of resource in the cluster is a
-noun with the verbs ` + generic.Verbs + `,
+Commands are airo NOUN [VERB]. A noun works in the singular and the plural:
+airo agent list and airo agents list are the same. Every kind of resource in
+the cluster is a noun with the verbs ` + generic.Verbs + `,
 also the kinds not listed below:
 
   airo modelconfig list
@@ -66,9 +74,7 @@ also the kinds not listed below:
 			},
 		},
 	)
-	if err := root.Execute(); err != nil {
-		os.Exit(1)
-	}
+	return root
 }
 
 // buildVersion is the release's version, or what go install recorded: the
