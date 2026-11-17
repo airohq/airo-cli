@@ -50,8 +50,9 @@ const readyTimeout = 3 * time.Minute
 func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	var o chatOptions
 	cmd := &cobra.Command{
-		Use:   "agent [PROMPT]",
-		Short: "Talk to an agent of the project, or create and manage agents",
+		Use:     "agent [PROMPT]",
+		Aliases: []string{"agents"},
+		Short:   "Talk to an agent of the project, or create and manage agents",
 		Long: `Agent sends a prompt to an agent of the project and prints the answer as it
 arrives. Without a prompt, on a terminal, it is a conversation: each line you
 type is a prompt of the same session, until ctrl-D.

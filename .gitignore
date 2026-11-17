@@ -1,2 +1,5 @@
 # GoReleaser's build output
 dist/
+
+# Claude Code's worktrees, each a checkout of its own
+.claude/worktrees/
