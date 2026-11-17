@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,42 +67,6 @@ func TestDefaultProject(t *testing.T) {
 	}
 }
 
-// The admin's file becomes a context in the person's kubeconfig that runs
-// airo, and keeps a namespace the person chose before.
-func TestAdd(t *testing.T) {
-	src := clientcmdapi.NewConfig()
-	src.Clusters["airo"] = &clientcmdapi.Cluster{Server: "https://api.example:6443", CertificateAuthorityData: []byte("ca")}
-	src.AuthInfos["airo"] = &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
-		APIVersion: execAPIVersion, Command: "kubectl",
-		Args: []string{"oidc-login", "get-token", "--oidc-issuer-url=https://issuer.example/", "--oidc-client-id=abc"},
-	}}
-	src.Contexts["airo"] = &clientcmdapi.Context{Cluster: "airo", AuthInfo: "airo"}
-	src.CurrentContext = "airo"
-	file := filepath.Join(t.TempDir(), "airo.kubeconfig")
-	if err := clientcmd.WriteToFile(*src, file); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := clientcmdapi.NewConfig()
-	cfg.Contexts["airo"] = &clientcmdapi.Context{Cluster: "old", AuthInfo: "old", Namespace: "mine"}
-	name, o, err := add(cfg, file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "airo" || o != (oidc{issuer: "https://issuer.example/", clientID: "abc"}) {
-		t.Errorf("add = %q, %+v", name, o)
-	}
-	if got := cfg.Clusters["airo"]; got.Server != "https://api.example:6443" || got.LocationOfOrigin != "" {
-		t.Errorf("cluster = %+v", got)
-	}
-	if got := cfg.AuthInfos["airo"].Exec; got.Command != "airo" || got.Args[0] != "credential" {
-		t.Errorf("exec = %+v", got)
-	}
-	if got := cfg.Contexts["airo"]; got.Cluster != "airo" || got.Namespace != "mine" {
-		t.Errorf("context = %+v", got)
-	}
-}
-
 // issuer is an OIDC issuer that answers a refresh with a new ID token.
 func issuer(t *testing.T, id string) *httptest.Server {
 	var srv *httptest.Server
@@ -124,16 +89,124 @@ func issuer(t *testing.T, id string) *httptest.Server {
 	return srv
 }
 
-// A customer's first airo login -f signs in with the device flow and writes
-// the tenant's default project into the context. -n replaces it, and a later
-// airo login keeps the namespace the person chose.
-func TestRunSetsACustomersDefaultProject(t *testing.T) {
+func kubeloginUser() *clientcmdapi.AuthInfo {
+	return &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
+		APIVersion: execAPIVersion, Command: "kubectl",
+		Args: []string{"oidc-login", "get-token", "--oidc-issuer-url=https://issuer.example/", "--oidc-client-id=abc"},
+	}}
+}
+
+func TestPrepare(t *testing.T) {
+	all := platform{server: "https://api.example:6443", ca: []byte("ca"), issuer: "https://issuer.example/", clientID: "abc"}
+
+	t.Run("an empty kubeconfig needs the platform's values", func(t *testing.T) {
+		_, _, err := prepare(clientcmdapi.NewConfig(), "", platform{server: "https://api.example:6443"})
+		if err == nil || !strings.Contains(err.Error(), "--issuer, --client-id") || strings.Contains(err.Error(), "--server") {
+			t.Errorf("err = %v, want it to name the missing flags only", err)
+		}
+	})
+
+	t.Run("the first sign-in makes the context airo and leaves a local cluster alone", func(t *testing.T) {
+		cfg := clientcmdapi.NewConfig()
+		cfg.Clusters["local"] = &clientcmdapi.Cluster{Server: "https://127.0.0.1:6443"}
+		cfg.AuthInfos["local"] = &clientcmdapi.AuthInfo{Token: "x"}
+		cfg.Contexts["local"] = &clientcmdapi.Context{Cluster: "local", AuthInfo: "local"}
+		cfg.CurrentContext = "local"
+
+		name, o, err := prepare(cfg, "", all)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := (oidc{issuer: "https://issuer.example/", clientID: "abc", session: "airo"}); name != "airo" || o != want {
+			t.Errorf("prepare = %q, %+v", name, o)
+		}
+		if got := cfg.Clusters["airo"]; got.Server != all.server || string(got.CertificateAuthorityData) != "ca" {
+			t.Errorf("cluster = %+v", got)
+		}
+		if got := cfg.AuthInfos["airo"].Exec; got.Command != "airo" || got.Args[len(got.Args)-1] != "--session=airo" {
+			t.Errorf("exec = %+v", got)
+		}
+		if cfg.Clusters["local"].Server != "https://127.0.0.1:6443" || cfg.AuthInfos["local"].Token != "x" {
+			t.Errorf("the local cluster's entries changed")
+		}
+
+		// It is someone else's context, also when named.
+		if _, _, err := prepare(cfg, "local", all); err == nil {
+			t.Errorf("prepare took over the context local")
+		}
+	})
+
+	t.Run("a new context is a second sign-in to the current platform", func(t *testing.T) {
+		cfg := clientcmdapi.NewConfig()
+		cfg.Clusters["airo"] = &clientcmdapi.Cluster{Server: "https://api.example:6443"}
+		cfg.AuthInfos["airo"] = kubeloginUser()
+		cfg.Contexts["airo"] = &clientcmdapi.Context{Cluster: "airo", AuthInfo: "airo", Namespace: "mine"}
+		cfg.CurrentContext = "airo"
+
+		name, o, err := prepare(cfg, "customer", platform{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := (oidc{issuer: "https://issuer.example/", clientID: "abc", session: "customer"}); name != "customer" || o != want {
+			t.Errorf("prepare = %q, %+v", name, o)
+		}
+		if got := cfg.Contexts["customer"]; got.Cluster != "airo" || got.AuthInfo != "customer" || got.Namespace != "" {
+			t.Errorf("context = %+v", got)
+		}
+		if got := cfg.AuthInfos["airo"].Exec.Command; got != "kubectl" {
+			t.Errorf("the other context's user now runs %q", got)
+		}
+
+		// Signing in again takes the entry over from kubelogin and keeps
+		// the namespace. A new issuer replaces the old one.
+		name, o, err = prepare(cfg, "airo", platform{issuer: "https://new.example/"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := (oidc{issuer: "https://new.example/", clientID: "abc", session: "airo"}); name != "airo" || o != want {
+			t.Errorf("prepare = %q, %+v", name, o)
+		}
+		if got := cfg.AuthInfos["airo"].Exec.Command; got != "airo" {
+			t.Errorf("exec command = %q", got)
+		}
+		if got := cfg.Contexts["airo"].Namespace; got != "mine" {
+			t.Errorf("namespace = %q", got)
+		}
+	})
+
+	t.Run("a new context with its own address gets its own cluster", func(t *testing.T) {
+		cfg := clientcmdapi.NewConfig()
+		cfg.Clusters["airo"] = &clientcmdapi.Cluster{Server: "https://api.example:6443", CertificateAuthorityData: []byte("ca")}
+		cfg.AuthInfos["airo"] = kubeloginUser()
+		cfg.Contexts["airo"] = &clientcmdapi.Context{Cluster: "airo", AuthInfo: "airo"}
+		cfg.CurrentContext = "airo"
+
+		if _, _, err := prepare(cfg, "staging", platform{server: "https://staging.example:6443"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.Clusters["staging"]; got == nil || got.Server != "https://staging.example:6443" || string(got.CertificateAuthorityData) != "ca" {
+			t.Errorf("cluster = %+v", got)
+		}
+		if got := cfg.Clusters["airo"].Server; got != "https://api.example:6443" {
+			t.Errorf("the first cluster's server = %q", got)
+		}
+	})
+}
+
+// The first airo login takes the platform from the flags. A second context
+// signs in someone else next to it, with their own tokens, and a customer
+// starts in the tenant's default project. -n replaces it, and a later airo
+// login keeps the namespace the person chose.
+func TestRunSignsInTwoPeople(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CACHE_HOME", dir)
 	t.Setenv("PATH", "") // no browser opens
 
-	id := jwt(time.Now().Add(time.Hour))
+	// Each sign-in gets the next token: first the admin's, then the
+	// customer's.
+	admin, customer := jwt(time.Now().Add(time.Hour)), jwt(time.Now().Add(2*time.Hour))
+	signIns := 0
 	var idp *httptest.Server
 	idp = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -143,64 +216,80 @@ func TestRunSetsACustomersDefaultProject(t *testing.T) {
 		case "/device":
 			fmt.Fprintf(w, `{"device_code":"d","user_code":"ABCD","verification_uri":"%s/activate","interval":1}`, idp.URL)
 		case "/token":
+			id := customer
+			if signIns == 0 {
+				id = admin
+			}
+			signIns++
 			fmt.Fprintf(w, `{"access_token":"a","token_type":"Bearer","id_token":"%s","refresh_token":"r"}`, id)
 		}
 	}))
 	t.Cleanup(idp.Close)
 
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+id {
+		user := ""
+		switch r.Header.Get("Authorization") {
+		case "Bearer " + admin:
+			user = `{"username":"auth0:admin","groups":["platform-admins"]}`
+		case "Bearer " + customer:
+			user = `{"username":"auth0:customer","groups":["customer:acme","system:authenticated"]}`
+		default:
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview",
-			"status":{"userInfo":{"username":"auth0:me","groups":["customer:acme","system:authenticated"]}}}`)
+		fmt.Fprintf(w, `{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","status":{"userInfo":%s}}`, user)
 	}))
 	t.Cleanup(api.Close)
 
-	// The file from the platform's admin.
-	src := clientcmdapi.NewConfig()
-	src.Clusters["airo"] = &clientcmdapi.Cluster{Server: api.URL}
-	src.AuthInfos["airo"] = &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
-		APIVersion: execAPIVersion, Command: "kubectl",
-		Args: []string{"oidc-login", "get-token", "--oidc-issuer-url=" + idp.URL, "--oidc-client-id=abc"},
-	}}
-	src.Contexts["airo"] = &clientcmdapi.Context{Cluster: "airo", AuthInfo: "airo"}
-	src.CurrentContext = "airo"
-	file := filepath.Join(dir, "airo.kubeconfig")
-	if err := clientcmd.WriteToFile(*src, file); err != nil {
-		t.Fatal(err)
-	}
-
 	kubeconfig := filepath.Join(dir, "config")
-	login := func(file, namespace string) string {
+	login := func(name, namespace string, p platform) (string, *clientcmdapi.Config) {
 		t.Helper()
 		flags := genericclioptions.NewConfigFlags(true)
 		flags.KubeConfig = &kubeconfig
+		flags.Context = &name
 		flags.Namespace = &namespace
 		var out bytes.Buffer
-		if err := run(context.Background(), &out, &bytes.Buffer{}, flags, file); err != nil {
+		if err := run(context.Background(), &out, &bytes.Buffer{}, flags, p); err != nil {
 			t.Fatalf("login: %v", err)
 		}
 		cfg, err := clientcmd.LoadFromFile(kubeconfig)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg.CurrentContext != "airo" || cfg.AuthInfos["airo"].Exec.Command != "airo" {
-			t.Fatalf("kubeconfig = %+v", cfg)
-		}
-		return cfg.Contexts["airo"].Namespace
+		return out.String(), cfg
 	}
 
-	if got := login(file, ""); got != "acme-default" {
-		t.Errorf("first login: namespace = %q, want acme-default", got)
+	// No kubeconfig yet.
+	out, cfg := login("", "", platform{server: api.URL, issuer: idp.URL, clientID: "abc"})
+	if !strings.Contains(out, "Signed in as auth0:admin") || cfg.CurrentContext != "airo" || cfg.Contexts["airo"].Namespace != "" {
+		t.Errorf("first login: %s%+v", out, cfg.Contexts["airo"])
 	}
-	if got := login("", "acme-web"); got != "acme-web" {
-		t.Errorf("login -n: namespace = %q, want acme-web", got)
+
+	out, cfg = login("customer", "", platform{})
+	if !strings.Contains(out, "Signed in as auth0:customer") || cfg.CurrentContext != "customer" {
+		t.Errorf("second login: %scurrent context %q", out, cfg.CurrentContext)
 	}
-	if got := login("", ""); got != "acme-web" {
-		t.Errorf("login again: namespace = %q, want the chosen acme-web to stay", got)
+	if got := cfg.Contexts["customer"]; got.Cluster != "airo" || got.Namespace != "acme-default" {
+		t.Errorf("second login: context = %+v, want the first one's cluster and the namespace acme-default", got)
+	}
+
+	// Each context's exec plugin reads its own tokens.
+	for name, want := range map[string]string{"airo": admin, "customer": customer} {
+		o, err := oidcFrom(cfg.AuthInfos[name])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, _, err := o.token(context.Background(), &bytes.Buffer{}, false); err != nil || got != want {
+			t.Errorf("context %s: the cached token is not its own: %v", name, err)
+		}
+	}
+
+	if _, cfg = login("customer", "acme-web", platform{}); cfg.Contexts["customer"].Namespace != "acme-web" {
+		t.Errorf("login -n: namespace = %q, want acme-web", cfg.Contexts["customer"].Namespace)
+	}
+	if _, cfg = login("", "", platform{}); cfg.CurrentContext != "customer" || cfg.Contexts["customer"].Namespace != "acme-web" {
+		t.Errorf("login again: context %q, namespace %q; want the chosen acme-web to stay", cfg.CurrentContext, cfg.Contexts["customer"].Namespace)
 	}
 }
 

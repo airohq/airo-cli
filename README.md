@@ -29,11 +29,15 @@ go install github.com/airohq/airo-cli/cmd/airo@main
 
 ## Sign in
 
-**`airo login` signs you in through the browser.** The first time, pass the
-kubeconfig file you got from the platform's admin.
+**`airo login` signs you in through the browser.** The first time, pass where
+the platform is. The platform's admin gives you the four values, and they
+stay in your kubeconfig.
 
 ```sh
-airo login -f airo.kubeconfig    # the first time
+# the first time
+airo login --server https://api.example.com:6443 --certificate-authority ca.crt \
+  --issuer https://login.example.com/ --client-id abc123
+
 airo login                       # sign in again, for example after a new role
 ```
 
@@ -54,11 +58,36 @@ be on your `PATH`.
 
 | Sign-in | What happens |
 | --- | --- |
-| First, with `-f` | Copies the file's cluster and context into your kubeconfig, with `airo` in place of kubelogin |
+| First, with the platform's flags | Writes a cluster, a user and the context `airo` into your kubeconfig. It works without a kubeconfig, and other entries stay as they are |
 | A customer's first | Sets the context's namespace to the project `<tenant>-default`. A namespace you chose stays |
-| Again, without `-f` | Signs in again in the current context, or the one from `--context` |
+| Again, without flags | Signs in again in the current context. When that is not the platform's, such as a local cluster's, it uses the context `airo` |
+| With `--context NAME` | Signs in to that context. One that does not exist yet is created for the same platform, with its own tokens |
+| With a platform flag again | Replaces that value in the context, for example after the issuer changed |
 | With `-n NAMESPACE` | Makes that project the context's namespace, for every later command |
 | In no customer group, such as a platform admin | Sets no namespace, so commands use `default` until you pass `-n` |
+
+| Flag | The first sign-in's value |
+| --- | --- |
+| `--server` | The API server's address |
+| `--certificate-authority` | The file with the API server's certificate authority. `--certificate-authority-data` takes it as base64 instead. Neither is needed when the certificate is publicly trusted |
+| `--issuer` | The OIDC issuer's URL |
+| `--client-id` | The OIDC client ID |
+
+**You can be signed in as two people at once, each in its own context.**
+Tokens are kept per context name.
+
+```sh
+airo login --context customer       # sign in as someone else: a new context
+airo agent list --context airo      # one command as the first person
+airo login --context airo           # sign in as the first person again
+```
+
+The browser remembers who signed in last. To sign in as someone else, open
+the printed URL in a private window.
+
+`airo login` never changes a context that does not sign in through the
+platform. It writes to `~/.kube/config`, or to the file in `KUBECONFIG` or
+`--kubeconfig`.
 
 `airo` takes kubectl's flags, such as `-n`, `--context` and `--kubeconfig`,
 and works in the context's namespace by default.
