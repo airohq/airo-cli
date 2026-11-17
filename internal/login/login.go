@@ -1,4 +1,5 @@
-// Package login implements airo login, and airo credential, the kubeconfig
+// Package login implements airo login, airo context and airo project, which
+// write the kubeconfig, and airo credential, the kubeconfig
 // exec plugin that hands the signed-in person's token to kubectl and airo.
 package login
 
@@ -190,7 +191,7 @@ func run(ctx context.Context, out, prompt io.Writer, flags *genericclioptions.Co
 		fmt.Fprintf(out, "  namespace: %s\n", kctx.Namespace)
 	} else {
 		// Someone in no customer group, such as a platform admin.
-		fmt.Fprintln(out, "  namespace: none, so commands use \"default\". Choose a project with airo login -n NAMESPACE")
+		fmt.Fprintln(out, "  namespace: none, so commands use \"default\". Choose a project with airo project")
 	}
 	fmt.Fprintf(out, "  groups:    %s\n", strings.Join(user.Groups, ", "))
 	if _, err := exec.LookPath("airo"); err != nil {

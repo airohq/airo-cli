@@ -3,7 +3,7 @@
 > [!CAUTION]
 > **Early alpha.** Commands and flags may change.
 
-`airo` is the command-line tool of the Airo platform: sign in, switch between sign-ins, talk to an
+`airo` is the command-line tool of the Airo platform: sign in, switch between sign-ins and projects, talk to an
 agent, see your sessions, manage the resources of your project, and give a local port a URL.
 Each command reads and writes Kubernetes resources as you, so everything it
 does to a resource can also be done with `kubectl`, and you do not need
@@ -63,8 +63,8 @@ be on your `PATH`.
 | Again, without flags | Signs in again in the current context. When that is not the platform's, such as a local cluster's, it uses the context `airo` |
 | With `--context NAME` | Signs in to that context. One that does not exist yet is created for the same platform, with its own tokens |
 | With a platform flag again | Replaces that value in the context, for example after the issuer changed |
-| With `-n NAMESPACE` | Makes that project the context's namespace, for every later command |
-| In no customer group, such as a platform admin | Sets no namespace, so commands use `default` until you pass `-n` |
+| With `-n NAMESPACE` | Makes that project the context's namespace, for every later command, as `airo project NAMESPACE` does without a new sign-in |
+| In no customer group, such as a platform admin | Sets no namespace, so commands use `default` until you pass `-n` or choose one with `airo project` |
 
 | Flag | The first sign-in's value |
 | --- | --- |
@@ -151,6 +151,45 @@ such as a local cluster's, are not listed and not switched to. Use `kubectl
 config use-context` for them.
 
 A context named like a verb goes after `--`, as in `airo context -- list`.
+
+## Project
+
+**`airo project` switches the project your commands work in**, for every
+later command of `airo` and `kubectl`. A project is a namespace of the
+platform, and the switch sets the namespace of your kubeconfig's context.
+
+```sh
+airo project             # choose from a picker
+airo project acme-web    # switch to the project acme-web
+airo project -           # switch back to the previous one
+airo project list
+```
+
+```text
+CURRENT   NAME           AGE
+*         acme-default   9d
+          acme-web       2d
+```
+
+| Command | What happens |
+| --- | --- |
+| `airo project` | Shows a picker with the cursor on the current project. Type to filter, press Enter to choose, or Esc to leave things as they are. Where nobody can answer, such as in a script, it stops and lists the names |
+| `airo project NAME` | Makes that project the context's namespace. The name must be one of your projects |
+| `airo project -` | Switches to the project you last switched away from in this context, so twice brings you back. `airo` keeps its name in your cache directory |
+| `airo project list` | Lists the projects the platform's API shows you, and marks the current one with `*`. `-o yaml` and `-o json` print the Namespaces |
+
+**It changes the current context, or the one `--context` names**, and only a
+context that signs in through the platform. For one command in another
+project, pass `-n` to that command instead. `airo context set -n NAME` also
+sets the project, without asking the cluster whether it is one of yours.
+
+**Your projects are the namespaces the platform's API lists for you.** A
+customer's people see their own projects. A platform admin sees every
+namespace of the cluster.
+
+**`airo` cannot create a project yet.** The platform's admin adds one.
+
+A project named like a verb goes after `--`, as in `airo project -- list`.
 
 ## Status and identity
 
