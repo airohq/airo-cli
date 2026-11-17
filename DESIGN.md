@@ -96,6 +96,9 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
 - **`airo login` keeps what its flags say**: `--server`, `--context` and `-n`
   choose for one command elsewhere, and `airo login` writes them into the
   kubeconfig for every later command.
+- **`airo context set` keeps them too, without signing in.** It takes
+  `airo login`'s flags and changes an existing sign-in, as `kubectl config
+  set-context` and `set-cluster` do. Only `airo login` makes a sign-in.
 
 ## Output
 

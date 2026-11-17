@@ -116,6 +116,34 @@ Switched to context customer
 | `airo context NAME` | Makes that context the kubeconfig's current one |
 | `airo context -` | Switches to the context you last switched away from, so twice brings you back. `airo` keeps its name in your cache directory |
 | `airo context list` | Lists the sign-ins with their namespaces, and marks the current one with `*` |
+| `airo context set [NAME]` | Changes what a sign-in holds, without signing in again |
+
+**`airo context set` changes a sign-in's values in the kubeconfig**, such as
+the platform's address after it moved. It is `airo`'s form of `kubectl config
+set-context` and `set-cluster`. Without a name it changes the current
+context, and only the flags you pass are changed.
+
+```sh
+airo context set --server https://api.example.com
+airo context set -n acme-web                 # work in another project from now on
+airo context set customer --certificate-authority ca.crt
+```
+
+```text
+Set context airo
+  server:    https://api.example.com
+```
+
+| Flag | Sets |
+| --- | --- |
+| `--server` | The cluster's `server`: the API server's address |
+| `--certificate-authority`, `--certificate-authority-data` | The cluster's `certificate-authority-data` |
+| `--issuer`, `--client-id` | The arguments of the user's exec plugin. The next command signs you in again |
+| `-n` | The context's `namespace` |
+
+Sign-ins at the same platform share the cluster's entry, so a new address or
+certificate authority applies to all of them, and the command names them. It
+does not make a sign-in: `airo login` does.
 
 **It knows only the contexts that sign in through the platform.** Others,
 such as a local cluster's, are not listed and not switched to. Use `kubectl

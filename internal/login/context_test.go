@@ -151,3 +151,94 @@ func TestListContexts(t *testing.T) {
 		t.Errorf("list =\n%s\nwant\n%s", out.String(), want)
 	}
 }
+
+func TestSetContext(t *testing.T) {
+	access, _ := contextFixture(t)
+	var out bytes.Buffer
+	if err := setContext(&out, access, "", platform{server: "https://api.new.example"}, "acme-web"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "Set context airo\n  server:    https://api.new.example\n  namespace: acme-web\n"; out.String() != want {
+		t.Errorf("the output is %q, want %q", out.String(), want)
+	}
+	cfg, err := access.GetStartingConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Clusters["airo"].Server; got != "https://api.new.example" {
+		t.Errorf("the server is %q", got)
+	}
+	if got := cfg.Contexts["airo"].Namespace; got != "acme-web" {
+		t.Errorf("the namespace is %q", got)
+	}
+	if got := cfg.Clusters["customer"].Server; got != "https://api.example.com" {
+		t.Errorf("another sign-in's server changed to %q", got)
+	}
+	if o, err := oidcOf(cfg, "airo"); err != nil || o.issuer != "https://login.example.com/" || o.session != "airo" {
+		t.Errorf("the sign-in changed: %+v, %v", o, err)
+	}
+
+	// A named context, and the values of the sign-in itself.
+	if err := setContext(&out, access, "customer", platform{ca: []byte("ca"), issuer: "https://new.example/"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = access.GetStartingConfig(); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(cfg.Clusters["customer"].CertificateAuthorityData); got != "ca" {
+		t.Errorf("the certificate authority is %q", got)
+	}
+	if o, err := oidcOf(cfg, "customer"); err != nil || o.issuer != "https://new.example/" || o.clientID != "abc" || o.session != "customer" {
+		t.Errorf("the sign-in is %+v, %v", o, err)
+	}
+	if cfg.CurrentContext != "airo" {
+		t.Errorf("the current context changed to %q", cfg.CurrentContext)
+	}
+}
+
+func TestSetContextSaysWhoSharesTheCluster(t *testing.T) {
+	access, _ := contextFixture(t)
+	cfg, err := access.GetStartingConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Contexts["customer"].Cluster = "airo"
+	if err := clientcmd.ModifyConfig(access, *cfg, true); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := setContext(&out, access, "airo", platform{server: "https://api.new.example"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "serves customer") {
+		t.Errorf("the output does not name the other sign-in: %q", out.String())
+	}
+}
+
+func TestSetContextRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		name, target string
+		p            platform
+		want         string
+	}{
+		{"nothing to set", "", platform{}, "nothing to set"},
+		{"an address that is none", "", platform{server: "api.example.com"}, "is not an address"},
+		{"an unknown name", "nope", platform{server: "https://a.example"}, `the kubeconfig has no context "nope": your sign-ins are airo, customer`},
+		{"a context of another cluster", "kind", platform{server: "https://a.example"}, `context "kind" does not sign in through the platform`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			access, _ := contextFixture(t)
+			err := setContext(&bytes.Buffer{}, access, tc.target, tc.p, "")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("the error is %v, want it to contain %q", err, tc.want)
+			}
+			cfg, err := access.GetStartingConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Clusters["kind"].Server; got != "https://127.0.0.1:6443" {
+				t.Errorf("the other cluster's server changed to %q", got)
+			}
+		})
+	}
+}
