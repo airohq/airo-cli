@@ -3,7 +3,7 @@
 > [!CAUTION]
 > **Early alpha.** Commands and flags may change.
 
-`airo` is the command-line tool of the Airo platform: sign in, talk to an
+`airo` is the command-line tool of the Airo platform: sign in, switch between sign-ins, talk to an
 agent, see your sessions, manage the resources of your project, and give a local port a URL.
 Each command reads and writes Kubernetes resources as you, so everything it
 does to a resource can also be done with `kubectl`, and you do not need
@@ -80,6 +80,7 @@ Tokens are kept per context name.
 airo login --context customer       # sign in as someone else: a new context
 airo agent list --context airo      # one command as the first person
 airo login --context airo           # sign in as the first person again
+airo context customer               # switch without signing in again
 ```
 
 The browser remembers who signed in last. To sign in as someone else, open
@@ -91,6 +92,36 @@ platform. It writes to `~/.kube/config`, or to the file in `KUBECONFIG` or
 
 `airo` takes kubectl's flags, such as `-n`, `--context` and `--kubeconfig`,
 and works in the context's namespace by default.
+
+## Context
+
+**`airo context` switches between your sign-ins**, for every later command of
+`airo` and `kubectl`. `airo ctx` is the short form.
+
+```sh
+airo context             # choose from a picker
+airo context customer    # switch to the context customer
+airo context -           # switch back to the previous one
+airo context list
+```
+
+```text
+Switched to context customer
+  namespace: acme-web
+```
+
+| Command | What happens |
+| --- | --- |
+| `airo context` | Shows a picker with the cursor on the current context. Type to filter, press Enter to choose, or Esc to leave things as they are. Where nobody can answer, such as in a script, it stops and lists the names |
+| `airo context NAME` | Makes that context the kubeconfig's current one |
+| `airo context -` | Switches to the context you last switched away from, so twice brings you back. `airo` keeps its name in your cache directory |
+| `airo context list` | Lists the sign-ins with their namespaces, and marks the current one with `*` |
+
+**It knows only the contexts that sign in through the platform.** Others,
+such as a local cluster's, are not listed and not switched to. Use `kubectl
+config use-context` for them.
+
+A context named like a verb goes after `--`, as in `airo context -- list`.
 
 ## Resources
 

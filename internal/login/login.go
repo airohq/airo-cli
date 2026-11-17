@@ -280,11 +280,14 @@ func prepare(cfg *clientcmdapi.Config, name string, p platform) (string, oidc, e
 	return name, o, nil
 }
 
+// errNoContext is oidcOf's error for a name the kubeconfig does not have.
+var errNoContext = errors.New("the kubeconfig has no context")
+
 // oidcOf reads the sign-in of the context name.
 func oidcOf(cfg *clientcmdapi.Config, name string) (oidc, error) {
 	kctx := cfg.Contexts[name]
 	if kctx == nil {
-		return oidc{}, fmt.Errorf("the kubeconfig has no context %q", name)
+		return oidc{}, fmt.Errorf("%w %q", errNoContext, name)
 	}
 	return oidcFrom(cfg.AuthInfos[kctx.AuthInfo])
 }
