@@ -173,8 +173,9 @@ Session 7c9e6679-7425-40de-944b-e07fc1f90ae7
 the first that applies:
 
 1. The project's only Agent.
-2. The Agent with the annotation `airohq.dev/default-agent: "true"`, when
-   exactly one has it.
+2. The Agent with the annotation `airohq.dev/default-agent: "true"`. When
+   several have it, the one created last: mark your own agent to use it in
+   place of the platform's `assistant`.
 3. The one you choose in a picker, on a terminal: type to filter and press
    Enter. Elsewhere the command stops and lists the names.
 
@@ -246,9 +247,10 @@ creates neither. Without `--harness` or `--model`, `airo` takes the first
 that applies:
 
 1. The project's only one.
-2. The one marked as the default, when exactly one is: a Harness with the
-   annotation `airohq.dev/default-harness: "true"`, a ModelConfig with
-   `airohq.dev/default-model: "true"`.
+2. The one marked as the default: a Harness with the annotation
+   `airohq.dev/default-harness: "true"`, a ModelConfig with
+   `airohq.dev/default-model: "true"`. When several have it, the one created
+   last.
 
 Otherwise it stops and lists the names, and for a Harness what it runs, such
 as `claude`. A Harness that runs its own image (`byo`) gets a model only

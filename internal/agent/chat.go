@@ -138,12 +138,9 @@ func pick(ctx context.Context, c client.Client, ns, name string, ask func([]stri
 	if err != nil {
 		return "", err
 	}
-	var names, defaults []string
+	var names []string
 	for i := range items {
 		names = append(names, items[i].GetName())
-		if items[i].GetAnnotations()[defaultAnnotation] == "true" {
-			defaults = append(defaults, items[i].GetName())
-		}
 	}
 	sort.Strings(names)
 	switch {
@@ -151,12 +148,14 @@ func pick(ctx context.Context, c client.Client, ns, name string, ask func([]stri
 		return "", fmt.Errorf("project %s has no agent: make one with airo agent create", ns)
 	case len(names) == 1:
 		return names[0], nil
-	case len(defaults) == 1:
-		return defaults[0], nil
-	case ask != nil:
+	}
+	if d := newestDefault(items, defaultAnnotation); d != nil {
+		return d.GetName(), nil
+	}
+	if ask != nil {
 		return ask(names)
 	}
-	return "", fmt.Errorf("project %s has %d agents and no single default, name one with --agent: %s", ns, len(names), strings.Join(names, ", "))
+	return "", fmt.Errorf("project %s has %d agents and no default, name one with --agent: %s", ns, len(names), strings.Join(names, ", "))
 }
 
 // endpoint returns the address of the agents' API for the project.

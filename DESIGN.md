@@ -70,6 +70,16 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
   lists the names. `airo agent create` finds its Harness and ModelConfig the
   same way, with `airohq.dev/default-harness` and `airohq.dev/default-model`,
   and without a picker.
+- **A default is an annotation on the resource, and the newest default
+  wins.** Wherever a kind can be marked as the default, the mark is an
+  annotation `airohq.dev/default-<noun>: "true"`, never a reserved name such
+  as `default`. When several resources have it, the command takes the one
+  created last, as Kubernetes does with the default StorageClass, and the
+  name decides between two of the same second. It never stops because of
+  two defaults. So a project's people override the platform's default by
+  marking their own, and get it back by removing the mark. What the command
+  creates refers to the resource by its real name, so a later change of the
+  default moves nothing that exists.
 - **Every picker is the same one**, from `internal/picker`: the person types
   to filter, Enter chooses and Esc leaves. It opens only on a terminal.
 
