@@ -4,10 +4,12 @@ package login
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -27,11 +29,25 @@ const (
 	// tenant's first project is <tenant>-default.
 	customerGroupPrefix  = "customer:"
 	defaultProjectSuffix = "-default"
+	// defaultContext is the context of a first sign-in.
+	defaultContext = "airo"
 )
+
+// platform is where to sign in, from the flags. An empty field means the
+// value already in the kubeconfig.
+type platform struct {
+	server   string
+	ca       []byte
+	issuer   string
+	clientID string
+}
 
 // NewCommand returns the login command.
 func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
-	var file string
+	var (
+		p      platform
+		caData string
+	)
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Sign in to the platform",
@@ -39,17 +55,46 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 context of your kubeconfig. The kubeconfig holds no credentials: airo keeps
 the tokens in your cache directory and refreshes them.
 
-The first time, pass the file you got from the platform's admin with -f.
-After that, airo login signs you in again, for example to pick up a new role.`,
-		Example: `  airo login -f airo.kubeconfig    # the first time
+The first time, pass where the platform is: --server, --issuer, --client-id
+and the API server's certificate authority. The platform's admin gives you
+the values. They stay in the kubeconfig, so after that airo login signs you
+in again, for example to pick up a new role.
+
+--context names the sign-in. A context that does not exist yet is created
+for the same platform with its own tokens, so you can be signed in as two
+people and choose one with --context on any command.`,
+		Example: `  # the first time
+  airo login --server https://api.example.com:6443 --certificate-authority ca.crt \
+    --issuer https://login.example.com/ --client-id abc123
+
   airo login                       # sign in again
-  airo login -n acme-web           # work in another project from now on`,
+  airo login -n acme-web           # work in another project from now on
+  airo login --context customer    # sign in as someone else, side by side`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return run(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), flags, file)
+			p.server = *flags.APIServer
+			switch {
+			case caData != "" && *flags.CAFile != "":
+				return errors.New("pass --certificate-authority or --certificate-authority-data, not both")
+			case caData != "":
+				ca, err := base64.StdEncoding.DecodeString(caData)
+				if err != nil {
+					return fmt.Errorf("--certificate-authority-data is not base64: %w", err)
+				}
+				p.ca = ca
+			case *flags.CAFile != "":
+				ca, err := os.ReadFile(*flags.CAFile)
+				if err != nil {
+					return err
+				}
+				p.ca = ca
+			}
+			return run(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), flags, p)
 		},
 	}
-	cmd.Flags().StringVarP(&file, "file", "f", "", "the kubeconfig file from the platform's admin, for the first sign-in")
+	cmd.Flags().StringVar(&p.issuer, "issuer", "", "the OIDC issuer's URL, for the first sign-in")
+	cmd.Flags().StringVar(&p.clientID, "client-id", "", "the OIDC client ID, for the first sign-in")
+	cmd.Flags().StringVar(&caData, "certificate-authority-data", "", "the API server's certificate authority as base64, in place of --certificate-authority's file")
 	return cmd
 }
 
@@ -79,26 +124,19 @@ func NewCredentialCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&o.issuer, "issuer", "", "the OIDC issuer's URL")
 	cmd.Flags().StringVar(&o.clientID, "client-id", "", "the OIDC client ID")
+	cmd.Flags().StringVar(&o.session, "session", "", "the sign-in whose tokens to use: the context's name")
 	_ = cmd.MarkFlagRequired("issuer")
 	_ = cmd.MarkFlagRequired("client-id")
 	return cmd
 }
 
-func run(ctx context.Context, out, prompt io.Writer, flags *genericclioptions.ConfigFlags, file string) error {
+func run(ctx context.Context, out, prompt io.Writer, flags *genericclioptions.ConfigFlags, p platform) error {
 	access := flags.ToRawKubeConfigLoader().ConfigAccess()
 	cfg, err := access.GetStartingConfig()
 	if err != nil {
 		return err
 	}
-	var (
-		name string
-		o    oidc
-	)
-	if file != "" {
-		name, o, err = add(cfg, file)
-	} else {
-		name, o, err = existing(cfg, *flags.Context)
-	}
+	name, o, err := prepare(cfg, *flags.Context, p)
 	if err != nil {
 		return err
 	}
@@ -160,71 +198,95 @@ func run(ctx context.Context, out, prompt io.Writer, flags *genericclioptions.Co
 	return nil
 }
 
-// add copies the platform's context from the admin's file into cfg, under
-// the same name, with airo as the user's exec plugin.
-func add(cfg *clientcmdapi.Config, file string) (string, oidc, error) {
-	src, err := clientcmd.LoadFromFile(file)
-	if err != nil {
-		return "", oidc{}, err
+// prepare makes the context name in cfg a sign-in to the platform, with airo
+// as its exec plugin, and returns the context's name. The platform's values
+// come from p, then from the context itself, and for a new context from the
+// one the person is signed in to now. An entry that ran kubelogin is taken
+// over.
+func prepare(cfg *clientcmdapi.Config, name string, p platform) (string, oidc, error) {
+	// The context to sign in to again, or to copy a new one from: the
+	// current one when it is the platform's, and not, say, a local cluster's.
+	base := cfg.CurrentContext
+	if _, err := oidcOf(cfg, base); err != nil {
+		base = defaultContext
 	}
-	// Inline a certificate the file names by path.
-	if err := clientcmdapi.FlattenConfig(src); err != nil {
-		return "", oidc{}, err
+	if name == "" {
+		name = base
 	}
-	name := src.CurrentContext
-	if name == "" && len(src.Contexts) == 1 {
-		for name = range src.Contexts {
-		}
+	kctx := cfg.Contexts[name]
+	if kctx != nil {
+		base = name
 	}
-	sctx := src.Contexts[name]
-	if sctx == nil {
-		return "", oidc{}, fmt.Errorf("%s has no current context", file)
+	o, err := oidcOf(cfg, base)
+	if kctx != nil && err != nil {
+		// Someone else's entry, such as a local cluster's: leave it alone.
+		return "", oidc{}, fmt.Errorf("context %q: %w: choose another name with --context", name, err)
 	}
-	cluster, user := src.Clusters[sctx.Cluster], src.AuthInfos[sctx.AuthInfo]
-	if cluster == nil {
-		return "", oidc{}, fmt.Errorf("%s: context %s has no cluster", file, name)
+	if p.issuer != "" {
+		o.issuer = p.issuer
 	}
-	o, err := oidcFrom(user)
-	if err != nil {
-		return "", oidc{}, fmt.Errorf("%s: %w", file, err)
+	if p.clientID != "" {
+		o.clientID = p.clientID
 	}
 
-	// Without the origin, the entries are written to the person's own
-	// kubeconfig and not back to the admin's file.
-	cluster = cluster.DeepCopy()
-	cluster.LocationOfOrigin = ""
-	kctx := &clientcmdapi.Context{Cluster: name, AuthInfo: name}
-	if old := cfg.Contexts[name]; old != nil {
-		kctx.Namespace = old.Namespace
-		kctx.LocationOfOrigin = old.LocationOfOrigin
+	from := cfg.Contexts[base]
+	if kctx == nil {
+		// A second sign-in shares the cluster's entry. Its own address or
+		// certificate authority gets its own entry.
+		kctx = &clientcmdapi.Context{Cluster: name, AuthInfo: name}
+		if from != nil && p.server == "" && p.ca == nil {
+			kctx.Cluster = from.Cluster
+		}
+		cfg.Contexts[name] = kctx
 	}
-	cfg.Clusters[name] = cluster
-	cfg.AuthInfos[name] = execUser(o, "")
-	cfg.Contexts[name] = kctx
+	cluster := cfg.Clusters[kctx.Cluster]
+	if cluster == nil {
+		cluster = clientcmdapi.NewCluster()
+		if from != nil && cfg.Clusters[from.Cluster] != nil {
+			cluster = cfg.Clusters[from.Cluster].DeepCopy()
+			cluster.LocationOfOrigin = ""
+		}
+		cfg.Clusters[kctx.Cluster] = cluster
+	}
+	if p.server != "" {
+		cluster.Server = p.server
+	}
+	if p.ca != nil {
+		cluster.CertificateAuthority, cluster.CertificateAuthorityData = "", p.ca
+	}
+
+	var missing []string
+	if cluster.Server == "" {
+		missing = append(missing, "--server")
+	}
+	if o.issuer == "" {
+		missing = append(missing, "--issuer")
+	}
+	if o.clientID == "" {
+		missing = append(missing, "--client-id")
+	}
+	if missing != nil {
+		return "", oidc{}, fmt.Errorf("the kubeconfig does not say where the platform is: pass %s, with the values from the platform's admin", strings.Join(missing, ", "))
+	}
+
+	// The context's name keeps this sign-in's tokens apart from another
+	// context's at the same platform.
+	o.session = name
+	origin := ""
+	if user := cfg.AuthInfos[kctx.AuthInfo]; user != nil {
+		origin = user.LocationOfOrigin
+	}
+	cfg.AuthInfos[kctx.AuthInfo] = execUser(o, origin)
 	return name, o, nil
 }
 
-// existing finds the platform's context in cfg and makes airo its exec
-// plugin, which also takes over an entry that ran kubelogin.
-func existing(cfg *clientcmdapi.Config, name string) (string, oidc, error) {
-	if name == "" {
-		name = cfg.CurrentContext
-	}
-	hint := "pass the file from the platform's admin: airo login -f FILE"
+// oidcOf reads the sign-in of the context name.
+func oidcOf(cfg *clientcmdapi.Config, name string) (oidc, error) {
 	kctx := cfg.Contexts[name]
 	if kctx == nil {
-		if name == "" {
-			return "", oidc{}, errors.New("the kubeconfig has no current context: " + hint)
-		}
-		return "", oidc{}, fmt.Errorf("the kubeconfig has no context %q: %s", name, hint)
+		return oidc{}, fmt.Errorf("the kubeconfig has no context %q", name)
 	}
-	user := cfg.AuthInfos[kctx.AuthInfo]
-	o, err := oidcFrom(user)
-	if err != nil {
-		return "", oidc{}, fmt.Errorf("context %q: %w: %s", name, err, hint)
-	}
-	cfg.AuthInfos[kctx.AuthInfo] = execUser(o, user.LocationOfOrigin)
-	return name, o, nil
+	return oidcFrom(cfg.AuthInfos[kctx.AuthInfo])
 }
 
 // oidcFrom reads the issuer and client ID from a user's exec plugin: airo
@@ -240,6 +302,8 @@ func oidcFrom(user *clientcmdapi.AuthInfo) (oidc, error) {
 				o.issuer = value
 			case "--client-id", "--oidc-client-id":
 				o.clientID = value
+			case "--session":
+				o.session = value
 			}
 		}
 	}
@@ -255,7 +319,7 @@ func execUser(o oidc, origin string) *clientcmdapi.AuthInfo {
 		Exec: &clientcmdapi.ExecConfig{
 			APIVersion:      execAPIVersion,
 			Command:         "airo",
-			Args:            []string{"credential", "--issuer=" + o.issuer, "--client-id=" + o.clientID},
+			Args:            []string{"credential", "--issuer=" + o.issuer, "--client-id=" + o.clientID, "--session=" + o.session},
 			InstallHint:     "Install airo: brew install airohq/tap/airo",
 			InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
 		},

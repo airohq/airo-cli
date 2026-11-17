@@ -49,6 +49,9 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
   `--no-auth`. The README names the field it sets.
 - **kubectl's flags mean the same here**: `-n`, `--context`, `--kubeconfig`,
   and `-o yaml` on `get` and `list`.
+- **`airo login` keeps what its flags say**: `--server`, `--context` and `-n`
+  choose for one command elsewhere, and `airo login` writes them into the
+  kubeconfig for every later command.
 
 ## Output
 
