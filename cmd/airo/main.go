@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 
+	"github.com/airohq/airo-cli/internal/agent"
 	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/login"
 	"github.com/airohq/airo-cli/internal/tunnel"
@@ -32,9 +33,9 @@ Commands are airo NOUN [VERB]. Every kind of resource in the cluster is a
 noun with the verbs ` + generic.Verbs + `,
 also the kinds not listed below:
 
-  airo agent list
-  airo agent get my-agent -o yaml
-  airo agent delete my-agent`,
+  airo modelconfig list
+  airo modelconfig get my-model -o yaml
+  airo modelconfig delete my-model`,
 		Version:      buildVersion(),
 		SilenceUsage: true,
 		// A first word that is no command below is a kind in the cluster.
@@ -52,6 +53,7 @@ also the kinds not listed below:
 		login.NewCommand(flags),
 		login.NewCredentialCommand(),
 		generic.NewApplyCommand(flags),
+		agent.NewCommand(flags),
 		tunnel.NewCommand(flags),
 		&cobra.Command{
 			Use:   "version",
