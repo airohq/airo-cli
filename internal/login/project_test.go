@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -198,5 +200,73 @@ func TestListProjects(t *testing.T) {
 
 	if err := listProjects(context.Background(), &out, access, "", list, "wide", projectNow); err == nil {
 		t.Error("-o wide: no error, want it refused")
+	}
+}
+
+var namespacesResource = schema.GroupResource{Resource: "namespaces"}
+
+func TestCreateProject(t *testing.T) {
+	var created string
+	var out bytes.Buffer
+	create := func(_ context.Context, name string) error { created = name; return nil }
+	if err := createProject(context.Background(), &out, "airo-web", create); err != nil {
+		t.Fatal(err)
+	}
+	if created != "airo-web" {
+		t.Errorf("created %q, want airo-web", created)
+	}
+	if want := "Created project airo-web\n  work in it: airo project airo-web\n"; out.String() != want {
+		t.Errorf("the output is %q, want %q", out.String(), want)
+	}
+
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"a name that exists", apierrors.NewAlreadyExists(namespacesResource, "airo-web"), "named airo-web exists already"},
+		// The platform's admission says why, such as a name without the
+		// tenant's prefix or a full quota.
+		{"a name the platform refuses", apierrors.NewForbidden(namespacesResource, "x", errors.New("must start with 'airo-'")), "must start with 'airo-'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			create := func(context.Context, string) error { return tc.err }
+			err := createProject(context.Background(), &bytes.Buffer{}, "airo-web", create)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDeleteProject(t *testing.T) {
+	access, _, _ := projectFixture(t)
+	for _, tc := range []struct {
+		name, context, project, out string
+	}{
+		{"another project", "", "airo-web", "Deleted project airo-web\n"},
+		{"the current one", "", "airo-default", "Deleted project airo-default\n  your commands still work in it: choose another with airo project\n"},
+		{"the project of another context", "customer", "customer-default", "Deleted project customer-default\n  your commands still work in it: choose another with airo project\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var deleted string
+			var out bytes.Buffer
+			remove := func(_ context.Context, name string) error { deleted = name; return nil }
+			if err := deleteProject(context.Background(), &out, access, tc.context, tc.project, remove); err != nil {
+				t.Fatal(err)
+			}
+			if deleted != tc.project {
+				t.Errorf("deleted %q, want %q", deleted, tc.project)
+			}
+			if out.String() != tc.out {
+				t.Errorf("the output is %q, want %q", out.String(), tc.out)
+			}
+		})
+	}
+
+	remove := func(context.Context, string) error { return apierrors.NewNotFound(namespacesResource, "nope") }
+	err := deleteProject(context.Background(), &bytes.Buffer{}, access, "", "nope", remove)
+	if err == nil || !strings.Contains(err.Error(), `you have no project "nope"`) {
+		t.Errorf("error = %v, want that there is no such project", err)
 	}
 }

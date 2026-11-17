@@ -34,23 +34,52 @@ var projectResource = schema.GroupVersionResource{Version: "v1", Resource: "name
 // projectLister asks the cluster for the person's projects.
 type projectLister func(context.Context) (*unstructured.UnstructuredList, error)
 
+// projectWriter creates or deletes one project in the cluster.
+type projectWriter func(ctx context.Context, name string) error
+
 // NewProjectCommand returns the project command.
 func NewProjectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	access := func() clientcmd.ConfigAccess { return flags.ToRawKubeConfigLoader().ConfigAccess() }
-	list := func(ctx context.Context) (*unstructured.UnstructuredList, error) {
+	namespaces := func() (dynamic.ResourceInterface, string, error) {
 		cfg, err := flags.ToRESTConfig()
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		c, err := dynamic.NewForConfig(cfg)
 		if err != nil {
+			return nil, "", err
+		}
+		return c.Resource(projectResource), cfg.Host, nil
+	}
+	list := func(ctx context.Context) (*unstructured.UnstructuredList, error) {
+		r, host, err := namespaces()
+		if err != nil {
 			return nil, err
 		}
-		projects, err := c.Resource(projectResource).List(ctx, metav1.ListOptions{})
+		projects, err := r.List(ctx, metav1.ListOptions{})
 		if apierrors.IsForbidden(err) {
-			return nil, fmt.Errorf("the platform's API at %s does not list your projects: %w", cfg.Host, err)
+			return nil, fmt.Errorf("the platform's API at %s does not list your projects: %w", host, err)
 		}
 		return projects, err
+	}
+	create := func(ctx context.Context, name string) error {
+		r, _, err := namespaces()
+		if err != nil {
+			return err
+		}
+		ns := &unstructured.Unstructured{}
+		ns.SetAPIVersion("v1")
+		ns.SetKind("Namespace")
+		ns.SetName(name)
+		_, err = r.Create(ctx, ns, metav1.CreateOptions{})
+		return err
+	}
+	remove := func(ctx context.Context, name string) error {
+		r, _, err := namespaces()
+		if err != nil {
+			return err
+		}
+		return r.Delete(ctx, name, metav1.DeleteOptions{})
 	}
 
 	cmd := &cobra.Command{
@@ -95,8 +124,66 @@ in another project, pass -n to that command instead.`,
 		},
 	}
 	listCmd.Flags().StringVarP(&output, "output", "o", "", "print the whole resources as yaml or json")
-	cmd.AddCommand(listCmd)
+	cmd.AddCommand(listCmd, &cobra.Command{
+		Use:   "create NAME",
+		Short: "Create a project",
+		Long: `Create makes a new project, a namespace of the platform. The platform
+decides which names you may take, such as ones that start with your
+tenant's name, and how many projects you may have.`,
+		Example: `  airo project create acme-web
+  airo project acme-web       # then work in it`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return createProject(cmd.Context(), cmd.OutOrStdout(), args[0], create)
+		},
+	}, &cobra.Command{
+		Use:   "delete NAME",
+		Short: "Delete a project and everything in it",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return deleteProject(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, args[0], remove)
+		},
+	})
 	return cmd
+}
+
+// createProject creates the project name.
+func createProject(ctx context.Context, out io.Writer, name string, create projectWriter) error {
+	err := create(ctx, name)
+	if apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("a project or namespace named %s exists already", name)
+	}
+	if err != nil {
+		return fmt.Errorf("could not create project %s: %w", name, err)
+	}
+	fmt.Fprintf(out, "Created project %s\n", name)
+	fmt.Fprintf(out, "  work in it: airo project %s\n", name)
+	return nil
+}
+
+// deleteProject deletes the project name. When the context kctxName, or the
+// current context when it is empty, works in it, it says so: the context
+// keeps the namespace until the person switches.
+func deleteProject(ctx context.Context, out io.Writer, access clientcmd.ConfigAccess, kctxName, name string, remove projectWriter) error {
+	err := remove(ctx, name)
+	if apierrors.IsNotFound(err) {
+		return fmt.Errorf("you have no project %q", name)
+	}
+	if err != nil {
+		return fmt.Errorf("could not delete project %s: %w", name, err)
+	}
+	fmt.Fprintf(out, "Deleted project %s\n", name)
+	cfg, err := access.GetStartingConfig()
+	if err != nil {
+		return nil
+	}
+	if kctxName == "" {
+		kctxName = cfg.CurrentContext
+	}
+	if kctx := cfg.Contexts[kctxName]; kctx != nil && kctx.Namespace == name {
+		fmt.Fprintln(out, "  your commands still work in it: choose another with airo project")
+	}
+	return nil
 }
 
 // switchProject makes target the namespace of the context name, or of the
