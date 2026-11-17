@@ -105,8 +105,9 @@ func newCreateCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		Long: `Create makes an Agent in the project and waits until it is ready.
 
 The agent runs on a Harness and, with a prompt, uses a ModelConfig. Both
-exist in the project already. With one of a kind in the project, airo takes
-it. With several, name one with --harness or --model.
+exist in the project already. Without --harness or --model, airo takes the
+project's only one, then the one marked as the default. Otherwise it stops
+and lists the names.
 
 Tools, skills and the other fields of an Agent go in a file, for
 airo apply -f.`,
@@ -138,8 +139,8 @@ airo apply -f.`,
 	cmd.Flags().StringVar(&o.prompt, "prompt", "", "the agent's system prompt")
 	cmd.Flags().StringVar(&o.promptFile, "prompt-file", "", "a file with the agent's system prompt, or - for standard input")
 	cmd.Flags().StringVar(&o.description, "description", "", "what the agent is for, in a line")
-	cmd.Flags().StringVar(&o.model, "model", "", "name of the ModelConfig to use (default: the project's only one)")
-	cmd.Flags().StringVar(&o.harness, "harness", "", "name of the Harness to run on (default: the project's only one)")
+	cmd.Flags().StringVar(&o.model, "model", "", "name of the ModelConfig to use (default: the project's only one, or its default)")
+	cmd.Flags().StringVar(&o.harness, "harness", "", "name of the Harness to run on (default: the project's only one, or its default)")
 	cmd.Flags().StringVar(&o.template, "template", "", "name of an AgentTemplate to use in place of a prompt")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file", "template")
 	cmd.MarkFlagsMutuallyExclusive("description", "template")
@@ -251,29 +252,40 @@ type choice struct {
 	gvk          schema.GroupVersionKind
 	noun, plural string
 	flag         string
+	// marker is the annotation that marks the project's default of the kind
+	// with "true", or empty for a kind without a default. The names are the
+	// platform's, not a component's.
+	marker string
 	// note adds a word to a name in the list of choices. It may be nil.
 	note func(*unstructured.Unstructured) string
 }
 
 var (
 	agents    = choice{gvk: agentGVK, noun: "agent", plural: "agents", flag: "--agent"}
-	harnesses = choice{gvk: harnessGVK, noun: "harness", plural: "harnesses", flag: "--harness", note: runtime}
-	models    = choice{gvk: modelConfigGVK, noun: "model", plural: "models", flag: "--model"}
+	harnesses = choice{gvk: harnessGVK, noun: "harness", plural: "harnesses", flag: "--harness", marker: "airohq.dev/default-harness", note: runtime}
+	models    = choice{gvk: modelConfigGVK, noun: "model", plural: "models", flag: "--model", marker: "airohq.dev/default-model"}
 	templates = choice{gvk: templateGVK, noun: "template", plural: "templates", flag: "--template"}
 )
 
 // choose returns the resource of a kind that the Agent refers to: the one
-// named, or the project's only one. It never guesses between several.
+// named, the project's only one, or the only one marked as the default. It
+// never guesses between several.
 func choose(ctx context.Context, c client.Client, ns string, k choice, name string) (*unstructured.Unstructured, error) {
 	items, err := list(ctx, c, ns, k)
 	if err != nil {
 		return nil, err
 	}
-	var names []string
+	var (
+		names    []string
+		defaults []*unstructured.Unstructured
+	)
 	for i := range items {
 		item := &items[i]
 		if item.GetName() == name {
 			return item, nil
+		}
+		if k.marker != "" && item.GetAnnotations()[k.marker] == "true" {
+			defaults = append(defaults, item)
 		}
 		n := item.GetName()
 		if k.note != nil && k.note(item) != "" {
@@ -289,8 +301,10 @@ func choose(ctx context.Context, c client.Client, ns string, k choice, name stri
 		return nil, fmt.Errorf("project %s has no %s named %s: it has %s", ns, k.noun, name, strings.Join(names, ", "))
 	case len(names) == 0:
 		return nil, fmt.Errorf("project %s has no %s, and an agent needs one: ask who runs the platform, or add one with airo apply -f", ns, k.noun)
+	case len(names) > 1 && len(defaults) == 1:
+		return defaults[0], nil
 	case len(names) > 1:
-		return nil, fmt.Errorf("project %s has %d %s, name one with %s: %s", ns, len(names), k.plural, k.flag, strings.Join(names, ", "))
+		return nil, fmt.Errorf("project %s has %d %s and no single default, name one with %s: %s", ns, len(names), k.plural, k.flag, strings.Join(names, ", "))
 	}
 	return &items[0], nil
 }

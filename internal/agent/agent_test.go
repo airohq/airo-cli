@@ -119,6 +119,38 @@ func TestCreateNeverGuessesBetweenSeveral(t *testing.T) {
 	}
 }
 
+// marked returns u as the project's default of its kind.
+func marked(u *unstructured.Unstructured, annotation string) *unstructured.Unstructured {
+	u.SetAnnotations(map[string]string{annotation: "true"})
+	return u
+}
+
+func TestCreateTakesTheDefaultAmongSeveral(t *testing.T) {
+	c := fake.NewClientBuilder().WithObjects(
+		harness("byo", "byo"), marked(harness("claude", "claude"), harnesses.marker),
+		model("haiku"), marked(model("sonnet"), models.marker),
+	).Build()
+	if _, err := run(t, c, options{prompt: "You review."}); err != nil {
+		t.Fatal(err)
+	}
+	a := created(t, c)
+	if got, _, _ := unstructured.NestedString(a.Object, "spec", "harnessRef", "name"); got != "claude" {
+		t.Errorf("harness = %q, want claude", got)
+	}
+	if got, _, _ := unstructured.NestedString(a.Object, "spec", "template", "inline", "modelConfig", "name"); got != "sonnet" {
+		t.Errorf("model = %q, want sonnet", got)
+	}
+}
+
+func TestCreateTakesNoneOfTwoDefaults(t *testing.T) {
+	c := fake.NewClientBuilder().WithObjects(
+		marked(harness("one", "claude"), harnesses.marker), marked(harness("two", "claude"), harnesses.marker), model("sonnet"),
+	).Build()
+	if _, err := run(t, c, options{}); err == nil || !strings.Contains(err.Error(), "no single default") {
+		t.Errorf("create = %v, want an error for two defaults", err)
+	}
+}
+
 func TestCreateRefusesANameTheProjectLacks(t *testing.T) {
 	c := fake.NewClientBuilder().WithObjects(harness("main", "claude"), model("sonnet")).Build()
 	for _, o := range []options{{harness: "other"}, {model: "other"}} {

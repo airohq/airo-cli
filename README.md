@@ -183,14 +183,14 @@ ready.**
 
 ```sh
 airo agent create reviewer --prompt "You review pull requests."
-airo agent create reviewer --prompt-file prompt.md --model sonnet-5.5
+airo agent create reviewer --prompt-file prompt.md --model opus-5.5 --harness claude
 airo agent list
 airo agent delete reviewer
 ```
 
 ```text
 Created agent my-project/reviewer
-  harness:  main (claude)
+  harness:  claude (claude)
   model:    sonnet-5.5
   ready
 ```
@@ -201,14 +201,23 @@ Created agent my-project/reviewer
 | `--prompt` | none | The system prompt (`spec.template.inline.systemPrompt`) |
 | `--prompt-file` | none | A file with the system prompt, or `-` for standard input |
 | `--description` | none | What the agent is for, in a line (`spec.template.inline.description`) |
-| `--model` | the project's only ModelConfig | The model to use (`spec.template.inline.modelConfig.name`) |
-| `--harness` | the project's only Harness | What runs the agent (`spec.harnessRef.name`) |
+| `--model` | see below | The ModelConfig to use (`spec.template.inline.modelConfig.name`) |
+| `--harness` | see below | The Harness that runs the agent (`spec.harnessRef.name`) |
 | `--template` | none | An AgentTemplate to use in place of a prompt, a description and a model (`spec.template.ref.name`) |
 
 **The Harness, the ModelConfig and the AgentTemplate exist in the project
-already.** `airo` never guesses between several: it stops and lists the
-names, and for a Harness what it runs, such as `claude`. A Harness that runs
-its own image (`byo`) gets a model only with `--model`.
+already.** The platform puts Harnesses and ModelConfigs there, and `airo`
+creates neither. Without `--harness` or `--model`, `airo` takes the first
+that applies:
+
+1. The project's only one.
+2. The one marked as the default, when exactly one is: a Harness with the
+   annotation `airohq.dev/default-harness: "true"`, a ModelConfig with
+   `airohq.dev/default-model: "true"`.
+
+Otherwise it stops and lists the names, and for a Harness what it runs, such
+as `claude`. A Harness that runs its own image (`byo`) gets a model only
+with `--model`.
 
 **The Agent has only the fields the flags set:**
 
@@ -220,7 +229,7 @@ metadata:
   name: reviewer
 spec:
   harnessRef:
-    name: main
+    name: claude
   template:
     inline:
       systemPrompt: You review pull requests.

@@ -39,7 +39,9 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
   `--agent`, `airo agent` takes the project's only agent, then the one marked
   as default with the annotation `airohq.dev/default-agent: "true"`, then
   shows a picker. Where nobody can answer, such as in a script, it stops and
-  lists the names.
+  lists the names. `airo agent create` finds its Harness and ModelConfig the
+  same way, with `airohq.dev/default-harness` and `airohq.dev/default-model`,
+  and without a picker.
 
 ## Arguments and flags
 
