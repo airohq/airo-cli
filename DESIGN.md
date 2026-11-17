@@ -25,6 +25,15 @@ airo agent "fix the build"   # the default task of another noun
 | Other verbs | Actions of one noun, such as `airo agent logs` |
 | No noun | Only what belongs to no resource: `airo login`, `airo apply -f`, `airo version` |
 
+**A noun that is not a kind in the cluster has only hand-written verbs.**
+`airo session` is one: a session lives in the agents' API. It has `list`,
+because people expect it, and no `get` or `delete`. Without a verb it prints
+the help.
+
+**`get` shows a resource's details, and `view` shows content.** `airo agent
+get` prints the Agent as the cluster holds it. `airo session view` prints the
+conversation.
+
 ## Default task
 
 **A noun's default task is the one thing most people want from it**: `airo
@@ -50,7 +59,9 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
 - **A flag is named for what the person gets**, such as `--public` and
   `--no-auth`. The README names the field it sets.
 - **kubectl's flags mean the same here**: `-n`, `--context`, `--kubeconfig`,
-  and `-o yaml` on `get` and `list`.
+  and `-o yaml` on `get`, `list` and `view`.
+- **A flag that names a resource is the same on every command**, such as
+  `-a`, `--agent`.
 - **`airo login` keeps what its flags say**: `--server`, `--context` and `-n`
   choose for one command elsewhere, and `airo login` writes them into the
   kubeconfig for every later command.
@@ -62,6 +73,10 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
 **What a task produces goes to standard output, and notes about it to
 standard error.** An agent's answer can be piped, and the session's ID does
 not end up in it.
+
+**An ID a command prints is one another command takes as it is.** The
+session ID of `airo agent` and `airo session list` goes into `airo session
+view`, `airo session cancel` and `airo agent -r`.
 
 ## Cleanup
 

@@ -10,7 +10,8 @@ coding agents and people changing this repository; keep it short.
 | `cmd/airo` | The entry point: the root command and kubectl's flags. A first word that is no command goes to `internal/generic` |
 | `internal/login` | `airo login`, and `airo credential`, the kubeconfig's exec plugin |
 | `internal/generic` | `list`, `get` and `delete` for any kind in the cluster, and `airo apply` |
-| `internal/agent` | `airo agent`: a session with an agent, and `airo agent create`. `a2a.go` holds the whole wire protocol of the session |
+| `internal/agent` | `airo agent`: a session with an agent, and `airo agent create`. `a2a.go` holds the whole wire protocol of the agents' API, and `api.go` what other packages get of it |
+| `internal/session` | `airo session`: list and view the person's sessions, and cancel a running turn. It reaches the agents' API only through `internal/agent` |
 | `internal/bearer` | The signed-in person's token, for a call to a component's own API |
 | `internal/tunnel` | `airo tunnel`: the Tunnel resource and the client connection |
 | `.goreleaser.yaml` | The release: binaries and the Homebrew cask |

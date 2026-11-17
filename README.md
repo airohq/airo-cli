@@ -4,7 +4,7 @@
 > **Early alpha.** Commands and flags may change.
 
 `airo` is the command-line tool of the Airo platform: sign in, talk to an
-agent, manage the resources of your project, and give a local port a URL.
+agent, see your sessions, manage the resources of your project, and give a local port a URL.
 Each command reads and writes Kubernetes resources as you, so everything it
 does to a resource can also be done with `kubectl`, and you do not need
 `kubectl` to use it.
@@ -145,7 +145,8 @@ the first that applies:
    command stops and lists the names.
 
 **A session stays in the cluster after the command ends.** Nothing is
-deleted. `--resume` takes the session's ID, which every run prints.
+deleted. `--resume` takes the session's ID, which every run prints and
+[`airo session list`](#session) shows.
 `--continue` takes the last session this machine started or resumed with
 the agent. `airo` remembers one ID for each agent in `airo/sessions.json` in
 your cache directory.
@@ -242,6 +243,78 @@ EOF
 with the cluster's reason, such as a model its Harness cannot use. Delete the
 agent, or change it with `airo apply -f`. Tools, skills and the other fields
 of an Agent go in a file for `airo apply -f` too.
+
+## Session
+
+**`airo session` shows your sessions with the agents of your project.** A
+session is a conversation with one agent. `airo agent` starts one and prints
+its ID.
+
+```sh
+airo session list                # your sessions in the project, newest first
+airo session list -a reviewer    # with one agent
+airo session view SESSION        # the conversation
+airo session cancel SESSION      # stop the turn that runs
+```
+
+```text
+SESSION                                AGENT      LAST ACTIVE   STATE     FIRST PROMPT
+7c9e6679-7425-40de-944b-e07fc1f90ae7   reviewer   5s            working   Why does the build fail?
+0b0f8f0e-1c0f-4a43-9c58-3f2f1d0a7a11   coder      3h            done      Add a test for the parser.
+```
+
+| Command | What it does |
+| --- | --- |
+| `airo session list` | Lists your sessions. `LAST ACTIVE` is the time since the newest turn changed, and `STATE` is that turn's state |
+| `airo session view SESSION` | Prints each prompt and the agent's answer, oldest first, with who wrote it and when, and then the session's state |
+| `airo session cancel SESSION` | Stops the turn that is not over and prints what it canceled. The session stays and takes the next prompt. With no such turn it says so and succeeds |
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `-a`, `--agent` | every agent | The Agent's name. Only that agent is asked, which is faster |
+| `-o`, `--output` | a table or text | `json` or `yaml`, on `list` and `view` |
+
+```text
+Session 7c9e6679-7425-40de-944b-e07fc1f90ae7 with agent reviewer
+
+You, 2026-11-17 09:20
+  Why does the build fail?
+
+Agent, 2026-11-17 09:20
+  The build fails in the step lint: main.go has an unused import.
+
+State: done, last active 25m ago
+  resume: airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+```
+
+```text
+Canceled the working turn of session 7c9e6679-7425-40de-944b-e07fc1f90ae7 with agent reviewer
+  prompt: Why does the build fail?
+  state:  canceled
+The session stays.
+  resume: airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+```
+
+**The ID in the list is the one every command takes**: `view`, `cancel` and
+`airo agent -r`. The lines that start with `resume:` go to standard error.
+
+| State | The newest turn |
+| --- | --- |
+| `queued`, `working` | The agent has it |
+| `done` | The agent answered |
+| `needs input`, `needs authorization` | The agent waits for you. `cancel` stops this turn too |
+| `failed`, `canceled`, `rejected` | The turn ended without an answer |
+
+**You see only your own sessions.** The agents' API keeps a session private
+to the person who started it.
+
+**A session is not a resource of the cluster**, so it has no `get` or
+`delete`, and `kubectl` does not show it. The commands talk to the agents'
+API as [`airo agent`](#agent) does, with the same address and sign-in.
+
+**Without `--agent`, the commands ask every Agent of the project**, because
+the API lists sessions for one agent at a time. An agent that does not answer
+is a note on standard error, and the rest is printed.
 
 ## Tunnel
 

@@ -13,10 +13,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
-// This file holds everything airo agent knows about the wire: the request it
-// sends, the shapes it reads and how they become events. The values are
+// This file holds everything airo knows about the wire of the agents' API:
+// the requests it sends, the shapes it reads and how they become events and
+// turns. The values are
 // copied on purpose. The CLI depends on the protocol, never on a component's
 // or a library's code, and a released binary pins the protocol anyway.
 
@@ -26,7 +28,16 @@ const (
 	a2aVersion       = "1.0"
 	jsonrpcVersion   = "2.0"
 	methodStream     = "SendStreamingMessage"
+	methodListTasks  = "ListTasks"
+	methodCancelTask = "CancelTask"
 	roleUser         = "ROLE_USER"
+
+	// The largest page ListTasks gives.
+	maxPageSize = 100
+
+	// The states of a task that is worked on.
+	stateSubmitted = "TASK_STATE_SUBMITTED"
+	stateWorking   = "TASK_STATE_WORKING"
 
 	// The states that end a turn. In the last two the agent waits for the
 	// person. A task in any other state is still worked on.
@@ -41,12 +52,21 @@ const (
 	codeUnauthenticated     = -31401
 	codeUnauthorized        = -31403
 	codeVersionNotSupported = -32009
+	codeTaskNotFound        = -32001
 )
 
 // kagent agent path: an Agent's A2A endpoint is <url>/agents/<namespace>/<name>.
 const agentPathPrefix = "/agents/"
 
-// The request.
+// kagent's A2A metadata, read from a task and from its messages and
+// artifacts: when it was created, as RFC 3339. The protocol itself only has
+// the time of a task's last state.
+const (
+	metaTaskCreated = "kagent.dev/a2a/task-created-at"
+	metaPosition    = "kagent.dev/a2a/timeline-position"
+)
+
+// The request that sends a prompt.
 type rpcRequest struct {
 	JSONRPC string     `json:"jsonrpc"`
 	ID      string     `json:"id"`
@@ -56,6 +76,34 @@ type rpcRequest struct {
 
 type sendParams struct {
 	Message wireMessage `json:"message"`
+}
+
+// The request of any other method.
+type callRequest struct {
+	JSONRPC string `json:"jsonrpc"`
+	ID      string `json:"id"`
+	Method  string `json:"method"`
+	Params  any    `json:"params"`
+}
+
+// listParams are the parameters of ListTasks. Without a contextId it lists
+// the caller's tasks with the agent in every session. A task comes with its
+// whole history, and with its artifacts only when asked.
+type listParams struct {
+	ContextID        string `json:"contextId,omitempty"`
+	PageSize         int    `json:"pageSize,omitempty"`
+	PageToken        string `json:"pageToken,omitempty"`
+	IncludeArtifacts bool   `json:"includeArtifacts,omitempty"`
+}
+
+type listResult struct {
+	Tasks         []wireTask `json:"tasks"`
+	NextPageToken string     `json:"nextPageToken"`
+}
+
+// taskParams are the parameters of CancelTask.
+type taskParams struct {
+	ID string `json:"id"`
 }
 
 // The response: each SSE data block is one of these.
@@ -79,10 +127,11 @@ type streamResult struct {
 }
 
 type wireMessage struct {
-	MessageID string     `json:"messageId,omitempty"`
-	Role      string     `json:"role,omitempty"`
-	Parts     []wirePart `json:"parts"`
-	ContextID string     `json:"contextId,omitempty"`
+	MessageID string         `json:"messageId,omitempty"`
+	Role      string         `json:"role,omitempty"`
+	Parts     []wirePart     `json:"parts"`
+	ContextID string         `json:"contextId,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
 // wirePart is a part's text. A part with a file or data has none.
@@ -91,14 +140,18 @@ type wirePart struct {
 }
 
 type wireTask struct {
+	ID        string         `json:"id"`
 	ContextID string         `json:"contextId"`
 	Status    wireStatus     `json:"status"`
+	History   []wireMessage  `json:"history"`
 	Artifacts []wireArtifact `json:"artifacts"`
+	Metadata  map[string]any `json:"metadata"`
 }
 
 type wireStatus struct {
-	State   string       `json:"state"`
-	Message *wireMessage `json:"message"`
+	State     string       `json:"state"`
+	Timestamp string       `json:"timestamp"`
+	Message   *wireMessage `json:"message"`
 }
 
 type wireStatusUpdate struct {
@@ -112,8 +165,9 @@ type wireArtifactUpdate struct {
 }
 
 type wireArtifact struct {
-	ArtifactID string     `json:"artifactId"`
-	Parts      []wirePart `json:"parts"`
+	ArtifactID string         `json:"artifactId"`
+	Parts      []wirePart     `json:"parts"`
+	Metadata   map[string]any `json:"metadata"`
 }
 
 // event is what one stream object means to the command.
@@ -200,7 +254,7 @@ type a2aClient struct {
 // starts a session. unread counts the stream objects this version could not
 // read.
 func (c *a2aClient) send(ctx context.Context, ns, agent, contextID, prompt string, handle func(event) bool) (unread int, err error) {
-	body, err := json.Marshal(rpcRequest{
+	resp, target, err := c.post(ctx, ns, agent, "text/event-stream", rpcRequest{
 		JSONRPC: jsonrpcVersion,
 		ID:      "1",
 		Method:  methodStream,
@@ -213,24 +267,6 @@ func (c *a2aClient) send(ctx context.Context, ns, agent, contextID, prompt strin
 	})
 	if err != nil {
 		return 0, err
-	}
-	target := strings.TrimRight(c.url, "/") + agentPathPrefix + url.PathEscape(ns) + "/" + url.PathEscape(agent)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
-	if err != nil {
-		return 0, err
-	}
-	tok, err := c.token()
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set(a2aVersionHeader, a2aVersion)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("reach the agents' API at %s: %w", c.url, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -273,6 +309,105 @@ func (c *a2aClient) send(ctx context.Context, ns, agent, contextID, prompt strin
 		return unread, err
 	}
 	return unread, readSSE(resp.Body, each)
+}
+
+// post sends a JSON-RPC request to the agent's endpoint as the person, and
+// returns the response and the address it went to.
+func (c *a2aClient) post(ctx context.Context, ns, agent, accept string, request any) (*http.Response, string, error) {
+	body, err := json.Marshal(request)
+	if err != nil {
+		return nil, "", err
+	}
+	target := strings.TrimRight(c.url, "/") + agentPathPrefix + url.PathEscape(ns) + "/" + url.PathEscape(agent)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	if err != nil {
+		return nil, "", err
+	}
+	tok, err := c.token()
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set(a2aVersionHeader, a2aVersion)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", accept)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("reach the agents' API at %s: %w", c.url, err)
+	}
+	return resp, target, nil
+}
+
+// call sends a request that has one answer, and reads its result.
+func (c *a2aClient) call(ctx context.Context, ns, agent, method string, params, result any) error {
+	resp, target, err := c.post(ctx, ns, agent, "application/json", callRequest{
+		JSONRPC: jsonrpcVersion,
+		ID:      "1",
+		Method:  method,
+		Params:  params,
+	})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return httpError(resp, target)
+	}
+	var r rpcResponse
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return fmt.Errorf("the agents' API answered %s with what airo cannot read: this airo may not match the platform, update it (%v)", method, err)
+	}
+	if r.Error != nil {
+		return r.Error.err()
+	}
+	if len(r.Result) == 0 {
+		return fmt.Errorf("the agents' API answered %s without a result: this airo may not match the platform, update it", method)
+	}
+	if err := json.Unmarshal(r.Result, result); err != nil {
+		return fmt.Errorf("the agents' API answered %s with a result airo cannot read: this airo may not match the platform, update it (%v)", method, err)
+	}
+	return nil
+}
+
+// tasks returns the person's tasks with the agent, page by page: those of
+// one session, or of every session when contextID is empty. artifacts asks
+// for the agent's answers too.
+func (c *a2aClient) tasks(ctx context.Context, ns, agent, contextID string, artifacts bool) ([]wireTask, error) {
+	var (
+		all  []wireTask
+		seen = map[string]bool{}
+	)
+	p := listParams{ContextID: contextID, PageSize: maxPageSize, IncludeArtifacts: artifacts}
+	for {
+		var page listResult
+		if err := c.call(ctx, ns, agent, methodListTasks, p, &page); err != nil {
+			return nil, err
+		}
+		all = append(all, page.Tasks...)
+		// A token that comes back again would never end.
+		if page.NextPageToken == "" || seen[page.NextPageToken] {
+			return all, nil
+		}
+		seen[page.NextPageToken] = true
+		p.PageToken = page.NextPageToken
+	}
+}
+
+// cancel asks the agent to stop a task, and returns the task as it is then.
+func (c *a2aClient) cancel(ctx context.Context, ns, agent, id string) (wireTask, error) {
+	var t wireTask
+	err := c.call(ctx, ns, agent, methodCancelTask, taskParams{ID: id}, &t)
+	return t, err
+}
+
+// wireTime reads a time of the wire, RFC 3339. It is zero for anything else.
+func wireTime(v any) time.Time {
+	s, _ := v.(string)
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // readSSE calls each for every event of a server-sent event stream, with the
@@ -323,6 +458,9 @@ func readSSE(r io.Reader, each func(data []byte) (bool, error)) error {
 var (
 	errSignIn   = errors.New("the agents' API did not accept your sign-in: sign in again with airo login")
 	errNoAccess = errors.New("you have no access to this tenant's agents: ask a platform admin")
+	// ErrNotFound is the error for a session or a turn the agent does not
+	// have for the person.
+	ErrNotFound = errors.New("the agent has no such session")
 )
 
 // httpError explains a response that is not a stream.
@@ -349,6 +487,8 @@ func (e *rpcError) err() error {
 		return errSignIn
 	case codeUnauthorized:
 		return errNoAccess
+	case codeTaskNotFound:
+		return ErrNotFound
 	case codeVersionNotSupported:
 		return fmt.Errorf("the agents' API does not speak A2A %s, which this airo does: update airo (%s)", a2aVersion, e.Message)
 	}
