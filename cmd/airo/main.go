@@ -63,6 +63,7 @@ also the kinds not listed below:
 		login.NewStatusCommand(flags),
 		login.NewWhoamiCommand(flags),
 		login.NewContextCommand(flags),
+		login.NewProjectCommand(flags),
 		login.NewCredentialCommand(),
 		generic.NewApplyCommand(flags),
 		agent.NewCommand(flags),

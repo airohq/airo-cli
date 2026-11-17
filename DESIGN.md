@@ -37,6 +37,11 @@ such as `airo login`, has one name.
 because people expect it, and no `get` or `delete`. Without a verb it prints
 the help. `airo context` is another: a context lives in the kubeconfig.
 
+**A noun that is the platform's word for a kind has its own verbs too.**
+`airo project` is one: a project is a Namespace, and `airo namespace list`
+still works for the kind. `airo project list` marks the project the commands
+work in.
+
 **A noun gets a short form when people already know one**, such as `airo
 ctx` for `airo context`. Add it as an alias when you add the noun.
 
@@ -61,6 +66,7 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
 - **A noun whose task is to switch to one of its own is the exception.**
   `airo context customer` takes the context's name, because the name is all
   the task needs. `-` switches back to the previous one, as in `cd -`.
+  `airo project acme-web` is the same for the project the commands work in.
 - **A verb wins over an argument.** `airo agent list` lists agents. A prompt
   that equals a verb goes after `--`, as in `airo agent -- list`.
 - **A missing choice is resolved in the cluster, then by asking.** With no
