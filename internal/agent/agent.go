@@ -268,25 +268,44 @@ var (
 	templates = choice{gvk: templateGVK, noun: "template", plural: "templates", flag: "--template"}
 )
 
+// newestDefault returns the item marked as the default with the annotation
+// marker, or nil when none is. Of several, the newest wins, as with
+// Kubernetes' default StorageClass: a project's people override the
+// platform's default by marking their own, and two defaults are a normal
+// state while someone moves from one to the other. The name decides between
+// two of the same second, so the answer is the same on every run.
+func newestDefault(items []unstructured.Unstructured, marker string) *unstructured.Unstructured {
+	var newest *unstructured.Unstructured
+	for i := range items {
+		item := &items[i]
+		if marker == "" || item.GetAnnotations()[marker] != "true" {
+			continue
+		}
+		if newest == nil {
+			newest = item
+			continue
+		}
+		at, than := item.GetCreationTimestamp(), newest.GetCreationTimestamp()
+		if than.Before(&at) || (at.Equal(&than) && item.GetName() < newest.GetName()) {
+			newest = item
+		}
+	}
+	return newest
+}
+
 // choose returns the resource of a kind that the Agent refers to: the one
-// named, the project's only one, or the only one marked as the default. It
-// never guesses between several.
+// named, the project's only one, or the one marked as the default. It never
+// guesses between several without a default.
 func choose(ctx context.Context, c client.Client, ns string, k choice, name string) (*unstructured.Unstructured, error) {
 	items, err := list(ctx, c, ns, k)
 	if err != nil {
 		return nil, err
 	}
-	var (
-		names    []string
-		defaults []*unstructured.Unstructured
-	)
+	var names []string
 	for i := range items {
 		item := &items[i]
 		if item.GetName() == name {
 			return item, nil
-		}
-		if k.marker != "" && item.GetAnnotations()[k.marker] == "true" {
-			defaults = append(defaults, item)
 		}
 		n := item.GetName()
 		if k.note != nil && k.note(item) != "" {
@@ -302,12 +321,13 @@ func choose(ctx context.Context, c client.Client, ns string, k choice, name stri
 		return nil, fmt.Errorf("project %s has no %s named %s: it has %s", ns, k.noun, name, strings.Join(names, ", "))
 	case len(names) == 0:
 		return nil, fmt.Errorf("project %s has no %s, and an agent needs one: ask who runs the platform, or add one with airo apply -f", ns, k.noun)
-	case len(names) > 1 && len(defaults) == 1:
-		return defaults[0], nil
-	case len(names) > 1:
-		return nil, fmt.Errorf("project %s has %d %s and no single default, name one with %s: %s", ns, len(names), k.plural, k.flag, strings.Join(names, ", "))
+	case len(names) == 1:
+		return &items[0], nil
 	}
-	return &items[0], nil
+	if d := newestDefault(items, k.marker); d != nil {
+		return d, nil
+	}
+	return nil, fmt.Errorf("project %s has %d %s and no default, name one with %s: %s", ns, len(names), k.plural, k.flag, strings.Join(names, ", "))
 }
 
 // list returns the project's resources of a kind.
