@@ -28,7 +28,16 @@ airo agent "fix the build"   # the default task of another noun
 **A noun that is not a kind in the cluster has only hand-written verbs.**
 `airo session` is one: a session lives in the agents' API. It has `list`,
 because people expect it, and no `get` or `delete`. Without a verb it prints
-the help.
+the help. `airo context` is another: a context lives in the kubeconfig.
+
+**A noun gets a short form when people already know one**, such as `airo
+ctx` for `airo context`. Add it as an alias when you add the noun.
+
+- **Take the short form people use elsewhere**, such as kubectl's short
+  names and `kubectx`. Do not invent one.
+- **A noun without a known short form has none.**
+- **The README and the help use the long form**, and name the short one
+  once.
 
 **`get` shows a resource's details, and `view` shows content.** `airo agent
 get` prints the Agent as the cluster holds it. `airo session view` prints the
@@ -42,9 +51,11 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
 - **Its argument is what the task acts on, never a resource's name.** It is
   the port for a tunnel and the prompt for an agent. A resource's name is a
   flag, such as `--name` or `--agent`.
+- **A noun whose task is to switch to one of its own is the exception.**
+  `airo context customer` takes the context's name, because the name is all
+  the task needs. `-` switches back to the previous one, as in `cd -`.
 - **A verb wins over an argument.** `airo agent list` lists agents. A prompt
-  that equals a verb goes after `--`, as in `airo agent -- list`.
-- **A missing choice is resolved in the cluster, then by asking.** With no
+  that equals a verb goes after `--`, as in `airo agent -- list`.- **A missing choice is resolved in the cluster, then by asking.** With no
   `--agent`, `airo agent` takes the project's only agent, then the one marked
   as default with the annotation `airohq.dev/default-agent: "true"`, then
   shows a picker. Where nobody can answer, such as in a script, it stops and
