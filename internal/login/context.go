@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,7 +42,8 @@ cluster's, are not listed and not switched to.`,
   airo context customer       # switch to the context customer
   airo context -              # switch back to the previous one
   airo context list
-  airo ctx -                  # ctx is short for context`,
+  airo context set --server https://api.example.com
+  airo ctx -               # ctx is short for context`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := newPreviousStore()
@@ -69,7 +71,138 @@ cluster's, are not listed and not switched to.`,
 			return listContexts(cmd.OutOrStdout(), flags.ToRawKubeConfigLoader().ConfigAccess())
 		},
 	})
+	cmd.AddCommand(newContextSetCommand(flags))
 	return cmd
+}
+
+// newContextSetCommand returns airo context set.
+func newContextSetCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
+	var (
+		p      platform
+		caData string
+	)
+	cmd := &cobra.Command{
+		Use:   "set [NAME]",
+		Short: "Change what a sign-in holds, such as the platform's address",
+		Long: `Set changes values of a sign-in in your kubeconfig, for every later command
+of airo and kubectl, without signing in again. It is airo's form of kubectl
+config set-context and set-cluster.
+
+Without a name it changes the current context. Only the flags you pass are
+changed. Contexts that do not sign in through the platform are left alone,
+and a new sign-in is made with airo login.`,
+		Example: `  airo context set --server https://api.example.com
+  airo context set -n acme-web                # work in another project from now on
+  airo context set customer --certificate-authority ca.crt
+  airo context set --issuer https://login.example.com/ --client-id abc123`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := *flags.Context
+			if len(args) == 1 {
+				if name != "" && name != args[0] {
+					return fmt.Errorf("name one context: got %s and --context %s", args[0], name)
+				}
+				name = args[0]
+			}
+			var err error
+			p.server = *flags.APIServer
+			if p.ca, err = readCA(*flags.CAFile, caData); err != nil {
+				return err
+			}
+			return setContext(cmd.OutOrStdout(), flags.ToRawKubeConfigLoader().ConfigAccess(), name, p, *flags.Namespace)
+		},
+	}
+	cmd.Flags().StringVar(&p.issuer, "issuer", "", "the OIDC issuer's URL")
+	cmd.Flags().StringVar(&p.clientID, "client-id", "", "the OIDC client ID")
+	cmd.Flags().StringVar(&caData, "certificate-authority-data", "", caDataUsage)
+	return cmd
+}
+
+// setContext writes the values of p that are set, and namespace, into the
+// sign-in name, or into the current context when name is empty.
+func setContext(out io.Writer, access clientcmd.ConfigAccess, name string, p platform, namespace string) error {
+	if p.server == "" && p.ca == nil && p.issuer == "" && p.clientID == "" && namespace == "" {
+		return errors.New("nothing to set: pass --server, --certificate-authority, --issuer, --client-id or -n")
+	}
+	if p.server != "" {
+		if u, err := url.Parse(p.server); err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+			return fmt.Errorf("--server %q is not an address such as https://api.example.com", p.server)
+		}
+	}
+	cfg, err := access.GetStartingConfig()
+	if err != nil {
+		return err
+	}
+	names := signIns(cfg)
+	if len(names) == 0 {
+		return errors.New("the kubeconfig has no sign-in: make one with airo login")
+	}
+	if name == "" {
+		name = cfg.CurrentContext
+	}
+	o, err := oidcOf(cfg, name)
+	if err != nil {
+		return fmt.Errorf("%w: your sign-ins are %s", contextError(name, err), strings.Join(names, ", "))
+	}
+	kctx := cfg.Contexts[name]
+
+	var shared []string
+	if p.server != "" || p.ca != nil {
+		cluster := cfg.Clusters[kctx.Cluster]
+		if cluster == nil {
+			return fmt.Errorf("context %q names the cluster %q, which the kubeconfig does not have: sign in again with airo login --server", name, kctx.Cluster)
+		}
+		if p.server != "" {
+			cluster.Server = p.server
+		}
+		if p.ca != nil {
+			cluster.CertificateAuthority, cluster.CertificateAuthorityData = "", p.ca
+		}
+		// Sign-ins at the same platform share the cluster's entry.
+		for _, other := range names {
+			if other != name && cfg.Contexts[other].Cluster == kctx.Cluster {
+				shared = append(shared, other)
+			}
+		}
+	}
+	if p.issuer != "" || p.clientID != "" {
+		if p.issuer != "" {
+			o.issuer = p.issuer
+		}
+		if p.clientID != "" {
+			o.clientID = p.clientID
+		}
+		// As airo login does, this takes over an entry that ran kubelogin.
+		o.session = name
+		cfg.AuthInfos[kctx.AuthInfo] = execUser(o, cfg.AuthInfos[kctx.AuthInfo].LocationOfOrigin)
+	}
+	if namespace != "" {
+		kctx.Namespace = namespace
+	}
+	if err := clientcmd.ModifyConfig(access, *cfg, true); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "Set context %s\n", name)
+	if p.server != "" {
+		fmt.Fprintf(out, "  server:    %s\n", p.server)
+	}
+	if p.ca != nil {
+		fmt.Fprintln(out, "  certificate authority: replaced")
+	}
+	if p.issuer != "" {
+		fmt.Fprintf(out, "  issuer:    %s\n", p.issuer)
+	}
+	if p.clientID != "" {
+		fmt.Fprintf(out, "  client ID: %s\n", p.clientID)
+	}
+	if namespace != "" {
+		fmt.Fprintf(out, "  namespace: %s\n", namespace)
+	}
+	if len(shared) > 0 {
+		fmt.Fprintf(out, "The same platform's entry serves %s, so the address changed there too\n", strings.Join(shared, ", "))
+	}
+	return nil
 }
 
 // switchContext makes target the kubeconfig's current context. An empty
