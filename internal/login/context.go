@@ -1,7 +1,6 @@
 package login
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,13 +10,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ktr0731/go-fuzzyfinder"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/printers"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+
+	"github.com/airohq/airo-cli/internal/picker"
 )
 
 // previousArg is the argument that switches back, as in cd - and kubectx -.
@@ -27,7 +26,7 @@ const previousArg = "-"
 func NewContextCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "context [NAME|-]",
-		Aliases: []string{"ctx"},
+		Aliases: []string{"contexts", "ctx"},
 		Short:   "Switch between your sign-ins",
 		Long: `Context makes another sign-in the current context of your kubeconfig, for
 every later command of airo and kubectl. A sign-in is a context that airo
@@ -54,9 +53,9 @@ cluster's, are not listed and not switched to.`,
 				target = args[0]
 			}
 			var ask func([]string, int) (string, error)
-			if isTerminal(cmd.InOrStdin()) {
+			if picker.Terminal(cmd.InOrStdin()) {
 				ask = func(names []string, current int) (string, error) {
-					return pickContext(cmd.Context(), names, current)
+					return picker.One(cmd.Context(), "context", names, current)
 				}
 			}
 			return switchContext(cmd.OutOrStdout(), flags.ToRawKubeConfigLoader().ConfigAccess(), store, target, ask)
@@ -171,29 +170,6 @@ func signIns(cfg *clientcmdapi.Config) []string {
 	return names
 }
 
-// pickContext shows the picker with the cursor on the current context. It
-// returns an empty name when the person left without choosing.
-func pickContext(ctx context.Context, names []string, current int) (string, error) {
-	i, err := fuzzyfinder.Find(names,
-		func(i int) string {
-			if i == current {
-				return names[i] + " (current)"
-			}
-			return names[i]
-		},
-		fuzzyfinder.WithContext(ctx),
-		fuzzyfinder.WithPromptString("context> "),
-		fuzzyfinder.WithPreselected(func(i int) bool { return i == current }),
-	)
-	if errors.Is(err, fuzzyfinder.ErrAbort) || ctx.Err() != nil {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("the picker did not open, name the context instead: %w", err)
-	}
-	return names[i], nil
-}
-
 // previousStore remembers the context the person switched away from, in the
 // user's cache directory, for airo context -.
 type previousStore struct {
@@ -219,10 +195,4 @@ func (s previousStore) put(name string) error {
 		return err
 	}
 	return os.WriteFile(s.path, []byte(name+"\n"), 0o600)
-}
-
-// isTerminal reports whether a person types the input.
-func isTerminal(in io.Reader) bool {
-	f, ok := in.(*os.File)
-	return ok && term.IsTerminal(int(f.Fd()))
 }

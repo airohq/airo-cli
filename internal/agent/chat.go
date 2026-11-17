@@ -8,10 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -21,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/airohq/airo-cli/internal/bearer"
+	"github.com/airohq/airo-cli/internal/picker"
 )
 
 // An Agent with this annotation set to "true" is the one airo agent talks to
@@ -59,11 +57,17 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 	}
 	errOut := cmd.ErrOrStderr()
 	in := &lines{r: bufio.NewReader(cmd.InOrStdin())}
-	terminal := isTerminal(cmd.InOrStdin())
+	terminal := picker.Terminal(cmd.InOrStdin())
 
 	var ask func([]string) (string, error)
 	if terminal {
-		ask = picker(ctx, errOut, in)
+		ask = func(names []string) (string, error) {
+			name, err := picker.One(ctx, "agent", names, -1)
+			if err == nil && name == "" {
+				err = errors.New("no agent chosen: name one with --agent")
+			}
+			return name, err
+		}
 	}
 	agent, err := pick(ctx, c, ns, o.agent, ask)
 	if err != nil {
@@ -153,29 +157,6 @@ func pick(ctx context.Context, c client.Client, ns, name string, ask func([]stri
 		return ask(names)
 	}
 	return "", fmt.Errorf("project %s has %d agents and no single default, name one with --agent: %s", ns, len(names), strings.Join(names, ", "))
-}
-
-// picker asks the person at the terminal which agent to talk to.
-func picker(ctx context.Context, out io.Writer, in *lines) func([]string) (string, error) {
-	return func(names []string) (string, error) {
-		fmt.Fprintln(out, "Which agent?")
-		for i, name := range names {
-			fmt.Fprintf(out, "  %d. %s\n", i+1, name)
-		}
-		fmt.Fprint(out, "Number or name: ")
-		line, err := in.read(ctx)
-		if err != nil {
-			return "", errors.New("no agent chosen: name one with --agent")
-		}
-		line = strings.TrimSpace(line)
-		if i, err := strconv.Atoi(line); err == nil && i >= 1 && i <= len(names) {
-			return names[i-1], nil
-		}
-		if slices.Contains(names, line) {
-			return line, nil
-		}
-		return "", fmt.Errorf("%q is none of the agents: name one with --agent", line)
-	}
 }
 
 // endpoint returns the address of the agents' API for the project.
@@ -431,14 +412,4 @@ func (l *lines) read(ctx context.Context) (string, error) {
 		}
 		return "", r.err
 	}
-}
-
-// isTerminal reports whether a person types the input.
-func isTerminal(in io.Reader) bool {
-	f, ok := in.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }

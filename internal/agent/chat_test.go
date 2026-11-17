@@ -75,21 +75,6 @@ func TestPick(t *testing.T) {
 	}
 }
 
-func TestPicker(t *testing.T) {
-	names := []string{"coder", "reviewer"}
-	for input, want := range map[string]string{"2\n": "reviewer", "coder\n": "coder", "3\n": "", "": ""} {
-		var out bytes.Buffer
-		in := &lines{r: bufio.NewReader(strings.NewReader(input))}
-		got, err := picker(context.Background(), &out, in)(names)
-		if got != want || (want == "") != (err != nil) {
-			t.Errorf("picker(%q) = %q, %v; want %q", input, got, err, want)
-		}
-		if !strings.Contains(out.String(), "2. reviewer") {
-			t.Errorf("picker shows %q", out.String())
-		}
-	}
-}
-
 func TestEndpoint(t *testing.T) {
 	ctx := context.Background()
 	cm := func(data map[string]string) *corev1.ConfigMap {
