@@ -109,6 +109,7 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 	}
 	switch {
 	case ui.Chat(cmd.InOrStdin(), s.out, s.errOut):
+		s.details = func(ctx context.Context) chatDetails { return readChatDetails(ctx, c, ns, agent) }
 		return s.chat(ctx, cmd.InOrStdin(), prompt)
 	case prompt != "":
 		return s.once(ctx, prompt)
@@ -206,6 +207,7 @@ type session struct {
 	printer printer
 	observe func(event)
 	styles  *ui.Styles // the terminal chat's resolved theme, for its closing hint
+	details func(context.Context) chatDetails
 }
 
 // errDetached is the turn's error when the person stopped it.

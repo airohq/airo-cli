@@ -31,6 +31,7 @@ func NewPalette(out io.Writer) Palette {
 // symbol; none of these styles changes the text it renders.
 type Styles struct {
 	Default, Muted, Accent, Success, Warning, Error lipgloss.Style
+	AgentName, HarnessName, ModelName               lipgloss.Style
 }
 
 func NewStyles(out io.Writer) Styles {
@@ -42,8 +43,11 @@ func (p Palette) Styles() Styles {
 		return Styles{}
 	}
 	s := Styles{
-		Accent:  lipgloss.NewStyle().Bold(true),
-		Warning: lipgloss.NewStyle().Bold(true),
+		Accent:      lipgloss.NewStyle().Bold(true),
+		Warning:     lipgloss.NewStyle().Bold(true),
+		AgentName:   lipgloss.NewStyle().Bold(true),
+		HarnessName: lipgloss.NewStyle().Bold(true),
+		ModelName:   lipgloss.NewStyle().Bold(true),
 		// Outcome colours belong to the user's terminal theme. Always pair
 		// them with a word or marker; colour alone never carries meaning.
 		Success: lipgloss.NewStyle().Foreground(ansi.Green),
@@ -56,11 +60,18 @@ func (p Palette) Styles() Styles {
 	}
 	bg := rgb(p.Background)
 	accent, warning := rgb(lipgloss.Color("#226D7A")), rgb(lipgloss.Color("#826021"))
+	// The status line uses Codex-like Catppuccin tones, with the model in
+	// warm yellow. These identify settings; they are not outcome colours.
+	agent, harness, model := "#7287FD", "#40A02B", "#DF8E1D"
 	if luminance(bg) < 0.179 {
 		accent, warning = rgb(lipgloss.Color("#6BB8C4")), rgb(lipgloss.Color("#C6A46A"))
+		agent, harness, model = "#B4BEFE", "#A6E3A1", "#F9E2AF"
 	}
 	s.Accent = lipgloss.NewStyle().Foreground(p.readable(accent, bg))
 	s.Warning = lipgloss.NewStyle().Foreground(p.readable(warning, bg))
+	s.AgentName = s.AgentName.Foreground(p.readable(rgb(lipgloss.Color(agent)), bg))
+	s.HarnessName = s.HarnessName.Foreground(p.readable(rgb(lipgloss.Color(harness)), bg))
+	s.ModelName = s.ModelName.Foreground(p.readable(rgb(lipgloss.Color(model)), bg))
 	if p.Foreground != nil {
 		muted := blend(bg, rgb(p.Foreground), 0.6)
 		s.Muted = lipgloss.NewStyle().Foreground(p.readable(muted, bg))

@@ -41,7 +41,7 @@ func TestPaletteContrastAndCapabilities(t *testing.T) {
 					// role still needs to reach the contrast target.
 					p := Palette{Profile: profile, Background: bg, Foreground: color.RGBA{128, 128, 128, 255}}
 					s := p.Styles()
-					for name, style := range map[string]lipgloss.Style{"accent": s.Accent, "warning": s.Warning, "muted": s.Muted} {
+					for name, style := range map[string]lipgloss.Style{"accent": s.Accent, "warning": s.Warning, "muted": s.Muted, "agent": s.AgentName, "harness": s.HarnessName, "model": s.ModelName} {
 						fg := style.GetForeground()
 						if ratio := contrast(rgb(fg), bg); ratio < 4.5 {
 							t.Errorf("%s %s on %v: contrast %.3f", profile, name, bg, ratio)
@@ -80,7 +80,7 @@ func TestPaletteFallbacks(t *testing.T) {
 		if s.Muted.Render("hint") != "hint" || s.Default.Render("answer") != "answer" {
 			t.Error("unknown palette imposed a foreground, background or faint text")
 		}
-		for _, style := range []lipgloss.Style{s.Accent, s.Warning} {
+		for _, style := range []lipgloss.Style{s.Accent, s.Warning, s.AgentName, s.HarnessName, s.ModelName} {
 			if !style.GetBold() || style.Render("label") != lipgloss.NewStyle().Bold(true).Render("label") {
 				t.Error("unknown colour must use default foreground with emphasis")
 			}
@@ -91,7 +91,7 @@ func TestPaletteFallbacks(t *testing.T) {
 	}
 	for _, profile := range []colorprofile.Profile{colorprofile.Unknown, colorprofile.NoTTY, colorprofile.ASCII} {
 		s := (Palette{Profile: profile, Background: lipgloss.Color("#000000"), Foreground: lipgloss.Color("#FFFFFF")}).Styles()
-		for _, style := range []lipgloss.Style{s.Default, s.Muted, s.Accent, s.Success, s.Warning, s.Error} {
+		for _, style := range []lipgloss.Style{s.Default, s.Muted, s.Accent, s.Success, s.Warning, s.Error, s.AgentName, s.HarnessName, s.ModelName} {
 			if style.Render("text") != "text" {
 				t.Errorf("%s introduced escapes", profile)
 			}

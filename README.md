@@ -325,6 +325,15 @@ printed; use `airo session view SESSION` to read the saved conversation.
 **On a terminal, the chat stays in your scrollback.** Answers render as
 Markdown above the input, with a status and elapsed time while the agent
 works. It uses your terminal's colours and never takes over the full screen.
+Under the input, the status line shows the agent name, configured harness
+and model without prefixes, separated by muted dots: lavender for the agent,
+soft green for the harness and warm yellow for the model. The full session
+ID stays muted on the right for copying. On narrower
+terminals the ID moves to its own line. The model name comes from the
+referenced ModelConfig; unreadable details show as unknown without blocking
+the conversation. These are the Agent's current settings; resumed sessions
+can still use an older revision. Routine keyboard guidance appears through
+`/help`, while contextual hints explain actions such as interrupting a turn.
 The prompt mark keeps its UI accent; hints and the agent's marker use a
 readable neutral. These adapt to the terminal's reported
 background and colour support, with separate tones for light and dark themes.

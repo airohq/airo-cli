@@ -158,6 +158,7 @@ readable text, spacing and weight. Use warm, muted amber for UI warnings.
 | Default | The terminal's own foreground and background | Answer prose, prompts, commands and other ordinary text |
 | Muted | A readable secondary neutral | Supporting IDs, hints, keys, timestamps and the agent's `•` marker |
 | Accent | The existing prompt accent | The prompt's `›` marker, a focused control or the selected item's label |
+| AgentName, HarnessName, ModelName | Lavender, soft green and warm yellow, respectively | The three bold values in the chat status line |
 | Success | The terminal's green | A completed outcome, with `✓` or a word such as `Done` |
 | Warning | Warm, muted amber | Something needing attention, with `!` and an explanation |
 | Error | The terminal's red | A failure, with `✗` or `Error` and what went wrong |
@@ -173,6 +174,9 @@ background:
 | --- | --- | --- |
 | Accent | `#6BB8C4` | `#226D7A` |
 | Warning | `#C6A46A` | `#826021` |
+| AgentName | `#B4BEFE` | `#7287FD` |
+| HarnessName | `#A6E3A1` | `#40A02B` |
+| ModelName | `#F9E2AF` | `#DF8E1D` |
 | Muted text | Blend about 60% of the terminal foreground with 40% of its background, then adjust for readability | The same rule, using the light theme's colours |
 
 - **Inherit the canvas.** Do not impose a black background or white text.
@@ -285,8 +289,26 @@ replay history too. A single prompt, supplied as an argument or on stdin,
 prints only its new answer. Loading history is a snapshot, not a connection
 to an already-running turn's stream; label saved unfinished states clearly.
 
-**Keys mean what people know from other tools.** A line under the input
-names the ones that matter now.
+**The status line identifies the conversation.** Under the input, show the
+agent's name, configured harness and model on the left, without `Agent`,
+`Harness` or `Model` prefixes. Separate them with muted middle dots. Use
+bold lavender for the agent, soft green for the harness and warm yellow for
+the model, taking the tone from Codex's status line. Keep the session ID
+muted. Adapt these colours to the background and fall back to neutral bold
+when colours are unknown or limited. Resolve the model's actual name from
+its ModelConfig, including referenced templates;
+do not present a configuration alias as the model. Load these details without
+blocking input, and mark unavailable fields as unknown. These are the Agent's
+current settings, not a claim about a resumed session's pinned revision.
+On the right, show the full session ID as soon as it is known, including
+immediately on resume. Keep it easy to select and copy. If the row is too
+wide, move the ID to a separate right-aligned line; never abbreviate it.
+Keep the working status and elapsed time above the input while a turn runs.
+
+**Keys mean what people know from other tools.** Keep routine keyboard help
+behind `/help`, with contextual hints after an action needs explanation,
+such as Enter during a turn or the first Ctrl-C. Do not repeat the key guide
+in the idle or working status line.
 
 | Key | Does |
 | --- | --- |

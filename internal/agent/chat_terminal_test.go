@@ -301,6 +301,11 @@ func TestChatSlashCommands(t *testing.T) {
 	if len(*prompts) != 0 || !strings.Contains(m.hint, "/exit") {
 		t.Fatal("/help should be local")
 	}
+	for _, key := range []string{"Enter sends", "Ctrl-J", "Shift-Enter", "↑↓", "Esc", "Ctrl-D", "Ctrl-C twice"} {
+		if !strings.Contains(m.hint, key) {
+			t.Errorf("/help omitted %s", key)
+		}
+	}
 	m.input.SetValue("/review main")
 	press(m, tea.KeyEnter, 0)
 	if len(*prompts) != 1 || (*prompts)[0] != "/review main" {
@@ -310,6 +315,69 @@ func TestChatSlashCommands(t *testing.T) {
 	press(m, tea.KeyEnter, 0)
 	if !m.exiting || !m.detached {
 		t.Fatal("/exit should detach from a running turn")
+	}
+}
+
+func TestChatStatusIdentifiesTheSession(t *testing.T) {
+	const id = "01a1eb36-0cf7-78d5-989d-31b1458abaa4"
+	m, _ := testChat(t)
+	m.styled = true
+	m.Update(tea.ColorProfileMsg{Profile: colorprofile.TrueColor})
+	m.Update(tea.BackgroundColorMsg{Color: lipgloss.Color("#181A1F")})
+	m.Update(tea.ForegroundColorMsg{Color: lipgloss.Color("#E5E5E5")})
+	m.details = chatDetails{agent: "reviewer"}
+	m.loadDetails = func(context.Context) chatDetails { t.Fatal("details loaded synchronously"); return chatDetails{} }
+	m.Init()
+	m.input.SetValue("Keep this draft")
+	m.Update(chatDetails{"reviewer", "codex", "gpt-5.4"})
+	if m.input.Value() != "Keep this draft" {
+		t.Fatal("metadata update lost the draft")
+	}
+	if strings.Contains(m.sessionStatus(), "Session") {
+		t.Fatal("invented a session ID before the first event")
+	}
+	m.Update(event{contextID: id})
+	m.Update(event{taskID: "task-1", contextID: "different-context", state: stateWorking})
+	if m.sessionID != id {
+		t.Fatal("a later event replaced the conversation ID")
+	}
+	for _, width := range []int{140, 80, 40} {
+		m.resize(width, 24)
+		for _, active := range []bool{false, true} {
+			m.active = active
+			m.started = time.Now()
+			view := ansi.Strip(m.View().Content)
+			if !strings.Contains(view, id) {
+				t.Fatalf("width %d split or lost the ID: %q", width, view)
+			}
+			if !strings.Contains(strings.Join(strings.Fields(view), " "), "reviewer · codex · gpt-5.4") {
+				t.Errorf("view lost the unlabelled settings: %q", view)
+			}
+			if strings.Contains(view, "Enter sends") || strings.Contains(view, "Ctrl-C twice") {
+				t.Fatalf("default view still shows key guidance: %q", view)
+			}
+			for _, line := range strings.Split(view, "\n") {
+				if ansi.StringWidth(line) > width {
+					t.Errorf("status overflowed %d columns: %q", width, line)
+				}
+				if strings.Contains(line, id) && ansi.StringWidth(line) != width {
+					t.Errorf("session ID is not right aligned: %q", line)
+				}
+			}
+			if active && !strings.Contains(view, "Agent working") {
+				t.Fatal("lost the working status")
+			}
+		}
+	}
+}
+
+func TestChatStatusSanitizesMetadata(t *testing.T) {
+	m, _ := testChat(t)
+	m.details = chatDetails{"reviewer\nspoof", "\x1b[31mcodex", "model\tname"}
+	m.resize(120, 24)
+	got := m.sessionStatus()
+	if strings.ContainsAny(got, "\n\t\x1b") || !strings.Contains(got, "reviewer spoof · codex · model name") {
+		t.Fatalf("unsafe status text: %q", got)
 	}
 }
 

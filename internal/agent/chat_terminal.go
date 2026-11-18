@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/airohq/airo-cli/internal/ui"
 )
@@ -68,6 +69,8 @@ func (s *session) chat(ctx context.Context, in io.Reader, prompt string) error {
 
 	var workers sync.WaitGroup
 	m := newChatModel(runCtx, p.events, out, errOut, prompt)
+	m.details.agent, m.sessionID = s.agent, s.id
+	m.loadDetails = s.details
 	if s.id != "" && prompt == "" {
 		m.load, m.loading = s.history, true
 	}
@@ -77,11 +80,6 @@ func (s *session) chat(ctx context.Context, in io.Reader, prompt string) error {
 	m.cancel = func(ctx context.Context, id string) (string, error) {
 		t, err := s.api.cancel(ctx, s.ns, s.agent, id)
 		return t.Status.State, err
-	}
-	if s.id == "" {
-		fmt.Fprintf(errOut, "A new session with agent %s.\n", ui.Text(s.agent))
-	} else {
-		fmt.Fprintf(errOut, "Session %s with agent %s.\n", ui.Text(s.id), ui.Text(s.agent))
 	}
 	_, err := tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(errOut),
 		tea.WithoutSignalHandler(), tea.WithColorProfile(m.palette.Profile)).Run()
@@ -117,6 +115,9 @@ type chatModel struct {
 	spinner                     spinner.Model
 	markdown                    *ui.MarkdownRenderer
 	width, height               int
+	details                     chatDetails
+	loadDetails                 func(context.Context) chatDetails
+	sessionID                   string
 	initial                     string
 	once                        bool
 	load                        func(context.Context) ([]Turn, error)
@@ -166,6 +167,9 @@ func newChatModel(ctx context.Context, events <-chan tea.Msg, out, errOut io.Wri
 func (m *chatModel) Init() tea.Cmd {
 	watch := func() tea.Msg { <-m.ctx.Done(); return externalExitMsg{} }
 	cmds := []tea.Cmd{watch}
+	if m.loadDetails != nil {
+		cmds = append(cmds, func() tea.Msg { return m.loadDetails(m.ctx) })
+	}
 	if m.styled {
 		// Let Bubble Tea parse replies alongside keystrokes. Missing replies
 		// leave the neutral fallback in place; startup never waits for them.
@@ -229,6 +233,9 @@ func (m *chatModel) start(prompt string) tea.Cmd {
 
 func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case chatDetails:
+		m.details = msg
+		m.loadDetails = nil
 	case tea.ColorProfileMsg:
 		if m.styled {
 			m.palette.Profile = msg.Profile
@@ -308,6 +315,9 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case noteMsg:
 		return m, m.print(m.styles.Muted.Render(ui.Wrap(ui.Text(string(msg)), m.width)), m.errOut)
 	case event:
+		if m.sessionID == "" && msg.contextID != "" {
+			m.sessionID = msg.contextID
+		}
 		if msg.taskID != "" {
 			m.taskID = msg.taskID
 		}
@@ -422,7 +432,10 @@ func (m *chatModel) key(msg tea.KeyPressMsg) tea.Cmd {
 		switch strings.TrimSpace(prompt) {
 		case "/help":
 			m.input.Reset()
-			m.hint = "/help shows keys · /exit leaves · other slash commands go to the agent"
+			m.hint = "Enter sends · Ctrl-J / Shift-Enter newline · ↑↓ history\n" +
+				"Esc stops the turn · Ctrl-D leaves on an empty prompt\n" +
+				"Ctrl-C clears an idle draft · Ctrl-C twice leaves; a running turn continues\n" +
+				"/help shows keys · /exit leaves · other slash commands go to the agent"
 			return nil
 		case "/exit":
 			return m.leave()
@@ -620,16 +633,7 @@ func (m *chatModel) View() tea.View {
 	if !m.once {
 		rows = append(rows, m.input.View())
 	}
-	keys := "Enter sends · Ctrl-J / Shift-Enter newline · ↑↓ history · Ctrl-D leaves"
-	if m.loading {
-		keys = "Draft the next prompt · Ctrl-C twice leaves"
-	} else if m.active {
-		keys = "Draft the next prompt · Esc stops · Ctrl-C twice leaves"
-		if m.once {
-			keys = "Esc stops · Ctrl-C twice leaves"
-		}
-	}
-	rows = append(rows, m.styles.Muted.Render(ui.Wrap(keys, m.width)))
+	rows = append(rows, m.sessionStatus())
 	if m.hint != "" {
 		rows = append(rows, m.styles.Muted.Render(ui.Wrap(m.hint, m.width)))
 	}
@@ -652,6 +656,39 @@ func (m *chatModel) View() tea.View {
 		}
 	}
 	return v
+}
+
+// Keep names and IDs intact: on a narrow terminal the session moves to its
+// own row instead of competing with the Agent's settings for horizontal space.
+func (m *chatModel) sessionStatus() string {
+	field := func(value string) string {
+		value = strings.Join(strings.Fields(ui.Text(value)), " ")
+		if value == "" {
+			if m.loadDetails != nil {
+				return "…"
+			}
+			return "unknown"
+		}
+		return value
+	}
+	separator := m.styles.Muted.Render(" · ")
+	left := m.styles.AgentName.Render(field(m.details.agent)) + separator +
+		m.styles.HarnessName.Render(field(m.details.harness)) + separator +
+		m.styles.ModelName.Render(field(m.details.model))
+	if m.sessionID == "" {
+		return ui.Wrap(left, m.width)
+	}
+	id := field(m.sessionID)
+	right := m.styles.Muted.Render("Session " + id)
+	gap := m.width - ansi.StringWidth(left) - ansi.StringWidth(right)
+	if gap >= 2 {
+		return left + strings.Repeat(" ", gap) + right
+	}
+	if ansi.StringWidth(right) <= m.width {
+		return ui.Wrap(left, m.width) + "\n" + strings.Repeat(" ", m.width-ansi.StringWidth(right)) + right
+	}
+	return ui.Wrap(left, m.width) + "\n" + m.styles.Muted.Render("Session") + "\n" +
+		strings.Repeat(" ", max(0, m.width-ansi.StringWidth(id))) + m.styles.Muted.Render(ui.Wrap(id, m.width))
 }
 
 // Only complete paragraphs outside a fenced code block leave the live region.
