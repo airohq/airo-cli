@@ -336,7 +336,8 @@ controls such as the prompt marker.
 
 **Markdown has its own colours.** It uses Catppuccin Mocha for dark terminals
 and Latte for light terminals, the same default theme family as Codex.
-Headings use rose, peach and yellow; inline code is green, links are blue,
+Headings use rose, peach and yellow; inline code is green without delimiter
+backticks, links are blue,
 and quotes are pink. Fenced code uses the full syntax theme, with distinct
 colours for keywords, functions, strings and numbers. Comments remain
 readable. Prose and typed text keep the terminal's foreground, and all

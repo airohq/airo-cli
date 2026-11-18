@@ -122,7 +122,7 @@ func TestChatMarkdownFollowsThemeAndMatchesHistory(t *testing.T) {
 		if !strings.Contains(m.preview, "38;2;") || m.preview == previous {
 			t.Fatalf("live Markdown did not adopt %s: %q", bg, m.preview)
 		}
-		if strings.Contains(m.preview, m.styles.Accent.Render("`file.go`")) {
+		if strings.Contains(m.preview, m.styles.Accent.Render("file.go")) {
 			t.Fatal("inline code reused the UI accent instead of its own theme")
 		}
 		previous = m.preview

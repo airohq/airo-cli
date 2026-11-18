@@ -224,7 +224,7 @@ theme with Airo's UI accent.
 | --- | --- |
 | Headings | Rose for H1, peach for H2, yellow for the remaining levels; H1 is bold and underlined, H2 bold, H3 bold and italic, H4–H6 italic |
 | Strong and emphasis | Rose, with bold and italic respectively |
-| Inline code | Green |
+| Inline code | Green, without the Markdown delimiter backticks |
 | Links | Blue and underlined |
 | Quotes and list markers | Pink quotes, Catppuccin's teal for bullet markers; ordinary list text stays neutral |
 | Fenced code | The full syntax theme: distinct keyword, type, function, string and number colours, with readable muted comments |

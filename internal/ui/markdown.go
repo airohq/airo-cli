@@ -98,7 +98,7 @@ func Markdown(width int, palette Palette) (*MarkdownRenderer, error) {
 			Task:                  ansi.StyleTask{Ticked: "[x] ", Unticked: "[ ] "},
 			Link:                  ansi.StylePrimitive{Color: markdownColor(colours.link), Underline: &underline},
 			LinkText:              ansi.StylePrimitive{Color: markdownColor(colours.link), Underline: &underline},
-			Code:                  ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: markdownColor(colours.code), Prefix: "`", Suffix: "`"}},
+			Code:                  ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: markdownColor(colours.code)}},
 			CodeBlock:             ansi.StyleCodeBlock{StyleBlock: ansi.StyleBlock{Indent: &indent}, Theme: theme},
 			HorizontalRule:        ansi.StylePrimitive{Color: markdownColor(colours.rule), Format: "────────\n"},
 			ImageText:             ansi.StylePrimitive{Format: "Image: {{.text}} → "},

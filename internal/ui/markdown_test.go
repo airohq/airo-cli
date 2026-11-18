@@ -125,6 +125,20 @@ func TestMarkdownFallbacksPreserveContent(t *testing.T) {
 	}
 }
 
+func TestMarkdownInlineCodeDelimiters(t *testing.T) {
+	r, err := Markdown(76, Palette{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Render("Use `file.go`, and `` a`b `` contains a literal backtick.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain := strings.TrimSpace(ansi.Strip(got)); plain != "Use file.go, and a`b contains a literal backtick." {
+		t.Fatalf("inline code delimiters or content changed: %q", plain)
+	}
+}
+
 // Decode actual SGR output instead of asserting a particular ordering of
 // escape codes. Each visible byte records the foreground a terminal would use.
 func renderedColours(t *testing.T, text string) (string, []color.Color) {
