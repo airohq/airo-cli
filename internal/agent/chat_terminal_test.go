@@ -216,7 +216,9 @@ func TestChatMarkdownParagraphBoundaries(t *testing.T) {
 
 func TestTerminalChatPrintsMarkdownOnceAndKeepsStreamsSeparate(t *testing.T) {
 	s, _, out, notes := talk(t, stream(result(submitted),
-		result(artifact("a1", "# Answer\n\nHello **world**.\n\n```go\nfmt.Println(\"hi\")\n```")),
+		result(artifact("a1", "# Answer\n\nHello **wor")),
+		result(artifact("a1", "ld**.\n\n```go\nfmt.Println(\"hi\")\n```")),
+		result(artifact("a2", "Another message.")),
 		result(`{"task":{"id":"task-1","contextId":"ctx-1","status":{"state":"TASK_STATE_COMPLETED"},"artifacts":[{"artifactId":"a1","parts":[{"text":"DUPLICATE"}]}]}}`),
 	))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -228,7 +230,7 @@ func TestTerminalChatPrintsMarkdownOnceAndKeepsStreamsSeparate(t *testing.T) {
 		t.Fatal("chat did not exit after its one turn")
 	}
 	text := ansi.Strip(out.String())
-	for _, want := range []string{"Answer", "Hello world.", `fmt.Println("hi")`} {
+	for _, want := range []string{"Answer", "Hello world.", `fmt.Println("hi")`, "Another message."} {
 		if strings.Count(text, want) != 1 {
 			t.Errorf("stdout %q should contain %q once", text, want)
 		}
@@ -241,6 +243,28 @@ func TestTerminalChatPrintsMarkdownOnceAndKeepsStreamsSeparate(t *testing.T) {
 	}
 	if strings.Contains(notes.String(), "\x1b[?1049h") {
 		t.Fatal("chat entered the alternate screen")
+	}
+	// A marker belongs to a message, not to each streamed paragraph. A block
+	// change must keep both the preceding unfinished text and the new marker.
+	if strings.Count(text, "\n• ") != 2 {
+		t.Errorf("message markers repeated or missing: %q", text)
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if line != "" && !strings.HasPrefix(line, "• ") && !strings.HasPrefix(line, "  ") {
+			t.Errorf("continuation left the message's margin: %q", line)
+		}
+	}
+	var restored bytes.Buffer
+	m, _ := testChat(t)
+	turns := []Turn{{State: StateDone, Messages: []Message{
+		{From: FromAgent, Text: "# Answer\n\nHello **world**.\n\n```go\nfmt.Println(\"hi\")\n```"},
+		{From: FromAgent, Text: "Another message."},
+	}}}
+	if err := writeHistory(turns, &restored, &bytes.Buffer{}, m.formatMessage); err != nil {
+		t.Fatal(err)
+	}
+	if want := ansi.Strip(restored.String()); text != want {
+		t.Errorf("streamed layout differs from restored history:\nstreamed: %q\nrestored: %q", text, want)
 	}
 }
 

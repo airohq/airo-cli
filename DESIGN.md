@@ -144,6 +144,26 @@ when it ends.
 **An agent's text is rendered as markdown on a terminal, and is the agent's
 own text in a pipe.**
 
+**Messages have space to breathe in the styled chat.** Leave one blank line
+between messages, and between the conversation and the live input or status.
+The person's message starts with `> ` in Accent; the agent's starts with
+`• ` in Muted. Reserve those two columns on every continuation line, so
+wrapped prose and multiline prompts align with the first character after
+the marker. Markdown lists, quotes, tables and code keep their own
+indentation inside that margin. Show a marker once per message, never once
+per streamed chunk or paragraph. Live answers and restored history use the
+same layout. Pipes keep the agent's original text without these markers.
+
+```text
+> Explain the failure and suggest
+  what to try next.
+
+• The build fails during lint.
+  Remove the unused import and rerun it.
+
+> Can you fix it?
+```
+
 **Resuming an interactive conversation restores what was said.** Both
 `--resume` and `--continue` load saved prompts and answers, oldest first,
 before accepting the next prompt. Use the same formatting as live chat,

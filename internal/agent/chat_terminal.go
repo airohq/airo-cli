@@ -128,6 +128,7 @@ type chatModel struct {
 	historyAt                   int
 	draft                       string
 	block, pending, preview     string
+	answerPrinted               bool // the current message's marker is already in scrollback
 	printing, exiting, detached bool
 	interrupt                   bool
 	hint                        string
@@ -138,6 +139,12 @@ func newChatModel(ctx context.Context, events <-chan tea.Msg, out, errOut io.Wri
 	styles := ui.NewStyles(errOut)
 	input := textarea.New()
 	input.Prompt, input.Placeholder = "> ", "Ask the agent…"
+	input.SetPromptFunc(2, func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
+			return "> "
+		}
+		return "  "
+	})
 	input.ShowLineNumbers = false
 	input.DynamicHeight, input.MinHeight, input.MaxHeight = true, 1, 5
 	input.SetVirtualCursor(false)
@@ -185,6 +192,7 @@ func (m *chatModel) start(prompt string) tea.Cmd {
 	m.cancelState = ""
 	m.turn++
 	m.taskID, m.state, m.block, m.hint = "", "", "", ""
+	m.answerPrinted = false
 	m.started = time.Now()
 	m.history = append(m.history, prompt)
 	m.historyAt, m.draft = len(m.history), ""
@@ -240,22 +248,24 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.wait()
 		}
 	case answerMsg:
-		var committed string
-		if m.pending != "" && (msg.block == "" || msg.block != m.block) {
-			committed, m.pending = m.pending, ""
-			if !strings.HasSuffix(committed, "\n") {
-				committed += "\n"
+		var committed []string
+		if msg.block == "" || msg.block != m.block {
+			if text := m.commitAnswer(m.pending); text != "" {
+				committed = append(committed, text)
 			}
+			m.pending, m.answerPrinted = "", false
 		}
 		m.block = msg.block
 		m.pending += msg.text
 		if n := paragraphEnd(m.pending); n > 0 {
-			committed += m.pending[:n]
+			if text := m.commitAnswer(m.pending[:n]); text != "" {
+				committed = append(committed, text)
+			}
 			m.pending = m.pending[n:]
 		}
 		m.render()
-		if committed != "" {
-			return m, m.print(m.renderMarkdown(committed), m.out)
+		if len(committed) > 0 {
+			return m, m.print(strings.Join(committed, "\n"), m.out)
 		}
 		return m, m.wait()
 	case answerEndMsg:
@@ -452,7 +462,7 @@ func (m *chatModel) resize(width, height int) {
 	m.width, m.height = max(4, width), max(4, height)
 	m.input.MaxHeight = min(5, max(1, height-4))
 	m.input.SetWidth(m.width)
-	m.markdown, _ = ui.Markdown(m.width)
+	m.markdown, _ = ui.Markdown(m.width - 2)
 	m.render()
 }
 
@@ -460,24 +470,77 @@ func (m *chatModel) renderMarkdown(text string) string {
 	text = ui.Text(text)
 	if m.markdown != nil {
 		if rendered, err := m.markdown.Render(text); err == nil {
-			return strings.TrimRight(ui.Wrap(rendered, m.width), "\n")
+			return strings.Trim(ui.Wrap(rendered, m.width-2), "\n")
 		}
 	}
-	return strings.TrimRight(ui.Wrap(text, m.width), "\n")
+	return strings.Trim(ui.Wrap(text, m.width-2), "\n")
 }
 
-func (m *chatModel) render() { m.preview = m.renderMarkdown(m.pending) }
+func (m *chatModel) render() { m.preview = m.formatAnswer(m.pending) }
 
 func (m *chatModel) formatMessage(from, text string) string {
 	if from == FromYou {
-		return m.styles.Accent.Render("> ") + ui.Wrap(ui.Text(text), m.width-2)
+		return messageLines(ui.Wrap(ui.Text(text), m.width-2), m.styles.Accent.Render("> "))
 	}
-	return m.renderMarkdown(text)
+	return messageLines(m.renderMarkdown(text), m.styles.Muted.Render("• "))
+}
+
+// Each message gets one marker. Later streamed paragraphs keep the same
+// two-column indent; rendering a preview never consumes the marker.
+func (m *chatModel) formatAnswer(text string) string {
+	marker := "  "
+	if !m.answerPrinted {
+		marker = m.styles.Muted.Render("• ")
+	}
+	return messageLines(m.renderMarkdown(text), marker)
+}
+
+func (m *chatModel) commitAnswer(text string) string {
+	formatted := m.formatAnswer(text)
+	if formatted != "" {
+		m.answerPrinted = true
+	}
+	return formatted
+}
+
+// messageLines reserves two columns for the speaker, with one blank line
+// before the message or paragraph. Markdown's own indentation stays inside.
+func messageLines(text, marker string) string {
+	lines := strings.Split(text, "\n")
+	// Glamour pads some empty lines to the render width. Normalize them
+	// before trimming so a code block does not add a second paragraph gap.
+	for i, line := range lines {
+		if strings.TrimSpace(ui.Text(line)) == "" {
+			lines[i] = ""
+		}
+	}
+	for len(lines) > 0 && lines[0] == "" {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	lines[0] = marker + lines[0]
+	for i := 1; i < len(lines); i++ {
+		if lines[i] != "" {
+			lines[i] = "  " + lines[i]
+		}
+	}
+	return "\n" + strings.Join(lines, "\n")
 }
 
 func (m *chatModel) flush() tea.Cmd {
-	text := m.renderMarkdown(m.pending)
+	text := m.commitAnswer(m.pending)
 	m.pending, m.preview = "", ""
+	if text == "" {
+		if m.exiting {
+			return tea.Quit
+		}
+		return m.wait()
+	}
 	return m.print(text, m.out)
 }
 
@@ -548,11 +611,11 @@ func (m *chatModel) View() tea.View {
 		}
 		preview = strings.Join(lines, "\n") + "\n"
 	}
-	v := tea.NewView(preview + footer)
+	v := tea.NewView(preview + "\n" + footer)
 	if !m.once {
 		v.Cursor = m.input.Cursor()
 		if v.Cursor != nil {
-			v.Cursor.Y += strings.Count(preview, "\n")
+			v.Cursor.Y += strings.Count(preview, "\n") + 1
 			v.Cursor.Y += statusLines
 		}
 	}

@@ -230,7 +230,11 @@ func TestResumedSinglePromptPrintsOnlyItsNewAnswer(t *testing.T) {
 			if err != nil || ctx.Err() != nil {
 				t.Fatalf("single prompt = %v, context = %v", err, ctx.Err())
 			}
-			if got := strings.TrimSpace(ansi.Strip(out.String())); got != "New answer" {
+			want := "New answer"
+			if mode == "terminal" {
+				want = "• New answer"
+			}
+			if got := strings.TrimSpace(ansi.Strip(out.String())); got != want {
 				t.Fatalf("stdout = %q", got)
 			}
 			if seen, _ := requests.seen(); len(seen) != 1 || seen[0].Method != methodStream || seen[0].Params.Message.ContextID != "ctx-1" {

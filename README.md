@@ -198,6 +198,10 @@ printed; use `airo session view SESSION` to read the saved conversation.
 **On a terminal, the chat stays in your scrollback.** Answers render as
 Markdown above the input, with a status and elapsed time while the agent
 works. It uses your terminal's colours and never takes over the full screen.
+In the styled chat, a blank line separates messages. Your messages start
+with `> ` and the agent's with `• `; continuation lines align two columns
+in, including wrapped prompts and Markdown lists or code blocks. The marker
+appears once per message, also while an answer streams or history reloads.
 The closing hint is separated from the answer by a blank line.
 `Resume this session with:` is muted when colour is enabled; the command
 follows on its own line, with no indentation or prefix, ready to copy.
