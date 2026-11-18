@@ -54,12 +54,14 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		Aliases: []string{"agents"},
 		Short:   "Talk to an agent of the project, or create and manage agents",
 		Long: `Agent sends a prompt to an agent of the project and prints the answer as it
-arrives. Without a prompt, on a terminal, it is a conversation: each line you
-type is a prompt of the same session, until ctrl-D.
+arrives. Without a prompt, on a terminal, it is a conversation: Enter sends
+a prompt of the same session, Ctrl-J adds a new line, and Ctrl-D leaves on
+an empty prompt. You can draft the next prompt while the agent works.
 
 The prompt starts a new session. The session stays in the cluster, and
---continue or --resume sends the next prompt to it. Ctrl-C detaches: the
-agent works on in the cluster.
+--continue or --resume sends the next prompt to it. In the terminal chat,
+Esc stops the turn, and Ctrl-C twice detaches: the agent works on in the
+cluster. Plain output uses one Ctrl-C to detach.
 
 Without --agent, airo takes the project's only agent, then the one with the
 annotation ` + defaultAnnotation + `: "true", then asks.

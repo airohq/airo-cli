@@ -295,7 +295,7 @@ State: failed, last active 59m ago
 	if out.String() != want {
 		t.Errorf("view =\n%s\nwant\n%s", out.String(), want)
 	}
-	if got, want := errOut.String(), "  resume: airo agent -a reviewer -r s1\n"; got != want {
+	if got, want := errOut.String(), "\nResume this session with:\nairo agent -a reviewer -r s1\n"; got != want {
 		t.Errorf("hint = %q, want %q", got, want)
 	}
 	asked := seen.of("reviewer", "ListTasks")
@@ -406,7 +406,7 @@ func TestCancelStopsTheRunningTurn(t *testing.T) {
 	if out.String() != want {
 		t.Errorf("cancel =\n%s\nwant\n%s", out.String(), want)
 	}
-	if got, want := errOut.String(), "The session stays.\n  resume: airo agent -a coder -r s3\n"; got != want {
+	if got, want := errOut.String(), "\nThe session stays.\nResume this session with:\nairo agent -a coder -r s3\n"; got != want {
 		t.Errorf("hint = %q, want %q", got, want)
 	}
 	canceled := seen.of("coder", "CancelTask")

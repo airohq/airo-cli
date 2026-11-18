@@ -285,13 +285,14 @@ airo agent                               # a conversation, on a terminal
 
 ```text
 The build fails in the step lint: main.go has an unused import.
-Session 7c9e6679-7425-40de-944b-e07fc1f90ae7
-  continue: airo agent -a reviewer -c "PROMPT"
+
+Resume this session with:
+airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
 ```
 
 | Argument or flag | Default | Meaning |
 | --- | --- | --- |
-| `PROMPT` | a conversation | What to ask the agent. Without it, each line you type is a prompt of one session, until ctrl-D. Input that is not a terminal, such as a pipe, is one prompt |
+| `PROMPT` | a conversation | What to ask the agent. Without it, Enter sends a prompt of one session, until Ctrl-D on an empty prompt. Input that is not a terminal, such as a pipe, is one prompt |
 | `-a`, `--agent` | see below | The Agent's name |
 | `-c`, `--continue` | off | Send the prompt to your last session with the agent |
 | `-r`, `--resume` | none | Send the prompt to the session with this ID |
@@ -313,18 +314,65 @@ deleted. `--resume` takes the session's ID, which every run prints and
 the agent. `airo` remembers one ID for each agent in `airo/sessions.json` in
 your cache directory.
 
-**Ctrl-C detaches, and the agent works on in the cluster.** The command
-prints how to come back and exits without an error:
+With no prompt argument, `airo agent -r SESSION` and `airo agent -c` load the
+saved conversation before taking your next prompt. Earlier answers render
+as Markdown in the terminal chat, and Up and Down recall earlier prompts
+too. Plain terminal conversations show the same history without styling.
+History is a snapshot; resuming does not follow new output from a turn that
+is already running. With an argument or piped input, only the new answer is
+printed; use `airo session view SESSION` to read the saved conversation.
+
+**On a terminal, the chat stays in your scrollback.** Answers render as
+Markdown above the input, with a status and elapsed time while the agent
+works. It uses your terminal's colours and never takes over the full screen.
+In the styled chat, a blank line separates messages. Your messages start
+with `> ` and the agent's with `• `; continuation lines align two columns
+in, including wrapped prompts and Markdown lists or code blocks. The marker
+appears once per message, also while an answer streams or history reloads.
+The closing hint is separated from the answer by a blank line.
+`Resume this session with:` is muted when colour is enabled; the command
+follows on its own line, with no indentation or prefix, ready to copy.
+Both a single prompt and a conversation end with one resume command
+carrying the session ID, without a separate `Session` line. The hint appears
+when the command exits, not after every turn.
+
+| Key | What it does in the terminal chat |
+| --- | --- |
+| Enter | Sends the prompt |
+| Shift-Enter or Ctrl-J | Adds a new line; use Ctrl-J when your terminal cannot distinguish Shift-Enter |
+| Up, Down | Recalls sent prompts; Down past the newest restores your draft |
+| Esc | Asks the agent to stop the current turn; the session stays open |
+| Ctrl-C | Clears an idle draft; on an empty prompt or during a turn, explains how to leave |
+| Ctrl-C twice | Leaves; a running turn continues in the cluster |
+| Ctrl-D | Leaves when the prompt is empty |
+
+**You can draft the next prompt while the agent works.** Enter keeps that
+draft until the turn ends; press Enter again when ready to send it. Nothing
+is sent automatically. `/help` shows the chat's help, and `/exit` leaves.
+Other slash-prefixed prompts go to the agent unchanged. These two shortcuts
+apply only in the chat input: `airo agent /help` sends `/help` to the agent.
+
+**Leaving a running turn detaches, and the agent works on in the cluster.**
+The command prints how to come back and exits without an error:
 
 ```text
 Detached. The agent works on in the cluster.
-  resume: airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+Resume this session with:
+airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
 ```
 
 **The answer goes to standard output and everything else to standard
 error**, so the answer can be piped. The command fails when the agent fails,
 turns the prompt down or the turn is canceled. In a conversation it prints
 the failure and takes the next prompt.
+
+**Pipes keep the agent's original text.** The terminal chat requires stdin,
+stdout and stderr to be terminals. `NO_COLOR` (even empty), `TERM=dumb`, or
+redirected stderr selects the plain conversation, with one line per prompt
+and no styling or redraws. In plain mode one Ctrl-C detaches. Redirected
+stdout disables prompts and pickers: pass the prompt as an argument or on
+stdin. For example, `airo agent "Explain the build" > answer.md` writes the
+agent's Markdown directly to the file.
 
 **A prompt that equals a verb goes after `--`**, as in `airo agent -- list`.
 
@@ -447,19 +495,24 @@ Agent, 2026-11-17 09:20
   The build fails in the step lint: main.go has an unused import.
 
 State: done, last active 25m ago
-  resume: airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+
+Resume this session with:
+airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
 ```
 
 ```text
 Canceled the working turn of session 7c9e6679-7425-40de-944b-e07fc1f90ae7 with agent reviewer
   prompt: Why does the build fail?
   state:  canceled
+
 The session stays.
-  resume: airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+Resume this session with:
+airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
 ```
 
 **The ID in the list is the one every command takes**: `view`, `cancel` and
-`airo agent -r`. The lines that start with `resume:` go to standard error.
+`airo agent -r`. The resume instructions go to standard error, using the
+same format as the closing hint of `airo agent`.
 
 | State | The newest turn |
 | --- | --- |

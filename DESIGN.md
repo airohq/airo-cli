@@ -118,6 +118,189 @@ not end up in it.
 session ID of `airo agent` and `airo session list` goes into `airo session
 view`, `airo session cancel` and `airo agent -r`.
 
+## Terminal
+
+How `airo` looks and behaves when a person sits at it. The models are `gh`
+for commands that print and end, and Claude Code and Codex for a
+conversation.
+
+**A person at a terminal gets style, and everything else gets plain text.**
+A stream is styled only when it is a terminal, and never when `NO_COLOR` is
+set or `TERM` is `dumb`. A pipe, a file and a script get the same words
+without colour, symbols that move, or escape codes.
+
+**Style never changes the words, and never carries meaning alone.** A colour
+comes with a word or a symbol that says the same, so the output reads the
+same in a pipe, in a log and to someone who does not see the colour.
+
+**A command is interactive only when both its input and its output are
+terminals.** Everything a person can choose in a picker or a prompt is also
+a flag. Where nobody can answer, the command stops and names the choices.
+
+**A command stays in the scrollback.** No full-screen mode. A conversation
+keeps a live region at the bottom, for the input and the status, and what
+was said scrolls up as ordinary text. On exit the live region is gone, and
+what the person needs next, such as how to resume, is the last thing
+printed.
+
+**Colours are named for what they mean, in one place.** `internal/ui` holds
+them, and a command writes no escape code of its own.
+
+| Role | Used for |
+| --- | --- |
+| Default | Most text. What the person reads is not coloured |
+| Muted | What supports the text: IDs, hints, keys, timestamps |
+| Accent | The one thing to see first: the prompt mark, the selected row |
+| Success, warning, error | An outcome, with `✓`, `!` or `✗` |
+
+- **Take the terminal's own 16 colours**, so the person's theme decides the
+  shades and the output reads on light and on dark.
+- **Colour little.** A screen with one accent reads faster than a screen
+  with five.
+
+**Waiting is shown.** What takes longer than a moment shows a spinner on
+standard error, with what it waits for and for how long. It leaves no trace
+when it ends.
+
+**An agent's text is rendered as markdown on a terminal, and is the agent's
+own text in a pipe.**
+
+**Messages have space to breathe in the styled chat.** Leave one blank line
+between messages, and between the conversation and the live input or status.
+The person's message starts with `> ` in Accent; the agent's starts with
+`• ` in Muted. Reserve those two columns on every continuation line, so
+wrapped prose and multiline prompts align with the first character after
+the marker. Markdown lists, quotes, tables and code keep their own
+indentation inside that margin. Show a marker once per message, never once
+per streamed chunk or paragraph. Live answers and restored history use the
+same layout. Pipes keep the agent's original text without these markers.
+
+```text
+> Explain the failure and suggest
+  what to try next.
+
+• The build fails during lint.
+  Remove the unused import and rerun it.
+
+> Can you fix it?
+```
+
+**Resuming an interactive conversation restores what was said.** Both
+`--resume` and `--continue` load saved prompts and answers, oldest first,
+before accepting the next prompt. Use the same formatting as live chat,
+and include earlier prompts in Up/Down history. Keep a draft typed during
+loading, without sending it automatically. Plain terminal conversations
+replay history too. A single prompt, supplied as an argument or on stdin,
+prints only its new answer. Loading history is a snapshot, not a connection
+to an already-running turn's stream; label saved unfinished states clearly.
+
+**Keys mean what people know from other tools.** A line under the input
+names the ones that matter now.
+
+| Key | Does |
+| --- | --- |
+| Enter | Sends |
+| Shift-Enter, Ctrl-J | A new line in the prompt. Ctrl-J works where the terminal does not tell Shift-Enter from Enter |
+| Up, Down | The earlier prompts |
+| Esc | Stops what runs now, such as the agent's turn |
+| Ctrl-C | Clears the prompt. On an empty prompt, or while something runs, it asks for a second Ctrl-C |
+| Ctrl-C twice | Leaves. What outlives the terminal goes on ([Cleanup](#cleanup)) |
+| Ctrl-D | Ends the input, on an empty prompt |
+
+**Leaving never stops work by surprise.** People press Ctrl-C to stop an
+agent, as in other agent CLIs. While a turn runs, the first Ctrl-C says what
+each key does, such as "Esc stops the agent · Ctrl-C again leaves, the agent
+works on", and only a second one leaves.
+
+**The next prompt can be drafted while a turn runs.** The input stays
+editable, and Enter keeps the draft with a hint to send it after the turn
+ends. Finishing or stopping a turn never sends the draft automatically.
+History keeps sent prompts and restores the unfinished draft on returning
+past the newest one.
+
+**Slash commands are explicit local shortcuts in the interactive chat.**
+Only the whole prompts `/help` and `/exit` are reserved: they show help and
+leave the conversation. Other slash-prefixed prompts go to the agent
+unchanged. Arguments and piped input are always prompts, so
+`airo agent /help` sends the literal text. A slash command never adds a
+second way to manage platform resources; those remain CLI commands.
+
+**A resource looks as kubectl prints it.** `list` and `get` keep the
+cluster's table: its columns, their order and their upper-case headers. On a
+terminal, style may mute the header and colour a status word, and adds or
+removes nothing.
+
+- **`-o yaml` and `-o json` are data, and are never styled**, also on a
+  terminal.
+- **A name or an ID is never cut**, because the person copies it into the
+  next command. A table that is too wide cuts free text, such as a
+  description, and only on a terminal.
+
+**Text fits the terminal's width.** Prose wraps at words, and everything
+works at 80 columns.
+
+**One library family draws everything**: Charm's Bubble Tea, Bubbles, Lip
+Gloss and Glamour. No second one for pickers, prompts or colour.
+
+### Closing messages
+
+**The closing message tells the person how to return.** Take the concrete
+resume command from [Codex's exit summary][codex-exit] and
+[Claude Code's resume hint on exit][claude-exit] as the model. The rules
+below are airo's: a short, useful ending that leaves the answer prominent.
+
+**Print it once when the command exits, after removing the live region.**
+Completing a turn in an open conversation returns to the input. The agent's
+answer stays on standard output; the CLI's closing message goes to standard
+error. Do not add another summary of the answer, a success banner, or usage
+statistics by default.
+Leaving an empty conversation that created no session needs no closing hint.
+
+| What happened | What the closing message needs |
+| --- | --- |
+| A single prompt finished, or the person left an idle conversation | Just the resume hint |
+| The person detached from a running turn | Say the agent works on in the cluster, then give the resume command |
+| The turn was canceled or failed | Keep the cancellation or failure reason visible; give the resume command if the session is known. Do not imply work continues |
+| The connection failed before the turn's result arrived | Say the result is unknown and work may still be running; give the resume command if known |
+| A prompt was sent but no session ID arrived | Say why there is no resume hint; do not invent an ID or fall back to `--continue`, which could select another session |
+
+**Separate the closing message from the answer with a blank line.** Keep
+any status to one short sentence. Then print `Resume this session with:`
+on its own line, followed by the command on the next line. Use the Muted
+role for the introductory line and the default foreground for the command,
+with the same words and spacing in plain output. No border or decorative
+separator is needed.
+
+**Give one command that names this session.** Use the full agent name and
+session ID, without truncation or placeholders. The ID appears once, in the
+command; a separate `Session ID` line adds nothing. Put the command last so
+it is easy to find and copy. Its line contains only the command: no
+indentation, label, prompt mark, backticks or trailing explanation. Use this
+format for session commands' resume hints too. An error already shown needs
+no second copy.
+
+An ordinary exit:
+
+```text
+The build fails in the step lint: main.go has an unused import.
+
+Resume this session with:
+airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+```
+
+Detaching from work that is still running:
+
+```text
+I am checking the build logs.
+
+Detached. The agent works on in the cluster.
+Resume this session with:
+airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+```
+
+[codex-exit]: https://github.com/openai/codex/blob/main/codex-rs/tui/src/app/exit_summary.rs
+[claude-exit]: https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#2131
+
 ## Cleanup
 
 **A command removes what exists only for its task, and the cluster removes

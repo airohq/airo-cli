@@ -19,6 +19,7 @@ import (
 
 	"github.com/airohq/airo-cli/internal/bearer"
 	"github.com/airohq/airo-cli/internal/picker"
+	"github.com/airohq/airo-cli/internal/ui"
 )
 
 // An Agent with this annotation set to "true" is the one airo agent talks to
@@ -57,10 +58,10 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 	}
 	errOut := cmd.ErrOrStderr()
 	in := &lines{r: bufio.NewReader(cmd.InOrStdin())}
-	terminal := picker.Terminal(cmd.InOrStdin())
+	terminal := ui.Interactive(cmd.InOrStdin(), cmd.OutOrStdout())
 
 	var ask func([]string) (string, error)
-	if terminal {
+	if terminal && ui.IsTerminal(errOut) {
 		ask = func(names []string) (string, error) {
 			name, err := picker.One(ctx, "agent", names, -1)
 			if err == nil && name == "" {
@@ -100,17 +101,21 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 		id:     id,
 		out:    cmd.OutOrStdout(),
 		errOut: errOut,
-		remember: func(id string) {
-			if err := store.put(key, id); err != nil {
-				fmt.Fprintf(errOut, "Could not remember the session for --continue: %v\n", err)
-			}
-		},
+	}
+	s.remember = func(id string) {
+		if err := store.put(key, id); err != nil {
+			fmt.Fprintf(s.errOut, "Could not remember the session for --continue: %v\n", err)
+		}
 	}
 	switch {
+	case ui.Chat(cmd.InOrStdin(), s.out, s.errOut):
+		return s.chat(ctx, cmd.InOrStdin(), prompt)
 	case prompt != "":
 		return s.once(ctx, prompt)
 	case terminal:
 		return s.converse(ctx, in)
+	case ui.IsTerminal(cmd.InOrStdin()):
+		return errors.New("no prompt: pass one as the argument or on standard input")
 	}
 	// Input that is no terminal, such as a pipe, is one prompt.
 	data, err := io.ReadAll(in.r)
@@ -197,6 +202,9 @@ type session struct {
 	// API has answered for it: it is then the last session with the agent.
 	remember   func(id string)
 	remembered bool
+	// The terminal supplies another printer and observes task IDs for Esc.
+	printer printer
+	observe func(event)
 }
 
 // errDetached is the turn's error when the person stopped it.
@@ -224,12 +232,19 @@ func (e *taskError) Error() string {
 // turn sends one prompt and prints the answer as it arrives.
 func (s *session) turn(ctx context.Context, prompt string) error {
 	var (
-		p       = printer{out: s.out}
+		p       = s.printer
 		state   string
 		reason  string
 		replied bool
+		printed bool
 	)
+	if p == nil {
+		p = &plainPrinter{out: s.out}
+	}
 	unread, err := s.api.send(ctx, s.ns, s.agent, s.id, prompt, func(e event) bool {
+		if s.observe != nil {
+			s.observe(e)
+		}
 		if e.contextID != "" && !s.remembered {
 			if s.id == "" {
 				s.id = e.contextID
@@ -246,10 +261,11 @@ func (s *session) turn(ctx context.Context, prompt string) error {
 		case e.state == stateFailed || e.state == stateRejected || e.state == stateCanceled:
 			// The text says why. It goes into the error.
 			reason = e.text
-		case e.snapshot && p.printed:
+		case e.snapshot && printed:
 			// The stream carried this text already.
 		default:
 			p.write(e.block, e.text)
+			printed = true
 		}
 		return !ended(state)
 	})
@@ -300,9 +316,7 @@ func (s *session) once(ctx context.Context, prompt string) error {
 		s.detached()
 		return nil
 	}
-	if s.id != "" {
-		fmt.Fprintf(s.errOut, "Session %s\n  continue: airo agent -a %s -c \"PROMPT\"\n", s.id, s.agent)
-	}
+	s.left()
 	return err
 }
 
@@ -313,6 +327,13 @@ func (s *session) converse(ctx context.Context, in *lines) error {
 		fmt.Fprintf(s.errOut, "A new session with agent %s. Ctrl-D ends the conversation, and the session stays.\n", s.agent)
 	} else {
 		fmt.Fprintf(s.errOut, "Session %s with agent %s. Ctrl-D ends the conversation, and the session stays.\n", s.id, s.agent)
+		turns, err := s.history(ctx)
+		if err != nil {
+			return err
+		}
+		if err := writeHistory(turns, s.out, s.errOut, nil); err != nil {
+			return err
+		}
 	}
 	for {
 		fmt.Fprint(s.errOut, "> ")
@@ -352,33 +373,47 @@ func (s *session) detached() {
 		fmt.Fprintln(s.errOut, "\nDetached before the session's ID arrived.")
 		return
 	}
-	fmt.Fprintf(s.errOut, "\nDetached. The agent works on in the cluster.\n  resume: airo agent -a %s -r %s\n", s.agent, s.id)
+	fmt.Fprintln(s.errOut, "\nDetached. The agent works on in the cluster.")
+	s.resumeHint()
 }
 
 // left says how to come back to the session of a conversation.
 func (s *session) left() {
 	if s.id != "" {
-		fmt.Fprintf(s.errOut, "Session %s\n  resume: airo agent -a %s -r %s\n", s.id, s.agent, s.id)
+		fmt.Fprintln(s.errOut)
+		s.resumeHint()
 	}
 }
 
-// printer writes the agent's text, and starts a new line between blocks.
-type printer struct {
-	out     io.Writer
-	block   string
-	open    bool // the last write did not end a line
-	printed bool
+// resumeHint names this session explicitly, even if another run has since
+// changed which session --continue would choose.
+func (s *session) resumeHint() {
+	ui.ResumeHint(s.errOut, fmt.Sprintf("airo agent -a %s -r %s", s.agent, s.id))
 }
 
-func (p *printer) write(block, text string) {
+// printer is the output of a turn. The wire and snapshot handling are the
+// same for a terminal conversation and for a plain answer in a pipe.
+type printer interface {
+	write(block, text string)
+	end()
+}
+
+// plainPrinter writes the agent's own text with a new line between blocks.
+type plainPrinter struct {
+	out   io.Writer
+	block string
+	open  bool // the last write did not end a line
+}
+
+func (p *plainPrinter) write(block, text string) {
 	if p.open && (block == "" || block != p.block) {
 		fmt.Fprintln(p.out)
 	}
 	fmt.Fprint(p.out, text)
-	p.block, p.open, p.printed = block, !strings.HasSuffix(text, "\n"), true
+	p.block, p.open = block, !strings.HasSuffix(text, "\n")
 }
 
-func (p *printer) end() {
+func (p *plainPrinter) end() {
 	if p.open {
 		fmt.Fprintln(p.out)
 		p.open = false

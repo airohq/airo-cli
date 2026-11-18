@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/airohq/airo-cli/internal/agent"
+	"github.com/airohq/airo-cli/internal/ui"
 )
 
 const (
@@ -203,7 +204,8 @@ func view(ctx context.Context, out, errOut io.Writer, api *agent.API, o options,
 		}
 	}
 	fmt.Fprintf(out, "\nState: %s, last active %s ago\n", s.State, age(now, s.LastActive))
-	fmt.Fprintf(errOut, "  resume: airo agent -a %s -r %s\n", s.Agent, s.ID)
+	fmt.Fprintln(errOut)
+	ui.ResumeHint(errOut, fmt.Sprintf("airo agent -a %s -r %s", s.Agent, s.ID))
 	return nil
 }
 
@@ -238,7 +240,8 @@ func cancel(ctx context.Context, out, errOut io.Writer, api *agent.API, o option
 		fmt.Fprintf(out, "Session %s with agent %s has no running turn: its last turn is %s\n", s.ID, s.Agent, s.State)
 		return nil
 	}
-	fmt.Fprintf(errOut, "The session stays.\n  resume: airo agent -a %s -r %s\n", s.Agent, s.ID)
+	fmt.Fprintln(errOut, "\nThe session stays.")
+	ui.ResumeHint(errOut, fmt.Sprintf("airo agent -a %s -r %s", s.Agent, s.ID))
 	return nil
 }
 

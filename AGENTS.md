@@ -14,6 +14,7 @@ coding agents and people changing this repository; keep it short.
 | `internal/session` | `airo session`: list and view the person's sessions, and cancel a running turn. It reaches the agents' API only through `internal/agent` |
 | `internal/picker` | The picker every command shows for a choice from a list |
 | `internal/bearer` | The signed-in person's token, for a call to a component's own API |
+| `internal/ui` | Terminal detection, colour roles and Markdown rendering shared by commands |
 | `internal/tunnel` | `airo tunnel`: the Tunnel resource and the client connection |
 | `.goreleaser.yaml` | The release: binaries and the Homebrew cask |
 | `.github` | The workflows `CI` and `Release`, and Dependabot |
@@ -43,8 +44,8 @@ coding agents and people changing this repository; keep it short.
 ## Command design
 
 **Read [DESIGN.md](DESIGN.md) before adding or changing a command.** It holds
-the grammar, default tasks, flags, output, cleanup and which APIs a command
-may call.
+the grammar, default tasks, flags, output, the look on a terminal, cleanup
+and which APIs a command may call.
 
 ## Checks
 
