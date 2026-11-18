@@ -416,7 +416,7 @@ func stateOf(a *unstructured.Unstructured) agentState {
 		cond, _ := item.(map[string]any)
 		s.seen = true
 		if cond["status"] == "True" {
-			s.ready = s.ready || cond["type"] == "Ready"
+			s.ready = s.ready || (cond["type"] == "Ready" && current(cond, a.GetGeneration()))
 			continue
 		}
 		if s.reason == "" {

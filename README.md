@@ -309,7 +309,8 @@ the first that applies:
 
 **`airo` waits until the agent can take a session, and says why it waits.**
 It reads the Agent's `Ready` condition, such as in a new project, where the
-agent's first snapshot takes a few minutes. On a terminal a spinner shows
+agent's first snapshot takes a few minutes. When the project's endpoint declares a
+credential readiness ConfigMap, `airo` also waits for it before sending the prompt. On a terminal a spinner shows
 the reason and the time, and Ctrl-C stops the wait. Elsewhere each reason
 is a line on standard error. An agent the cluster has turned down, such as
 for a model its Harness cannot use, stops the command with the reason.

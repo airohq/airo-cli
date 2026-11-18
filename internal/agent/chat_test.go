@@ -635,3 +635,58 @@ func TestFlagsFitKubectls(t *testing.T) {
 		t.Errorf("-c with -r: %v, want them refused together", err)
 	}
 }
+
+func TestProjectCredentialWatch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c := fake.NewClientBuilder().WithIndex(&corev1.ConfigMap{}, "metadata.name", func(o client.Object) []string {
+		return []string{o.GetName()}
+	}).Build()
+	done := make(chan error, 1)
+	go func() { done <- waitProjectCredentials(ctx, c, "team", "agent-credentials-ready", io.Discard) }()
+	marker := func(ns string) *corev1.ConfigMap {
+		return &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "agent-credentials-ready"}}
+	}
+	if err := c.Create(ctx, marker("other")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("another project's grant released the wait: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := c.Create(ctx, marker("team")); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestChatProjectDuringProvisioning(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	oldPoll := readyPoll
+	readyPoll = time.Millisecond
+	defer func() { readyPoll = oldPoll }()
+	c := fake.NewClientBuilder().WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team", CreationTimestamp: metav1.Now()}}).Build()
+	done := make(chan error, 1)
+	go func() { _, err := chatProject(ctx, c, "team", io.Discard); done <- err }()
+	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "kagent", Namespace: "team"}}
+	if err := c.Create(ctx, cm); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("endpoint alone released the wait: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	a := agentNamed("assistant", true)
+	a.SetNamespace("team")
+	if err := c.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

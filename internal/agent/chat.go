@@ -53,7 +53,7 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 	if err != nil {
 		return err
 	}
-	c, err := client.New(cfg, client.Options{})
+	c, err := client.NewWithWatch(cfg, client.Options{})
 	if err != nil {
 		return err
 	}
@@ -71,11 +71,15 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 			return name, err
 		}
 	}
+	config, err := chatProject(ctx, c, ns, errOut)
+	if err != nil {
+		return err
+	}
 	agent, err := pick(ctx, c, ns, o.agent, ask)
 	if err != nil {
 		return err
 	}
-	address, err := endpoint(ctx, c, ns)
+	address, err := endpointURL(config)
 	if err != nil {
 		return err
 	}
@@ -85,6 +89,11 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 			return nil
 		}
 		return err
+	}
+	if marker := config.Data["readinessConfigMap"]; marker != "" {
+		if err := waitProjectCredentials(ctx, c, ns, marker, errOut); err != nil {
+			return err
+		}
 	}
 	store, err := newSessionStore()
 	if err != nil {
@@ -181,6 +190,11 @@ func endpoint(ctx context.Context, c client.Client, ns string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read the agent endpoint of project %s: %w", ns, err)
 	}
+	return endpointURL(cm)
+}
+
+func endpointURL(cm *corev1.ConfigMap) (string, error) {
+	ns := cm.Namespace
 	address := strings.TrimSpace(cm.Data[endpointKey])
 	if address == "" {
 		return "", fmt.Errorf("this project has no agent endpoint; ask a platform admin (ConfigMap %s/%s has no key %s)", ns, endpointConfigMap, endpointKey)
