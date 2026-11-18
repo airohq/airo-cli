@@ -62,7 +62,8 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
   `airo context customer` takes the context's name, because the name is all
   the task needs. `-` switches back to the previous one, as in `cd -`.
 - **A verb wins over an argument.** `airo agent list` lists agents. A prompt
-  that equals a verb goes after `--`, as in `airo agent -- list`.- **A missing choice is resolved in the cluster, then by asking.** With no
+  that equals a verb goes after `--`, as in `airo agent -- list`.
+- **A missing choice is resolved in the cluster, then by asking.** With no
   `--agent`, `airo agent` takes the project's only agent, then the one marked
   as default with the annotation `airohq.dev/default-agent: "true"`, then
   shows a picker. Where nobody can answer, such as in a script, it stops and
@@ -161,6 +162,19 @@ agent, as in other agent CLIs. While a turn runs, the first Ctrl-C says what
 each key does, such as "Esc stops the agent · Ctrl-C again leaves, the agent
 works on", and only a second one leaves.
 
+**The next prompt can be drafted while a turn runs.** The input stays
+editable, and Enter keeps the draft with a hint to send it after the turn
+ends. Finishing or stopping a turn never sends the draft automatically.
+History keeps sent prompts and restores the unfinished draft on returning
+past the newest one.
+
+**Slash commands are explicit local shortcuts in the interactive chat.**
+Only the whole prompts `/help` and `/exit` are reserved: they show help and
+leave the conversation. Other slash-prefixed prompts go to the agent
+unchanged. Arguments and piped input are always prompts, so
+`airo agent /help` sends the literal text. A slash command never adds a
+second way to manage platform resources; those remain CLI commands.
+
 **A resource looks as kubectl prints it.** `list` and `get` keep the
 cluster's table: its columns, their order and their upper-case headers. On a
 terminal, style may mute the header and colour a status word, and adds or
@@ -177,6 +191,65 @@ works at 80 columns.
 
 **One library family draws everything**: Charm's Bubble Tea, Bubbles, Lip
 Gloss and Glamour. No second one for pickers, prompts or colour.
+
+### Closing messages
+
+**The closing message tells the person how to return.** Take the concrete
+resume command from [Codex's exit summary][codex-exit] and
+[Claude Code's resume hint on exit][claude-exit] as the model. The rules
+below are airo's: a short, useful ending that leaves the answer prominent.
+
+**Print it once when the command exits, after removing the live region.**
+Completing a turn in an open conversation returns to the input. The agent's
+answer stays on standard output; the CLI's closing message goes to standard
+error. Do not add another summary of the answer, a success banner, or usage
+statistics by default.
+Leaving an empty conversation that created no session needs no closing hint.
+
+| What happened | What the closing message needs |
+| --- | --- |
+| A single prompt finished, or the person left an idle conversation | Just the resume hint |
+| The person detached from a running turn | Say the agent works on in the cluster, then give the resume command |
+| The turn was canceled or failed | Keep the cancellation or failure reason visible; give the resume command if the session is known. Do not imply work continues |
+| The connection failed before the turn's result arrived | Say the result is unknown and work may still be running; give the resume command if known |
+| A prompt was sent but no session ID arrived | Say why there is no resume hint; do not invent an ID or fall back to `--continue`, which could select another session |
+
+**Separate the closing message from the answer with a blank line.** Keep
+any status to one short sentence. Then print `Resume this session with:`
+on its own line, followed by the command on the next line. Use the Muted
+role for the introductory line and the default foreground for the command,
+with the same words and spacing in plain output. No border or decorative
+separator is needed.
+
+**Give one command that names this session.** Use the full agent name and
+session ID, without truncation or placeholders. The ID appears once, in the
+command; a separate `Session ID` line adds nothing. Put the command last so
+it is easy to find and copy. Its line contains only the command: no
+indentation, label, prompt mark, backticks or trailing explanation. Use this
+format for session commands' resume hints too. An error already shown needs
+no second copy.
+
+An ordinary exit:
+
+```text
+The build fails in the step lint: main.go has an unused import.
+
+Resume this session with:
+airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+```
+
+Detaching from work that is still running:
+
+```text
+I am checking the build logs.
+
+Detached. The agent works on in the cluster.
+Resume this session with:
+airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+```
+
+[codex-exit]: https://github.com/openai/codex/blob/main/codex-rs/tui/src/app/exit_summary.rs
+[claude-exit]: https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#2131
 
 ## Cleanup
 

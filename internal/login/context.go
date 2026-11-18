@@ -27,7 +27,7 @@ const previousArg = "-"
 func NewContextCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "context [NAME|-]",
-		Aliases: []string{"ctx"},
+		Aliases: []string{"contexts", "ctx"},
 		Short:   "Switch between your sign-ins",
 		Long: `Context makes another sign-in the current context of your kubeconfig, for
 every later command of airo and kubectl. A sign-in is a context that airo

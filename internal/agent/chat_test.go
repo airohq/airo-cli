@@ -376,15 +376,13 @@ func TestTurnEndsWhenTheAgentWaitsForThePerson(t *testing.T) {
 	}
 }
 
-func TestOnceSaysHowToContinue(t *testing.T) {
+func TestOnceSaysHowToResume(t *testing.T) {
 	s, _, _, errOut := talk(t, stream(result(submitted), result(artifact("a1", "Hello.")), result(completed)))
 	if err := s.once(context.Background(), "Say hello"); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Session ctx-1", `airo agent -a reviewer -c "PROMPT"`} {
-		if !strings.Contains(errOut.String(), want) {
-			t.Errorf("notes %q lack %q", errOut.String(), want)
-		}
+	if !strings.Contains(errOut.String(), "airo agent -a reviewer -r ctx-1") {
+		t.Errorf("notes %q lack how to resume", errOut.String())
 	}
 }
 

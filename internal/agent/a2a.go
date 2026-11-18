@@ -155,11 +155,13 @@ type wireStatus struct {
 }
 
 type wireStatusUpdate struct {
+	TaskID    string     `json:"taskId"`
 	ContextID string     `json:"contextId"`
 	Status    wireStatus `json:"status"`
 }
 
 type wireArtifactUpdate struct {
+	TaskID    string        `json:"taskId"`
 	ContextID string        `json:"contextId"`
 	Artifact  *wireArtifact `json:"artifact"`
 }
@@ -172,6 +174,8 @@ type wireArtifact struct {
 
 // event is what one stream object means to the command.
 type event struct {
+	// taskID is the current turn, used only to cancel that turn explicitly.
+	taskID string
 	// contextID is the session's ID.
 	contextID string
 	// state is the task's state, or empty when the object has none.
@@ -200,6 +204,7 @@ func (r streamResult) events() []event {
 			}
 		}
 		return append(es, event{
+			taskID:    r.Task.ID,
 			contextID: r.Task.ContextID,
 			state:     r.Task.Status.State,
 			text:      agentText(r.Task.Status.Message),
@@ -209,12 +214,13 @@ func (r streamResult) events() []event {
 		return []event{{contextID: r.Message.ContextID, text: agentText(r.Message), reply: r.Message.Role != roleUser}}
 	case r.StatusUpdate != nil:
 		return []event{{
+			taskID:    r.StatusUpdate.TaskID,
 			contextID: r.StatusUpdate.ContextID,
 			state:     r.StatusUpdate.Status.State,
 			text:      agentText(r.StatusUpdate.Status.Message),
 		}}
 	case r.ArtifactUpdate != nil:
-		e := event{contextID: r.ArtifactUpdate.ContextID}
+		e := event{taskID: r.ArtifactUpdate.TaskID, contextID: r.ArtifactUpdate.ContextID}
 		if a := r.ArtifactUpdate.Artifact; a != nil {
 			e.text, e.block = partsText(a.Parts), a.ArtifactID
 		}
