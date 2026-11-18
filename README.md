@@ -345,6 +345,10 @@ content inherits its background. If the terminal cannot report its colours,
 Markdown uses neutral emphasis. Theme detection runs alongside the chat
 without delaying input or sending a draft.
 
+Numbered list markers are blue and bullet markers are teal. Wrapped lines
+align under the item text, with nested lists indented four columns. Lists
+keep their starting number, checkboxes and paragraph breaks.
+
 In the styled chat, a blank line separates messages. Your messages start
 with bold `› `, also used in the editable prompt; the agent's start with `• `.
 Continuation lines align two columns in, including wrapped prompts and

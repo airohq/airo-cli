@@ -8,13 +8,16 @@ import (
 	"sync"
 	"unicode"
 
-	"charm.land/glamour/v2"
 	"charm.land/glamour/v2/ansi"
 	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
 	chromastyles "github.com/alecthomas/chroma/v2/styles"
 	"github.com/charmbracelet/colorprofile"
 	xansi "github.com/charmbracelet/x/ansi"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/text"
 )
 
 // Text strips terminal controls from text supplied by an agent or a prompt.
@@ -31,8 +34,10 @@ func Text(text string) string {
 // MarkdownRenderer keeps prose on the terminal's canvas and gives Markdown
 // and code their own theme, separate from the surrounding chat's accent.
 type MarkdownRenderer struct {
-	renderer *glamour.TermRenderer
-	syntax   *chroma.Style
+	options ansi.Options
+	parser  parser.Parser
+	colours markdownTheme
+	syntax  *chroma.Style
 }
 
 const syntaxThemeName = "airo-terminal"
@@ -41,9 +46,9 @@ const syntaxThemeName = "airo-terminal"
 // to a render so theme updates cannot leave stale colours or grow that registry.
 var syntaxMu sync.Mutex
 
-func (r *MarkdownRenderer) Render(text string) (string, error) {
+func (r *MarkdownRenderer) Render(input string) (string, error) {
 	if r.syntax == nil {
-		return r.renderer.Render(text)
+		return r.render(input)
 	}
 	syntaxMu.Lock()
 	defer syntaxMu.Unlock()
@@ -56,7 +61,13 @@ func (r *MarkdownRenderer) Render(text string) (string, error) {
 			delete(chromastyles.Registry, syntaxThemeName)
 		}
 	}()
-	return r.renderer.Render(text)
+	return r.render(input)
+}
+
+func (r *MarkdownRenderer) render(input string) (string, error) {
+	source := []byte(input)
+	doc := r.parser.Parse(text.NewReader(source))
+	return r.renderBlocks(doc, source, r.options.WordWrap)
 }
 
 func Markdown(width int, palette Palette) (*MarkdownRenderer, error) {
@@ -67,7 +78,10 @@ func Markdown(width int, palette Palette) (*MarkdownRenderer, error) {
 		return nil, err
 	}
 	quote, column, row, center := "│ ", "│", "─", "┼"
-	r := &MarkdownRenderer{syntax: colours.syntax}
+	r := &MarkdownRenderer{syntax: colours.syntax, colours: colours,
+		parser: goldmark.New(goldmark.WithExtensions(extension.GFM, extension.DefinitionList),
+			goldmark.WithParserOptions(parser.WithAutoHeadingID())).Parser(),
+	}
 	theme, formatter := "", "terminal16m"
 	if r.syntax != nil {
 		theme = syntaxThemeName
@@ -75,11 +89,9 @@ func Markdown(width int, palette Palette) (*MarkdownRenderer, error) {
 			formatter = "terminal256"
 		}
 	}
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithWordWrap(max(1, width)),
-		glamour.WithTableWrap(true),
-		glamour.WithChromaFormatter(formatter),
-		glamour.WithStyles(ansi.StyleConfig{
+	r.options = ansi.Options{
+		WordWrap: max(1, width), ChromaFormatter: formatter,
+		Styles: ansi.StyleConfig{
 			Document:              ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{BlockSuffix: "\n"}},
 			Heading:               ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: markdownColor(colours.heading), BlockSuffix: "\n"}},
 			H1:                    ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: markdownColor(colours.heading1), Bold: &bold, Underline: &underline}},
@@ -104,12 +116,8 @@ func Markdown(width int, palette Palette) (*MarkdownRenderer, error) {
 			ImageText:             ansi.StylePrimitive{Format: "Image: {{.text}} → "},
 			Table:                 ansi.StyleTable{CenterSeparator: &center, ColumnSeparator: &column, RowSeparator: &row},
 			DefinitionDescription: ansi.StylePrimitive{BlockPrefix: "\n  "},
-		}),
-	)
-	if err != nil {
-		return nil, err
+		},
 	}
-	r.renderer = renderer
 	return r, nil
 }
 

@@ -226,7 +226,7 @@ theme with Airo's UI accent.
 | Strong and emphasis | Rose, with bold and italic respectively |
 | Inline code | Green, without the Markdown delimiter backticks |
 | Links | Blue and underlined |
-| Quotes and list markers | Pink quotes, Catppuccin's teal for bullet markers; ordinary list text stays neutral |
+| Quotes and list markers | Pink quotes, teal bullet markers and blue numbered markers; ordinary list text stays neutral |
 | Fenced code | The full syntax theme: distinct keyword, type, function, string and number colours, with readable muted comments |
 
 Preserve these hues where readable, adjusting for the actual terminal
@@ -235,6 +235,11 @@ all content inherits its background, including diff tokens inside code.
 Use the same theme for live answers and replayed history. Unknown terminal
 colours fall back to readable neutral Markdown; pipes retain the original
 Markdown source.
+
+List markers include their punctuation in the marker colour. Preserve an
+ordered list's starting number and align wrapped lines under its text.
+Nest lists four columns beyond the parent's marker; keep blank lines in
+loose lists and between paragraphs inside an item.
 
 [codex-markdown]: https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/tui/src/markdown_render.rs
 [codex-syntax]: https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/tui/src/render/highlight.rs
