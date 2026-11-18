@@ -34,6 +34,9 @@ homebrew_casks:
   - name: airo
     homepage: https://github.com/airohq/airo-cli
     description: Work with the Airo platform from your machine
+    generate_completions_from_executable:
+      executable: airo
+      shell_parameter_format: cobra
     # Homebrew follows stable releases only.
     skip_upload: auto
     repository:
@@ -46,11 +49,11 @@ homebrew_casks:
       git:
         url: "git@github.com:airohq/homebrew-tap.git"
         private_key: "{{ .Env.HOMEBREW_TAP_DEPLOY_KEY }}"
-    # The binaries are not signed or notarized, so macOS would refuse to run
-    # them. Remove this once they are:
+    # Homebrew runs the binary during install to generate completions.
+    # Clear quarantine first, until the macOS binaries are signed and notarized:
     # https://goreleaser.com/customization/homebrew_casks/#signing-and-notarizing
     hooks:
-      post:
+      pre:
         install_steps: |
           on_macos do
             run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/airo"]

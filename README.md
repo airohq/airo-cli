@@ -9,6 +9,12 @@ Each command reads and writes Kubernetes resources as you, so everything it
 does to a resource can also be done with `kubectl`, and you do not need
 `kubectl` to use it.
 
+Run `airo -h` for commands grouped by task and `airo options` for global
+flags such as `--context` and `--namespace`. Each command has its own help,
+for example `airo login -h` for first-time setup. Once signed in, run
+`airo project list` to find your projects and `airo agent list` to see the
+agents in your current project.
+
 ## Install
 
 **Install and update the stable release with Homebrew, on macOS and Linux.**
@@ -18,6 +24,11 @@ brew install airohq/tap/airo
 brew upgrade airo        # update
 airo --version
 ```
+
+Homebrew installs shell completions for zsh, Bash, fish and PowerShell.
+In a new shell with completion enabled, type `airo ` and press Tab for
+commands, `airo agent ` and Tab for agent verbs, or `airo --` and Tab for
+flags. For shell setup, see [Homebrew's completion guide](https://docs.brew.sh/Shell-Completion).
 
 The binaries are also on the [releases](https://github.com/airohq/airo-cli/releases) page.
 
