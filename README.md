@@ -163,6 +163,8 @@ airo project             # choose from a picker
 airo project acme-web    # switch to the project acme-web
 airo project -           # switch back to the previous one
 airo project list
+airo project create acme-web
+airo project delete acme-web
 ```
 
 ```text
@@ -177,6 +179,8 @@ CURRENT   NAME           AGE
 | `airo project NAME` | Makes that project the context's namespace. The name must be one of your projects |
 | `airo project -` | Switches to the project you last switched away from in this context, so twice brings you back. `airo` keeps its name in your cache directory |
 | `airo project list` | Lists the projects the platform's API shows you, and marks the current one with `*`. `-o yaml` and `-o json` print the Namespaces |
+| `airo project create NAME` | Creates the project. It does not switch to it |
+| `airo project delete NAME` | Deletes the project and everything in it. If your commands work in it, it says so, and they keep working there until you switch |
 
 **It changes the current context, or the one `--context` names**, and only a
 context that signs in through the platform. For one command in another
@@ -187,7 +191,11 @@ sets the project, without asking the cluster whether it is one of yours.
 customer's people see their own projects. A platform admin sees every
 namespace of the cluster.
 
-**`airo` cannot create a project yet.** The platform's admin adds one.
+**The platform decides which projects you may create and delete.** A
+customer's name must start with the tenant's name and a dash, such as
+`acme-`, and a tenant has a limited number of projects. The default project,
+such as `acme-default`, cannot be deleted. When the platform refuses, `airo`
+prints its reason.
 
 A project named like a verb goes after `--`, as in `airo project -- list`.
 
