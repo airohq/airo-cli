@@ -9,6 +9,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -52,6 +54,118 @@ func TestChatKeepsDraftWhileTurnRuns(t *testing.T) {
 	press(m, tea.KeyEnter, 0)
 	if len(*prompts) != 2 || (*prompts)[1] != "Next\nline" {
 		t.Fatalf("prompts = %#v", *prompts)
+	}
+}
+
+func TestChatThemeRepliesPreserveDraftAndStreaming(t *testing.T) {
+	m, prompts := testChat(t)
+	m.styled = true
+	m.start("First")
+	m.Update(printedMsg{})
+	m.Update(answerMsg{"a1", "First paragraph.\n\nNext paragraph."})
+	m.Update(printedMsg{})
+	m.input.SetValue("unfinished\ndraft")
+	wantPreview := ansi.Strip(m.preview)
+	wantCursor := *m.input.Cursor()
+	for _, msg := range []tea.Msg{
+		tea.ColorProfileMsg{Profile: colorprofile.TrueColor},
+		tea.ForegroundColorMsg{Color: lipgloss.Color("#E5E5E5")},
+		tea.BackgroundColorMsg{Color: lipgloss.Color("#181A1F")},
+		tea.BackgroundColorMsg{Color: lipgloss.Color("#F5F2EB")},
+		tea.ForegroundColorMsg{Color: lipgloss.Color("#202020")},
+		tea.ColorProfileMsg{Profile: colorprofile.ANSI256},
+	} {
+		if _, cmd := m.Update(msg); cmd != nil {
+			t.Fatal("a theme reply started work or another event reader")
+		}
+		if len(*prompts) != 1 || m.input.Value() != "unfinished\ndraft" || *m.input.Cursor() != wantCursor {
+			t.Fatal("a theme reply sent or changed the draft/cursor")
+		}
+		if !m.active || !m.answerPrinted || m.block != "a1" || ansi.Strip(m.preview) != wantPreview {
+			t.Fatal("a theme reply changed streaming state or repeated a message marker")
+		}
+		if got := m.input.Styles().Focused.Prompt.Render(">"); got != m.styles.Accent.Render(">") {
+			t.Fatal("prompt did not adopt the palette")
+		}
+		if got := m.spinner.Style.Render("spinner"); got != m.styles.Muted.Render("spinner") {
+			t.Fatal("spinner did not adopt the palette")
+		}
+	}
+	if strings.Contains(m.formatMessage(FromYou, "prompt"), "38;2;") {
+		t.Fatal("scrollback ignored the downgraded profile")
+	}
+	if got := m.styles.Accent.Render(">"); !strings.Contains(got, "38;5;") {
+		t.Fatalf("late replies did not colour the prompt: %q", got)
+	}
+	m.stopTurn()
+}
+
+func TestChatThemeRepliesCannotEnableRedirectedColours(t *testing.T) {
+	m, _ := testChat(t)
+	m.Update(tea.ColorProfileMsg{Profile: colorprofile.TrueColor})
+	m.Update(tea.BackgroundColorMsg{Color: lipgloss.Color("#181A1F")})
+	m.Update(tea.ForegroundColorMsg{Color: lipgloss.Color("#E5E5E5")})
+	if got := m.styles.Accent.Render(">"); got != ">" {
+		t.Fatalf("a theme reply enabled styling on redirected output: %q", got)
+	}
+}
+
+func TestChatMarkdownFollowsThemeAndMatchesHistory(t *testing.T) {
+	m, _ := testChat(t)
+	m.styled = true
+	m.Update(tea.ColorProfileMsg{Profile: colorprofile.TrueColor})
+	m.Update(answerMsg{"a1", "Use `file.go` for this change."})
+	var previous string
+	for _, bg := range []string{"#181A1F", "#F5F2EB"} {
+		m.Update(tea.BackgroundColorMsg{Color: lipgloss.Color(bg)})
+		m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+		if !strings.Contains(m.preview, "38;2;") || m.preview == previous {
+			t.Fatalf("live Markdown did not adopt %s: %q", bg, m.preview)
+		}
+		if strings.Contains(m.preview, m.styles.Accent.Render("file.go")) {
+			t.Fatal("inline code reused the UI accent instead of its own theme")
+		}
+		previous = m.preview
+		if history := m.formatMessage(FromAgent, m.pending); history != m.preview {
+			t.Fatalf("history differs from live Markdown:\nhistory: %q\nlive: %q", history, m.preview)
+		}
+	}
+}
+
+func TestChatParsesThemeRepliesAlongsideTyping(t *testing.T) {
+	for _, replies := range []bool{false, true} {
+		m, _ := testChat(t)
+		m.styled = true
+		m.palette.Profile = colorprofile.TrueColor
+		input := "typed "
+		if replies {
+			input += "\x1b]11;rgb:1818/1a1a/1f1f\x1b\\"
+		}
+		input += "draft"
+		if replies {
+			input += "\x1b]10;rgb:e5e5/e5e5/e5e5\x1b\\"
+		}
+		input += "\r"
+		ctx, cancel := context.WithTimeout(m.ctx, 3*time.Second)
+		var output bytes.Buffer
+		p := tea.NewProgram(m, tea.WithInput(strings.NewReader(input)), tea.WithOutput(&output),
+			tea.WithContext(ctx), tea.WithoutRenderer(), tea.WithoutSignalHandler(), tea.WithColorProfile(colorprofile.TrueColor))
+		var sent string
+		m.run = func(_ context.Context, prompt string) {
+			sent = prompt
+			go p.Quit()
+		}
+		_, err := p.Run()
+		cancel()
+		if m.stopTurn != nil {
+			m.stopTurn()
+		}
+		if err != nil || sent != "typed draft" {
+			t.Fatalf("replies=%t: sent %q, err %v", replies, sent, err)
+		}
+		if replies && (m.palette.Background == nil || m.palette.Foreground == nil) {
+			t.Fatal("terminal replies were not decoded as theme messages")
+		}
 	}
 }
 
@@ -213,6 +327,11 @@ func TestChatSlashCommands(t *testing.T) {
 	if len(*prompts) != 0 || !strings.Contains(m.hint, "/exit") {
 		t.Fatal("/help should be local")
 	}
+	for _, key := range []string{"Enter sends", "Ctrl-J", "Shift-Enter", "↑↓", "Esc", "Ctrl-D", "Ctrl-C twice"} {
+		if !strings.Contains(m.hint, key) {
+			t.Errorf("/help omitted %s", key)
+		}
+	}
 	m.input.SetValue("/review main")
 	press(m, tea.KeyEnter, 0)
 	if len(*prompts) != 1 || (*prompts)[0] != "/review main" {
@@ -222,6 +341,69 @@ func TestChatSlashCommands(t *testing.T) {
 	press(m, tea.KeyEnter, 0)
 	if !m.exiting || !m.detached {
 		t.Fatal("/exit should detach from a running turn")
+	}
+}
+
+func TestChatStatusIdentifiesTheSession(t *testing.T) {
+	const id = "01a1eb36-0cf7-78d5-989d-31b1458abaa4"
+	m, _ := testChat(t)
+	m.styled = true
+	m.Update(tea.ColorProfileMsg{Profile: colorprofile.TrueColor})
+	m.Update(tea.BackgroundColorMsg{Color: lipgloss.Color("#181A1F")})
+	m.Update(tea.ForegroundColorMsg{Color: lipgloss.Color("#E5E5E5")})
+	m.details = chatDetails{agent: "reviewer"}
+	m.loadDetails = func(context.Context) chatDetails { t.Fatal("details loaded synchronously"); return chatDetails{} }
+	m.Init()
+	m.input.SetValue("Keep this draft")
+	m.Update(chatDetails{"reviewer", "codex", "gpt-5.4"})
+	if m.input.Value() != "Keep this draft" {
+		t.Fatal("metadata update lost the draft")
+	}
+	if strings.Contains(m.sessionStatus(), "Session") {
+		t.Fatal("invented a session ID before the first event")
+	}
+	m.Update(event{contextID: id})
+	m.Update(event{taskID: "task-1", contextID: "different-context", state: stateWorking})
+	if m.sessionID != id {
+		t.Fatal("a later event replaced the conversation ID")
+	}
+	for _, width := range []int{140, 80, 40} {
+		m.resize(width, 24)
+		for _, active := range []bool{false, true} {
+			m.active = active
+			m.started = time.Now()
+			view := ansi.Strip(m.View().Content)
+			if !strings.Contains(view, id) {
+				t.Fatalf("width %d split or lost the ID: %q", width, view)
+			}
+			if !strings.Contains(strings.Join(strings.Fields(view), " "), "reviewer · codex · gpt-5.4") {
+				t.Errorf("view lost the unlabelled settings: %q", view)
+			}
+			if strings.Contains(view, "Enter sends") || strings.Contains(view, "Ctrl-C twice") {
+				t.Fatalf("default view still shows key guidance: %q", view)
+			}
+			for _, line := range strings.Split(view, "\n") {
+				if ansi.StringWidth(line) > width {
+					t.Errorf("status overflowed %d columns: %q", width, line)
+				}
+				if strings.Contains(line, id) && ansi.StringWidth(line) != width {
+					t.Errorf("session ID is not right aligned: %q", line)
+				}
+			}
+			if active && !strings.Contains(view, "Agent working") {
+				t.Fatal("lost the working status")
+			}
+		}
+	}
+}
+
+func TestChatStatusSanitizesMetadata(t *testing.T) {
+	m, _ := testChat(t)
+	m.details = chatDetails{"reviewer\nspoof", "\x1b[31mcodex", "model\tname"}
+	m.resize(120, 24)
+	got := m.sessionStatus()
+	if strings.ContainsAny(got, "\n\t\x1b") || !strings.Contains(got, "reviewer spoof · codex · model name") {
+		t.Fatalf("unsafe status text: %q", got)
 	}
 }
 

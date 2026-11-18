@@ -344,13 +344,51 @@ printed; use `airo session view SESSION` to read the saved conversation.
 **On a terminal, the chat stays in your scrollback.** Answers render as
 Markdown above the input, with a status and elapsed time while the agent
 works. It uses your terminal's colours and never takes over the full screen.
+Under the input, the status line shows the agent name, configured harness
+and model without prefixes, separated by muted dots: lavender for the agent,
+soft green for the harness and warm yellow for the model. The full session
+ID stays muted on the right for copying. On narrower
+terminals the ID moves to its own line. The model name comes from the
+referenced ModelConfig; unreadable details show as unknown without blocking
+the conversation. These are the Agent's current settings; resumed sessions
+can still use an older revision. Routine keyboard guidance appears through
+`/help`, while contextual hints explain actions such as interrupting a turn.
+The prompt mark keeps its UI accent; hints and the agent's marker use a
+readable neutral. These adapt to the terminal's reported
+background and colour support, with separate tones for light and dark themes.
+RGB and 256-colour terminals get shades adjusted for readable contrast;
+limited or unreported colours fall back to the default foreground and
+emphasis. Warning labels use muted amber when supported; success and error
+labels keep the terminal's green and red. The UI accent stays on small
+controls such as the prompt marker.
+
+**Markdown has its own colours.** It uses Catppuccin Mocha for dark terminals
+and Latte for light terminals, the same default theme family as Codex.
+Headings use rose, peach and yellow; inline code is green without delimiter
+backticks, links are blue,
+and quotes are pink. Fenced code uses the full syntax theme, with distinct
+colours for keywords, functions, strings and numbers. Comments remain
+readable. Prose and typed text keep the terminal's foreground, and all
+content inherits its background. If the terminal cannot report its colours,
+Markdown uses neutral emphasis. Theme detection runs alongside the chat
+without delaying input or sending a draft.
+
+Numbered list markers are blue and bullet markers are teal. Wrapped lines
+align under the item text, with nested lists indented four columns. Lists
+keep their starting number, checkboxes and paragraph breaks.
+
+Tables use bold yellow headers and muted horizontal rules, with open space
+between columns. They preserve cell alignment and inline formatting, wrap
+long prose, and switch to labelled records when columns cannot fit legibly.
+
 In the styled chat, a blank line separates messages. Your messages start
-with `> ` and the agent's with `• `; continuation lines align two columns
-in, including wrapped prompts and Markdown lists or code blocks. The marker
-appears once per message, also while an answer streams or history reloads.
+with bold `› `, also used in the editable prompt; the agent's start with `• `.
+Continuation lines align two columns in, including wrapped prompts and
+Markdown lists or code blocks. Each marker appears once per message, also
+while an answer streams or history reloads.
 The closing hint is separated from the answer by a blank line.
-`Resume this session with:` is muted when colour is enabled; the command
-follows on its own line, with no indentation or prefix, ready to copy.
+`Resume this session with:` uses the chat's muted tone when available; the
+command follows on its own line, with no indentation or prefix, ready to copy.
 Both a single prompt and a conversation end with one resume command
 carrying the session ID, without a separate `Session` line. The hint appears
 when the command exits, not after every turn.
