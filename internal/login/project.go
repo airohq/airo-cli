@@ -81,6 +81,18 @@ func NewProjectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		}
 		return r.Delete(ctx, name, metav1.DeleteOptions{})
 	}
+	// The project airo login chooses at a first sign-in.
+	defaultOf := func(ctx context.Context) (string, error) {
+		cfg, err := flags.ToRESTConfig()
+		if err != nil {
+			return "", err
+		}
+		me, err := currentUser(ctx, cfg)
+		if err != nil {
+			return "", err
+		}
+		return defaultProject(me.Groups), nil
+	}
 
 	cmd := &cobra.Command{
 		Use:     "project [NAME|-]",
@@ -134,21 +146,24 @@ tenant's name, and how many projects you may have.`,
   airo project acme-web       # then work in it`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return createProject(cmd.Context(), cmd.OutOrStdout(), args[0], create)
+			return createProject(cmd.Context(), cmd.OutOrStdout(), args[0], create, list, time.Minute)
 		},
 	}, &cobra.Command{
 		Use:   "delete NAME",
 		Short: "Delete a project and everything in it",
-		Args:  cobra.ExactArgs(1),
+		Long: `Delete removes a project and everything in it. When your commands work in
+it, airo switches them to the project you were in before, as airo project -
+does, or else to your default project, as airo login chooses it.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return deleteProject(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, args[0], remove)
+			return deleteProject(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, args[0], remove, newPreviousProjectStore, list, defaultOf)
 		},
 	})
 	return cmd
 }
 
 // createProject creates the project name.
-func createProject(ctx context.Context, out io.Writer, name string, create projectWriter) error {
+func createProject(ctx context.Context, out io.Writer, name string, create projectWriter, list projectLister, wait time.Duration) error {
 	err := create(ctx, name)
 	if apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("a project or namespace named %s exists already", name)
@@ -157,14 +172,30 @@ func createProject(ctx context.Context, out io.Writer, name string, create proje
 		return fmt.Errorf("could not create project %s: %w", name, err)
 	}
 	fmt.Fprintf(out, "Created project %s\n", name)
-	fmt.Fprintf(out, "  work in it: airo project %s\n", name)
-	return nil
+	// The platform's API lists a project only once the person's role in it
+	// exists, a few seconds later. Until then airo project NAME refuses it.
+	deadline := time.Now().Add(wait)
+	for {
+		if names, err := projectNames(ctx, list); err == nil && slices.Contains(names, name) {
+			fmt.Fprintf(out, "  work in it: airo project %s\n", name)
+			return nil
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			fmt.Fprintf(out, "  the platform does not list it yet: in a moment, work in it with airo project %s\n", name)
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 // deleteProject deletes the project name. When the context kctxName, or the
-// current context when it is empty, works in it, it says so: the context
-// keeps the namespace until the person switches.
-func deleteProject(ctx context.Context, out io.Writer, access clientcmd.ConfigAccess, kctxName, name string, remove projectWriter) error {
+// current context when it is empty, works in it, the context switches to the
+// project it was in before, or else to the default project that fallback
+// returns, as airo login chooses it. With neither, it says so.
+func deleteProject(ctx context.Context, out io.Writer, access clientcmd.ConfigAccess, kctxName, name string, remove projectWriter, storeFor func(string) (previousStore, error), list projectLister, fallback func(context.Context) (string, error)) error {
 	err := remove(ctx, name)
 	if apierrors.IsNotFound(err) {
 		return fmt.Errorf("you have no project %q", name)
@@ -180,9 +211,42 @@ func deleteProject(ctx context.Context, out io.Writer, access clientcmd.ConfigAc
 	if kctxName == "" {
 		kctxName = cfg.CurrentContext
 	}
-	if kctx := cfg.Contexts[kctxName]; kctx != nil && kctx.Namespace == name {
-		fmt.Fprintln(out, "  your commands still work in it: choose another with airo project")
+	kctx := cfg.Contexts[kctxName]
+	if kctx == nil || kctx.Namespace != name {
+		return nil
 	}
+	// The context worked in the deleted project: move it to the project it
+	// was in before, or else to the one airo login would choose.
+	stay := func() error {
+		fmt.Fprintln(out, "  your commands still work in it: choose another with airo project")
+		return nil
+	}
+	if _, err := oidcOf(cfg, kctxName); err != nil {
+		return stay()
+	}
+	names, err := projectNames(ctx, list)
+	if err != nil {
+		return stay()
+	}
+	usable := func(project string) bool { return project != "" && project != name && slices.Contains(names, project) }
+	store, err := storeFor(kctxName)
+	if err != nil {
+		return stay()
+	}
+	target := store.get()
+	if !usable(target) {
+		if target, err = fallback(ctx); err != nil || !usable(target) {
+			return stay()
+		}
+	}
+	kctx.Namespace = target
+	if err := clientcmd.ModifyConfig(access, *cfg, true); err != nil {
+		return err
+	}
+	// The remembered project is used up, and "-" must not lead back to the
+	// deleted one.
+	_ = store.put("")
+	fmt.Fprintf(out, "Switched to project %s\n", target)
 	return nil
 }
 

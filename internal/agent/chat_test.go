@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -263,6 +264,94 @@ func TestTurnSendsThePromptAndPrintsTheAnswer(t *testing.T) {
 	// A fresh token for each request.
 	if tokens[0] != "Bearer token-1" || tokens[1] != "Bearer token-2" {
 		t.Errorf("tokens = %v", tokens)
+	}
+}
+
+// reviewerWith returns agent reviewer with the conditions, each a type,
+// a status and a message.
+func reviewerWith(conditions ...[3]string) *unstructured.Unstructured {
+	a := agentNamed("reviewer", false)
+	a.SetGeneration(1)
+	var list []any
+	for _, c := range conditions {
+		list = append(list, map[string]any{"type": c[0], "status": c[1], "message": c[2], "observedGeneration": int64(1)})
+	}
+	if list != nil {
+		_ = unstructured.SetNestedSlice(a.Object, list, "status", "conditions")
+	}
+	return a
+}
+
+func TestAwaitAgent(t *testing.T) {
+	ctx := context.Background()
+	poll := readyPoll
+	readyPoll = 10 * time.Millisecond
+	t.Cleanup(func() { readyPoll = poll })
+	// No terminal: the plain lines.
+	in := &bytes.Buffer{}
+	pending := reviewerWith(
+		[3]string{"Accepted", "True", ""},
+		[3]string{"Ready", "False", "waiting for the ActorTemplate golden snapshot"},
+	)
+	c := fake.NewClientBuilder().WithObjects(pending).Build()
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		ready := reviewerWith([3]string{"Accepted", "True", ""}, [3]string{"Ready", "True", ""})
+		a := &unstructured.Unstructured{}
+		a.SetGroupVersionKind(agentGVK)
+		if err := c.Get(ctx, client.ObjectKey{Namespace: "team", Name: "reviewer"}, a); err != nil {
+			t.Error(err)
+			return
+		}
+		a.Object["status"] = ready.Object["status"]
+		if err := c.Update(ctx, a); err != nil {
+			t.Error(err)
+		}
+	}()
+	var errOut bytes.Buffer
+	if err := awaitAgent(ctx, c, "team", "reviewer", in, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	// Said once, however often it looked.
+	want := "Waiting for agent reviewer to become ready: waiting for the ActorTemplate golden snapshot\nAgent reviewer is ready.\n"
+	if errOut.String() != want {
+		t.Errorf("errOut = %q, want %q", errOut.String(), want)
+	}
+
+	for name, tt := range map[string]struct {
+		agent *unstructured.Unstructured
+		want  string
+	}{
+		"ready":       {reviewerWith([3]string{"Ready", "True", ""}), ""},
+		"turned down": {reviewerWith([3]string{"Accepted", "False", "model sonnet cannot run on harness codex"}, [3]string{"Ready", "False", ""}), "agent reviewer cannot run: model sonnet cannot run on harness codex"},
+	} {
+		var errOut bytes.Buffer
+		c := fake.NewClientBuilder().WithObjects(tt.agent).Build()
+		err := awaitAgent(ctx, c, "team", "reviewer", in, &errOut)
+		switch {
+		case tt.want == "" && (err != nil || errOut.Len() != 0):
+			t.Errorf("%s: %v, said %q; want no wait", name, err, errOut.String())
+		case tt.want != "" && (err == nil || err.Error() != tt.want):
+			t.Errorf("%s: %v, want %q", name, err, tt.want)
+		}
+	}
+
+	// A new Agent, which kagent has not read yet, and Ctrl-C ends the wait.
+	cancelled, cancel := context.WithCancel(ctx)
+	defer cancel()
+	c = fake.NewClientBuilder().WithObjects(reviewerWith()).Build()
+	var said []string
+	done := make(chan error, 1)
+	go func() {
+		done <- waitForSessions(cancelled, c, "team", "reviewer", func(why string) { said = append(said, why) }, time.Hour)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled: %v, want context.Canceled", err)
+	}
+	if len(said) != 1 || said[0] != "the cluster has not reported on it yet" {
+		t.Errorf("a new agent: said %q, want that the cluster has not reported", said)
 	}
 }
 

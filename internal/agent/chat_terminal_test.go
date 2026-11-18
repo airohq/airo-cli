@@ -55,6 +55,32 @@ func TestChatKeepsDraftWhileTurnRuns(t *testing.T) {
 	}
 }
 
+func TestChatSaysTheFirstTurnWakesTheAgent(t *testing.T) {
+	m, _ := testChat(t)
+	status := func() string { return ansi.Strip(m.View().Content) }
+	m.input.SetValue("hi")
+	press(m, tea.KeyEnter, 0)
+	m.Update(printedMsg{})
+	m.Update(event{state: stateWorking})
+	if got := status(); !strings.Contains(got, "Waking up the agent") {
+		t.Errorf("the first turn before its answer shows %q, want it to wake the agent", got)
+	}
+	m.Update(answerMsg{"a1", "Hello"})
+	if got := status(); strings.Contains(got, "Waking up") || !strings.Contains(got, "Agent "+stateWord(stateWorking)) {
+		t.Errorf("after the answer started: %q, want the agent's state", got)
+	}
+	m.Update(turnDoneMsg{})
+
+	// The sandbox runs now, so a later turn shows the agent's state.
+	m.input.SetValue("again")
+	press(m, tea.KeyEnter, 0)
+	m.Update(printedMsg{})
+	m.Update(event{state: stateWorking})
+	if got := status(); strings.Contains(got, "Waking up") {
+		t.Errorf("the second turn shows %q, want no wake-up", got)
+	}
+}
+
 func TestChatHistoryRestoresDraft(t *testing.T) {
 	m, _ := testChat(t)
 	m.history, m.historyAt = []string{"one", "two\nlines"}, 2

@@ -129,6 +129,7 @@ type chatModel struct {
 	draft                       string
 	block, pending, preview     string
 	answerPrinted               bool // the current message's marker is already in scrollback
+	answered                    bool // the turn's answer has started
 	printing, exiting, detached bool
 	interrupt                   bool
 	hint                        string
@@ -192,7 +193,7 @@ func (m *chatModel) start(prompt string) tea.Cmd {
 	m.cancelState = ""
 	m.turn++
 	m.taskID, m.state, m.block, m.hint = "", "", "", ""
-	m.answerPrinted = false
+	m.answerPrinted, m.answered = false, false
 	m.started = time.Now()
 	m.history = append(m.history, prompt)
 	m.historyAt, m.draft = len(m.history), ""
@@ -248,6 +249,7 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.wait()
 		}
 	case answerMsg:
+		m.answered = true
 		var committed []string
 		if msg.block == "" || msg.block != m.block {
 			if text := m.commitAnswer(m.pending); text != "" {
@@ -573,9 +575,15 @@ func (m *chatModel) View() tea.View {
 	statusLines := 0
 	if m.active || m.loading {
 		status := "Waiting for the agent"
-		if m.loading {
+		switch {
+		case m.loading:
 			status = "Loading the conversation"
-		} else if m.state != "" {
+		case m.turn == 1 && !m.answered:
+			// The first turn of this run starts the session's sandbox, or
+			// wakes it after a pause. The agents' API sends nothing that tells
+			// that from a thinking model, so later turns do not say it.
+			status = "Waking up the agent"
+		case m.state != "":
 			status = "Agent " + ui.Text(stateWord(m.state))
 		}
 		if m.stopping {
