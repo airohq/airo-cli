@@ -14,7 +14,8 @@ import (
 const markdownSample = "# Heading\n\nProse with **strong** text, *emphasis* and `file.go`.\n\n" +
 	"## Section\n\n### Details\n\n- Entry\n\n[Docs](https://example.com)\n\n> Quoted text.\n\n" +
 	"```go\npackage main\n\n// Explain the code.\nconst answer = 42\nfunc greet() string { return \"hello\" }\n```\n\n" +
-	"```diff\n-old value\n+new value\n```\n\nAfter the code.\n"
+	"```diff\n-old value\n+new value\n```\n\nAfter the code.\n\n" +
+	"11. Numbered entry\n\n| TableName | Value |\n| --- | --- |\n| TableBody | `cell.go` |\n"
 
 func TestMarkdownUsesAdaptivePalette(t *testing.T) {
 	for _, profile := range []colorprofile.Profile{colorprofile.TrueColor, colorprofile.ANSI256} {
@@ -42,6 +43,8 @@ func TestMarkdownUsesAdaptivePalette(t *testing.T) {
 					"Quoted text.": pink, "Explain the code.": comment,
 					"func": red, "greet": blue, "hello": green, "return": purple, "42": peach, "main": codeText,
 					"old value": red, "new value": green,
+					"TableName": yellow, "cell.go": green, "11.": blue,
+					"TableBody": "", "Numbered entry": "", "━": comment,
 					"Prose": "", "Entry": "", "After the code.": "",
 				}
 				// Interleaved renders must not reuse another renderer's Chroma

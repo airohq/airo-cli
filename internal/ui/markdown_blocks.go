@@ -14,9 +14,9 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
-// Keep Glamour's inline and code rendering, but lay out lists ourselves so
-// wrapping accounts for the marker. Work on parsed nodes, never rendered text:
-// a numbered line inside a code block must remain code.
+// Keep Glamour's inline and code rendering, but lay out lists and tables
+// ourselves. Work on parsed nodes, never rendered text: a numbered line or
+// pipe-delimited example inside a code block must remain code.
 func (r *MarkdownRenderer) renderBlocks(parent ast.Node, source []byte, width int) (string, error) {
 	var blocks []string
 	group := ast.NewDocument()
@@ -46,6 +46,8 @@ func (r *MarkdownRenderer) renderBlocks(parent ast.Node, source []byte, width in
 		switch node := node.(type) {
 		case *ast.List:
 			out, err = r.renderList(node, source, width)
+		case *extast.Table:
+			out, err = r.renderTable(node, source, width)
 		case *ast.Blockquote:
 			quoted := *r
 			quoted.options.Styles.Document.Color = markdownColor(r.colours.quote)
@@ -65,7 +67,7 @@ func (r *MarkdownRenderer) renderBlocks(parent ast.Node, source []byte, width in
 }
 
 func layoutBlock(node ast.Node) bool {
-	if node.Kind() == ast.KindList {
+	if node.Kind() == ast.KindList || node.Kind() == extast.KindTable {
 		return true
 	}
 	if node.Kind() == ast.KindBlockquote {
@@ -80,7 +82,8 @@ func layoutBlock(node ast.Node) bool {
 
 func (r *MarkdownRenderer) renderGroup(doc ast.Node, source []byte, width int) (string, error) {
 	options := r.options
-	options.WordWrap = max(1, width)
+	// Zero disables wrapping and padding while measuring table cells.
+	options.WordWrap = max(0, width)
 	render := renderer.NewRenderer(renderer.WithNodeRenderers(util.Prioritized(ansi.NewRenderer(options), 1000)))
 	var buf bytes.Buffer
 	if err := render.Render(&buf, source, doc); err != nil {

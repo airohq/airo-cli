@@ -228,6 +228,7 @@ theme with Airo's UI accent.
 | Links | Blue and underlined |
 | Quotes and list markers | Pink quotes, teal bullet markers and blue numbered markers; ordinary list text stays neutral |
 | Fenced code | The full syntax theme: distinct keyword, type, function, string and number colours, with readable muted comments |
+| Tables | Bold yellow headers, a heavy horizontal header rule and light muted rules between body rows; no vertical borders |
 
 Preserve these hues where readable, adjusting for the actual terminal
 background and colour capability. Prose inherits the terminal foreground;
@@ -240,6 +241,12 @@ List markers include their punctuation in the marker colour. Preserve an
 ordered list's starting number and align wrapped lines under its text.
 Nest lists four columns beyond the parent's marker; keep blank lines in
 loose lists and between paragraphs inside an item.
+
+Give table cells one column of padding on each side and leave two columns
+between cells. Size columns to their contents, wrap long prose, and respect
+left, centre and right alignment. On narrow terminals, show labelled records
+when columns cannot fit without splitting words. Keep inline formatting and
+links inside cells; never truncate cell contents.
 
 [codex-markdown]: https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/tui/src/markdown_render.rs
 [codex-syntax]: https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/tui/src/render/highlight.rs

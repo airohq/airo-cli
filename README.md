@@ -349,6 +349,10 @@ Numbered list markers are blue and bullet markers are teal. Wrapped lines
 align under the item text, with nested lists indented four columns. Lists
 keep their starting number, checkboxes and paragraph breaks.
 
+Tables use bold yellow headers and muted horizontal rules, with open space
+between columns. They preserve cell alignment and inline formatting, wrap
+long prose, and switch to labelled records when columns cannot fit legibly.
+
 In the styled chat, a blank line separates messages. Your messages start
 with bold `› `, also used in the editable prompt; the agent's start with `• `.
 Continuation lines align two columns in, including wrapped prompts and
