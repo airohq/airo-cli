@@ -33,18 +33,16 @@ func newRoot() *cobra.Command {
 	flags := genericclioptions.NewConfigFlags(true)
 	var o generic.Options
 	root := &cobra.Command{
-		Use:   "airo",
+		Use:   "airo [resource] [verb] [options]",
 		Short: "Work with the Airo platform from your machine",
 		Long: `Work with the Airo platform from your machine.
 
-Commands are airo NOUN [VERB]. A noun works in the singular and the plural:
-airo agent list and airo agents list are the same. Every kind of resource in
-the cluster is a noun with the verbs ` + generic.Verbs + `,
-also the kinds not listed below:
-
-  airo modelconfig list
-  airo modelconfig get my-model -o yaml
-  airo modelconfig delete my-model`,
+Use a resource's singular or plural name. Every resource kind in the cluster
+supports list, get and delete.`,
+		Example: `  airo login                     # See 'airo login -h' for first-time setup
+  airo project list              # Find your projects (* marks the current one)
+  airo agent list                # List agents in the current project
+  airo agent get my-agent        # Inspect an agent from the list`,
 		Version:      buildVersion(),
 		SilenceUsage: true,
 		// A first word that is no command below is a kind in the cluster.
@@ -58,17 +56,32 @@ also the kinds not listed below:
 	}
 	flags.AddFlags(root.PersistentFlags())
 	o.AddFlags(root)
-	root.AddCommand(
-		login.NewCommand(flags),
-		login.NewStatusCommand(flags),
-		login.NewWhoamiCommand(flags),
-		login.NewContextCommand(flags),
-		login.NewProjectCommand(flags),
-		login.NewCredentialCommand(),
-		generic.NewApplyCommand(flags),
+	root.SetUsageTemplate(usageTemplate)
+	addGroup := func(id, title string, commands ...*cobra.Command) {
+		root.AddGroup(&cobra.Group{ID: id, Title: title})
+		for _, cmd := range commands {
+			cmd.GroupID = id
+		}
+		root.AddCommand(commands...)
+	}
+	addGroup("resource", "Resource Commands:",
 		agent.NewCommand(flags),
 		session.NewCommand(flags),
 		tunnel.NewCommand(flags),
+	)
+	addGroup("auth", "Authentication Commands:",
+		login.NewCommand(flags),
+		login.NewWhoamiCommand(flags),
+	)
+	addGroup("config", "Configuration Commands:",
+		login.NewContextCommand(flags),
+		login.NewProjectCommand(flags),
+		login.NewStatusCommand(flags),
+	)
+	addGroup("advanced", "Advanced Commands:", generic.NewApplyCommand(flags))
+	root.SetCompletionCommandGroupID("advanced")
+	addGroup("other", "Other Commands:",
+		newOptionsCommand(),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print airo's version",
@@ -78,6 +91,8 @@ also the kinds not listed below:
 			},
 		},
 	)
+	root.SetHelpCommandGroupID("other")
+	root.AddCommand(login.NewCredentialCommand())
 	return root
 }
 
