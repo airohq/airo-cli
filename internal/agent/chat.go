@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -76,6 +77,13 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 	}
 	address, err := endpoint(ctx, c, ns)
 	if err != nil {
+		return err
+	}
+	if err := awaitAgent(ctx, c, ns, agent, cmd.InOrStdin(), errOut); err != nil {
+		if ctx.Err() != nil {
+			fmt.Fprintln(errOut, "\nStopped waiting.")
+			return nil
+		}
 		return err
 	}
 	store, err := newSessionStore()
@@ -418,6 +426,77 @@ func (p *plainPrinter) end() {
 		fmt.Fprintln(p.out)
 		p.open = false
 	}
+}
+
+// How often airo looks at an Agent that is not ready. A variable for tests.
+var readyPoll = 2 * time.Second
+
+// readiness says whether the Agent takes sessions now, and else why not. It
+// is an error when the cluster has turned the Agent down, because waiting
+// does not change that. A new Agent has no conditions until kagent has read
+// it, and takes no session before.
+func readiness(ctx context.Context, c client.Client, ns, name string) (ready bool, why string, err error) {
+	a, err := choose(ctx, c, ns, agents, name)
+	if err != nil {
+		return false, "", err
+	}
+	s := stateOf(a)
+	switch {
+	case s.ready:
+		return true, "", nil
+	case s.refused:
+		return false, "", fmt.Errorf("agent %s cannot run: %s", name, s.reason)
+	case !s.seen:
+		return false, "the cluster has not reported on it yet", nil
+	case strings.TrimSpace(s.reason) == "":
+		return false, "the cluster gives no reason yet", nil
+	}
+	return false, strings.TrimSpace(s.reason), nil
+}
+
+// waitForSessions returns when the Agent takes sessions. It calls report
+// each time what it waits for changes, and looks again every poll, until
+// ctx ends.
+func waitForSessions(ctx context.Context, c client.Client, ns, name string, report func(why string), poll time.Duration) error {
+	said := ""
+	for {
+		ready, why, err := readiness(ctx, c, ns, name)
+		if err != nil || ready {
+			return err
+		}
+		if why != said {
+			report(why)
+			said = why
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(poll):
+		}
+	}
+}
+
+// awaitAgent waits until the Agent takes sessions. On a styled terminal a
+// spinner says why and for how long, and leaves no trace. Elsewhere each
+// reason is a line on errOut. The spinner reads Ctrl-C from in, so it needs
+// in to be a terminal: a pipe holds the prompt.
+func awaitAgent(ctx context.Context, c client.Client, ns, name string, in io.Reader, errOut io.Writer) error {
+	ready, _, err := readiness(ctx, c, ns, name)
+	if err != nil || ready {
+		return err
+	}
+	if ui.Styled(errOut) && ui.IsTerminal(in) {
+		return spinUntilReady(ctx, in, errOut, name, func(ctx context.Context, report func(string)) error {
+			return waitForSessions(ctx, c, ns, name, report, readyPoll)
+		})
+	}
+	err = waitForSessions(ctx, c, ns, name, func(why string) {
+		fmt.Fprintf(errOut, "Waiting for agent %s to become ready: %s\n", name, why)
+	}, readyPoll)
+	if err == nil {
+		fmt.Fprintf(errOut, "Agent %s is ready.\n", name)
+	}
+	return err
 }
 
 // lines reads the person's input a line at a time.
