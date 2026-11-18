@@ -1,4 +1,5 @@
-// Package login implements airo login, and airo credential, the kubeconfig
+// Package login implements airo login, airo context and airo project, which
+// write the kubeconfig, and airo credential, the kubeconfig
 // exec plugin that hands the signed-in person's token to kubectl and airo.
 package login
 
@@ -14,10 +15,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"k8s.io/client-go/kubernetes"
 	clientauthv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -72,30 +71,38 @@ people and choose one with --context on any command.`,
   airo login --context customer    # sign in as someone else, side by side`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			var err error
 			p.server = *flags.APIServer
-			switch {
-			case caData != "" && *flags.CAFile != "":
-				return errors.New("pass --certificate-authority or --certificate-authority-data, not both")
-			case caData != "":
-				ca, err := base64.StdEncoding.DecodeString(caData)
-				if err != nil {
-					return fmt.Errorf("--certificate-authority-data is not base64: %w", err)
-				}
-				p.ca = ca
-			case *flags.CAFile != "":
-				ca, err := os.ReadFile(*flags.CAFile)
-				if err != nil {
-					return err
-				}
-				p.ca = ca
+			if p.ca, err = readCA(*flags.CAFile, caData); err != nil {
+				return err
 			}
 			return run(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), flags, p)
 		},
 	}
 	cmd.Flags().StringVar(&p.issuer, "issuer", "", "the OIDC issuer's URL, for the first sign-in")
 	cmd.Flags().StringVar(&p.clientID, "client-id", "", "the OIDC client ID, for the first sign-in")
-	cmd.Flags().StringVar(&caData, "certificate-authority-data", "", "the API server's certificate authority as base64, in place of --certificate-authority's file")
+	cmd.Flags().StringVar(&caData, "certificate-authority-data", "", caDataUsage)
 	return cmd
+}
+
+const caDataUsage = "the API server's certificate authority as base64, in place of --certificate-authority's file"
+
+// readCA returns the certificate authority from --certificate-authority's
+// file or --certificate-authority-data's base64, or nil when neither is set.
+func readCA(file, data string) ([]byte, error) {
+	switch {
+	case data != "" && file != "":
+		return nil, errors.New("pass --certificate-authority or --certificate-authority-data, not both")
+	case data != "":
+		ca, err := base64.StdEncoding.DecodeString(data)
+		if err != nil {
+			return nil, fmt.Errorf("--certificate-authority-data is not base64: %w", err)
+		}
+		return ca, nil
+	case file != "":
+		return os.ReadFile(file)
+	}
+	return nil, nil
 }
 
 // NewCredentialCommand returns the exec plugin that airo login writes into
@@ -158,15 +165,10 @@ func run(ctx context.Context, out, prompt io.Writer, flags *genericclioptions.Co
 	}
 	rc.ExecProvider = nil
 	rc.BearerToken = id
-	cs, err := kubernetes.NewForConfig(rc)
+	user, err := currentUser(ctx, rc)
 	if err != nil {
-		return err
+		return fmt.Errorf("signed in, but could not verify your identity: %w", err)
 	}
-	me, err := cs.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("signed in, but the platform refused the token: %w", err)
-	}
-	user := me.Status.UserInfo
 
 	// A customer's first sign-in starts in the tenant's default project. A
 	// namespace already in the context is the person's own choice and stays.
@@ -189,7 +191,7 @@ func run(ctx context.Context, out, prompt io.Writer, flags *genericclioptions.Co
 		fmt.Fprintf(out, "  namespace: %s\n", kctx.Namespace)
 	} else {
 		// Someone in no customer group, such as a platform admin.
-		fmt.Fprintln(out, "  namespace: none, so commands use \"default\". Choose a project with airo login -n NAMESPACE")
+		fmt.Fprintln(out, "  namespace: none, so commands use \"default\". Choose a project with airo project")
 	}
 	fmt.Fprintf(out, "  groups:    %s\n", strings.Join(user.Groups, ", "))
 	if _, err := exec.LookPath("airo"); err != nil {
@@ -331,10 +333,8 @@ func execUser(o oidc, origin string) *clientcmdapi.AuthInfo {
 
 // defaultProject is the default project of the first customer group.
 func defaultProject(groups []string) string {
-	for _, g := range groups {
-		if tenant, ok := strings.CutPrefix(g, customerGroupPrefix); ok && tenant != "" {
-			return tenant + defaultProjectSuffix
-		}
+	if tenants := tenantsOf(groups); len(tenants) > 0 {
+		return tenants[0] + defaultProjectSuffix
 	}
 	return ""
 }

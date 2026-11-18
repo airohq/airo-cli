@@ -24,7 +24,7 @@ airo agent "fix the build"   # the default task of another noun
 | `list`, `get`, `delete` | Work for every kind the cluster serves, also kinds this binary does not know |
 | `create` | Hand-written for each noun, with flags |
 | Other verbs | Actions of one noun, such as `airo agent logs` |
-| No noun | Only what belongs to no resource: `airo login`, `airo apply -f`, `airo version` |
+| No noun | Only what belongs to no resource: `airo login`, `airo status`, `airo whoami`, `airo apply -f`, `airo version` |
 
 **Every noun takes its plural.** `airo sessions list` is `airo session
 list`, and `airo tunnels 3000` is `airo tunnel 3000`. A noun with its own
@@ -36,6 +36,11 @@ such as `airo login`, has one name.
 `airo session` is one: a session lives in the agents' API. It has `list`,
 because people expect it, and no `get` or `delete`. Without a verb it prints
 the help. `airo context` is another: a context lives in the kubeconfig.
+
+**A noun that is the platform's word for a kind has its own verbs too.**
+`airo project` is one: a project is a Namespace, and `airo namespace list`
+still works for the kind. `airo project list` marks the project the commands
+work in.
 
 **A noun gets a short form when people already know one**, such as `airo
 ctx` for `airo context`. Add it as an alias when you add the noun.
@@ -61,6 +66,7 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
 - **A noun whose task is to switch to one of its own is the exception.**
   `airo context customer` takes the context's name, because the name is all
   the task needs. `-` switches back to the previous one, as in `cd -`.
+  `airo project acme-web` is the same for the project the commands work in.
 - **A verb wins over an argument.** `airo agent list` lists agents. A prompt
   that equals a verb goes after `--`, as in `airo agent -- list`.
 - **A missing choice is resolved in the cluster, then by asking.** With no
@@ -70,6 +76,18 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
   lists the names. `airo agent create` finds its Harness and ModelConfig the
   same way, with `airohq.dev/default-harness` and `airohq.dev/default-model`,
   and without a picker.
+- **A default is an annotation on the resource, and the newest default
+  wins.** Wherever a kind can be marked as the default, the mark is an
+  annotation `airohq.dev/default-<noun>: "true"`, never a reserved name such
+  as `default`. When several resources have it, the command takes the one
+  created last, as Kubernetes does with the default StorageClass, and the
+  name decides between two of the same second. It never stops because of
+  two defaults. So a project's people override the platform's default by
+  marking their own, and get it back by removing the mark. What the command
+  creates refers to the resource by its real name, so a later change of the
+  default moves nothing that exists.
+- **Every picker is the same one**, from `internal/picker`: the person types
+  to filter, Enter chooses and Esc leaves. It opens only on a terminal.
 
 ## Arguments and flags
 
@@ -84,6 +102,9 @@ tunnel 3000` serves a local port, `airo agent` starts a fresh session.
 - **`airo login` keeps what its flags say**: `--server`, `--context` and `-n`
   choose for one command elsewhere, and `airo login` writes them into the
   kubeconfig for every later command.
+- **`airo context set` keeps them too, without signing in.** It takes
+  `airo login`'s flags and changes an existing sign-in, as `kubectl config
+  set-context` and `set-cluster` do. Only `airo login` makes a sign-in.
 
 ## Output
 

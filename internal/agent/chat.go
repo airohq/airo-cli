@@ -8,9 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -20,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/airohq/airo-cli/internal/bearer"
+	"github.com/airohq/airo-cli/internal/picker"
 	"github.com/airohq/airo-cli/internal/ui"
 )
 
@@ -63,7 +62,13 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 
 	var ask func([]string) (string, error)
 	if terminal && ui.IsTerminal(errOut) {
-		ask = picker(ctx, errOut, in)
+		ask = func(names []string) (string, error) {
+			name, err := picker.One(ctx, "agent", names, -1)
+			if err == nil && name == "" {
+				err = errors.New("no agent chosen: name one with --agent")
+			}
+			return name, err
+		}
 	}
 	agent, err := pick(ctx, c, ns, o.agent, ask)
 	if err != nil {
@@ -138,12 +143,9 @@ func pick(ctx context.Context, c client.Client, ns, name string, ask func([]stri
 	if err != nil {
 		return "", err
 	}
-	var names, defaults []string
+	var names []string
 	for i := range items {
 		names = append(names, items[i].GetName())
-		if items[i].GetAnnotations()[defaultAnnotation] == "true" {
-			defaults = append(defaults, items[i].GetName())
-		}
 	}
 	sort.Strings(names)
 	switch {
@@ -151,35 +153,14 @@ func pick(ctx context.Context, c client.Client, ns, name string, ask func([]stri
 		return "", fmt.Errorf("project %s has no agent: make one with airo agent create", ns)
 	case len(names) == 1:
 		return names[0], nil
-	case len(defaults) == 1:
-		return defaults[0], nil
-	case ask != nil:
+	}
+	if d := newestDefault(items, defaultAnnotation); d != nil {
+		return d.GetName(), nil
+	}
+	if ask != nil {
 		return ask(names)
 	}
-	return "", fmt.Errorf("project %s has %d agents and no single default, name one with --agent: %s", ns, len(names), strings.Join(names, ", "))
-}
-
-// picker asks the person at the terminal which agent to talk to.
-func picker(ctx context.Context, out io.Writer, in *lines) func([]string) (string, error) {
-	return func(names []string) (string, error) {
-		fmt.Fprintln(out, "Which agent?")
-		for i, name := range names {
-			fmt.Fprintf(out, "  %d. %s\n", i+1, name)
-		}
-		fmt.Fprint(out, "Number or name: ")
-		line, err := in.read(ctx)
-		if err != nil {
-			return "", errors.New("no agent chosen: name one with --agent")
-		}
-		line = strings.TrimSpace(line)
-		if i, err := strconv.Atoi(line); err == nil && i >= 1 && i <= len(names) {
-			return names[i-1], nil
-		}
-		if slices.Contains(names, line) {
-			return line, nil
-		}
-		return "", fmt.Errorf("%q is none of the agents: name one with --agent", line)
-	}
+	return "", fmt.Errorf("project %s has %d agents and no default, name one with --agent: %s", ns, len(names), strings.Join(names, ", "))
 }
 
 // endpoint returns the address of the agents' API for the project.

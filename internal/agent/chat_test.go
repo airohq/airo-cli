@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +31,12 @@ func agentNamed(name string, isDefault bool) *unstructured.Unstructured {
 		a.SetAnnotations(map[string]string{defaultAnnotation: "true"})
 	}
 	return a
+}
+
+// born returns u as created the given number of hours after a fixed time.
+func born(u *unstructured.Unstructured, hours int) *unstructured.Unstructured {
+	u.SetCreationTimestamp(metav1.NewTime(time.Date(2026, 1, 1, hours, 0, 0, 0, time.UTC)))
+	return u
 }
 
 func TestPick(t *testing.T) {
@@ -57,6 +64,19 @@ func TestPick(t *testing.T) {
 		t.Errorf("unknown name: %v, want the names", err)
 	}
 
+	// Of two defaults the newest wins: the project's own over the platform's.
+	c = fake.NewClientBuilder().WithObjects(
+		born(agentNamed("assistant", true), 1), born(agentNamed("reviewer", true), 2), born(agentNamed("coder", false), 3),
+	).Build()
+	if got, err := pick(ctx, c, "team", "", never); err != nil || got != "reviewer" {
+		t.Errorf("newest default: %q, %v", got, err)
+	}
+	// The name decides between two of the same second.
+	c = fake.NewClientBuilder().WithObjects(born(agentNamed("reviewer", true), 1), born(agentNamed("assistant", true), 1)).Build()
+	if got, err := pick(ctx, c, "team", "", never); err != nil || got != "assistant" {
+		t.Errorf("defaults of the same second: %q, %v", got, err)
+	}
+
 	// Several and no default: ask, or list the names when nobody is there.
 	c = fake.NewClientBuilder().WithObjects(agentNamed("coder", false), agentNamed("reviewer", false)).Build()
 	ask := func(names []string) (string, error) { return names[1], nil }
@@ -72,21 +92,6 @@ func TestPick(t *testing.T) {
 	c = fake.NewClientBuilder().Build()
 	if _, err := pick(ctx, c, "team", "", never); err == nil || !strings.Contains(err.Error(), "airo agent create") {
 		t.Errorf("no agent: %v", err)
-	}
-}
-
-func TestPicker(t *testing.T) {
-	names := []string{"coder", "reviewer"}
-	for input, want := range map[string]string{"2\n": "reviewer", "coder\n": "coder", "3\n": "", "": ""} {
-		var out bytes.Buffer
-		in := &lines{r: bufio.NewReader(strings.NewReader(input))}
-		got, err := picker(context.Background(), &out, in)(names)
-		if got != want || (want == "") != (err != nil) {
-			t.Errorf("picker(%q) = %q, %v; want %q", input, got, err, want)
-		}
-		if !strings.Contains(out.String(), "2. reviewer") {
-			t.Errorf("picker shows %q", out.String())
-		}
 	}
 }
 

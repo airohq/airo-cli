@@ -142,12 +142,18 @@ func TestCreateTakesTheDefaultAmongSeveral(t *testing.T) {
 	}
 }
 
-func TestCreateTakesNoneOfTwoDefaults(t *testing.T) {
+func TestCreateTakesTheNewestOfTwoDefaults(t *testing.T) {
 	c := fake.NewClientBuilder().WithObjects(
-		marked(harness("one", "claude"), harnesses.marker), marked(harness("two", "claude"), harnesses.marker), model("sonnet"),
+		born(marked(harness("claude", "claude"), harnesses.marker), 1),
+		born(marked(harness("own", "claude"), harnesses.marker), 2),
+		born(harness("other", "claude"), 3),
+		model("sonnet"),
 	).Build()
-	if _, err := run(t, c, options{}); err == nil || !strings.Contains(err.Error(), "no single default") {
-		t.Errorf("create = %v, want an error for two defaults", err)
+	if _, err := run(t, c, options{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := unstructured.NestedString(created(t, c).Object, "spec", "harnessRef", "name"); got != "own" {
+		t.Errorf("harness = %q, want own, the newest default", got)
 	}
 }
 

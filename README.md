@@ -3,7 +3,7 @@
 > [!CAUTION]
 > **Early alpha.** Commands and flags may change.
 
-`airo` is the command-line tool of the Airo platform: sign in, switch between sign-ins, talk to an
+`airo` is the command-line tool of the Airo platform: sign in, switch between sign-ins and projects, talk to an
 agent, see your sessions, manage the resources of your project, and give a local port a URL.
 Each command reads and writes Kubernetes resources as you, so everything it
 does to a resource can also be done with `kubectl`, and you do not need
@@ -63,8 +63,8 @@ be on your `PATH`.
 | Again, without flags | Signs in again in the current context. When that is not the platform's, such as a local cluster's, it uses the context `airo` |
 | With `--context NAME` | Signs in to that context. One that does not exist yet is created for the same platform, with its own tokens |
 | With a platform flag again | Replaces that value in the context, for example after the issuer changed |
-| With `-n NAMESPACE` | Makes that project the context's namespace, for every later command |
-| In no customer group, such as a platform admin | Sets no namespace, so commands use `default` until you pass `-n` |
+| With `-n NAMESPACE` | Makes that project the context's namespace, for every later command, as `airo project NAMESPACE` does without a new sign-in |
+| In no customer group, such as a platform admin | Sets no namespace, so commands use `default` until you pass `-n` or choose one with `airo project` |
 
 | Flag | The first sign-in's value |
 | --- | --- |
@@ -96,8 +96,8 @@ and works in the context's namespace by default.
 ## Context
 
 **`airo context` switches between your sign-ins**, for every later command of
-`airo` and `kubectl`. `airo ctx` is the short form, and `airo contexts`
-also works.
+`airo` and `kubectl`. `airo ctx` is the short form, and `airo contexts` also
+works.
 
 ```sh
 airo context             # choose from a picker
@@ -117,12 +117,138 @@ Switched to context customer
 | `airo context NAME` | Makes that context the kubeconfig's current one |
 | `airo context -` | Switches to the context you last switched away from, so twice brings you back. `airo` keeps its name in your cache directory |
 | `airo context list` | Lists the sign-ins with their namespaces, and marks the current one with `*` |
+| `airo context set [NAME]` | Changes what a sign-in holds, without signing in again |
+
+**`airo context set` changes a sign-in's values in the kubeconfig**, such as
+the platform's address after it moved. It is `airo`'s form of `kubectl config
+set-context` and `set-cluster`. Without a name it changes the current
+context, and only the flags you pass are changed.
+
+```sh
+airo context set --server https://api.example.com
+airo context set -n acme-web                 # work in another project from now on
+airo context set customer --certificate-authority ca.crt
+```
+
+```text
+Set context airo
+  server:    https://api.example.com
+```
+
+| Flag | Sets |
+| --- | --- |
+| `--server` | The cluster's `server`: the API server's address |
+| `--certificate-authority`, `--certificate-authority-data` | The cluster's `certificate-authority-data` |
+| `--issuer`, `--client-id` | The arguments of the user's exec plugin. The next command signs you in again |
+| `-n` | The context's `namespace` |
+
+Sign-ins at the same platform share the cluster's entry, so a new address or
+certificate authority applies to all of them, and the command names them. It
+does not make a sign-in: `airo login` does.
 
 **It knows only the contexts that sign in through the platform.** Others,
 such as a local cluster's, are not listed and not switched to. Use `kubectl
 config use-context` for them.
 
 A context named like a verb goes after `--`, as in `airo context -- list`.
+
+## Project
+
+**`airo project` switches the project your commands work in**, for every
+later command of `airo` and `kubectl`. A project is a namespace of the
+platform, and the switch sets the namespace of your kubeconfig's context.
+
+```sh
+airo project             # choose from a picker
+airo project acme-web    # switch to the project acme-web
+airo project -           # switch back to the previous one
+airo project list
+airo project create acme-web
+airo project delete acme-web
+```
+
+```text
+CURRENT   NAME           AGE
+*         acme-default   9d
+          acme-web       2d
+```
+
+| Command | What happens |
+| --- | --- |
+| `airo project` | Shows a picker with the cursor on the current project. Type to filter, press Enter to choose, or Esc to leave things as they are. Where nobody can answer, such as in a script, it stops and lists the names |
+| `airo project NAME` | Makes that project the context's namespace. The name must be one of your projects |
+| `airo project -` | Switches to the project you last switched away from in this context, so twice brings you back. `airo` keeps its name in your cache directory |
+| `airo project list` | Lists the projects the platform's API shows you, and marks the current one with `*`. `-o yaml` and `-o json` print the Namespaces |
+| `airo project create NAME` | Creates the project. It does not switch to it |
+| `airo project delete NAME` | Deletes the project and everything in it. If your commands work in it, it says so, and they keep working there until you switch |
+
+**It changes the current context, or the one `--context` names**, and only a
+context that signs in through the platform. For one command in another
+project, pass `-n` to that command instead. `airo context set -n NAME` also
+sets the project, without asking the cluster whether it is one of yours.
+
+**Your projects are the namespaces the platform's API lists for you.** A
+customer's people see their own projects. A platform admin sees every
+namespace of the cluster.
+
+**The platform decides which projects you may create and delete.** A
+customer's name must start with the tenant's name and a dash, such as
+`acme-`, and a tenant has a limited number of projects. The default project,
+such as `acme-default`, cannot be deleted. When the platform refuses, `airo`
+prints its reason.
+
+A project named like a verb goes after `--`, as in `airo project -- list`.
+
+## Status and identity
+
+**`airo status` shows where you are working and checks your connection.**
+
+```sh
+airo status
+airo status --context customer    # inspect another sign-in
+airo status -n acme-web           # inspect another project
+```
+
+```text
+User:        auth0:abc123
+Tenant:      acme
+Project:     acme-default
+Context:     airo
+Server:      https://api.example.com:6443
+Connection:  Connected
+```
+
+Project is currently the Kubernetes namespace. `--context`, `-n`,
+`--server`, and `--kubeconfig` select the values for this invocation without
+changing the saved context. An unset project uses `default`, as other
+commands do. Connected means the Kubernetes API answered the identity
+check; it does not check access to the project or the health of its resources.
+
+If the identity check fails, status still prints the selected project,
+context, and server, with `unknown` for user and tenant and `Unverified` for
+the connection. It reports the error on standard error and exits nonzero.
+
+**`airo whoami` shows your user, tenant, and groups**, like `kubectl auth
+whoami` with tenant membership included.
+
+```sh
+airo whoami
+airo whoami --context customer
+```
+
+```text
+User:    auth0:abc123
+Tenant:  acme
+Groups:  customer:acme, system:authenticated
+```
+
+Both commands ask the Kubernetes API for your identity using a
+`SelfSubjectReview`, with the credentials and impersonation flags of this
+invocation. Tenant names come from the returned `customer:<tenant>` groups.
+All tenant memberships are shown when there is more than one; `none` means
+there is no customer group, such as for a platform admin. Groups are shown
+as returned by the API, or `none` when empty. An identity check that fails
+makes either command exit nonzero.
 
 ## Resources
 
@@ -175,10 +301,11 @@ airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
 the first that applies:
 
 1. The project's only Agent.
-2. The Agent with the annotation `airohq.dev/default-agent: "true"`, when
-   exactly one has it.
-3. The one you pick from a numbered list, on a terminal. Elsewhere the
-   command stops and lists the names.
+2. The Agent with the annotation `airohq.dev/default-agent: "true"`. When
+   several have it, the one created last: mark your own agent to use it in
+   place of the platform's `assistant`.
+3. The one you choose in a picker, on a terminal: type to filter and press
+   Enter. Elsewhere the command stops and lists the names.
 
 **A session stays in the cluster after the command ends.** Nothing is
 deleted. `--resume` takes the session's ID, which every run prints and
@@ -295,9 +422,10 @@ creates neither. Without `--harness` or `--model`, `airo` takes the first
 that applies:
 
 1. The project's only one.
-2. The one marked as the default, when exactly one is: a Harness with the
-   annotation `airohq.dev/default-harness: "true"`, a ModelConfig with
-   `airohq.dev/default-model: "true"`.
+2. The one marked as the default: a Harness with the annotation
+   `airohq.dev/default-harness: "true"`, a ModelConfig with
+   `airohq.dev/default-model: "true"`. When several have it, the one created
+   last.
 
 Otherwise it stops and lists the names, and for a Harness what it runs, such
 as `claude`. A Harness that runs its own image (`byo`) gets a model only
