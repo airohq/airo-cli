@@ -205,6 +205,7 @@ type session struct {
 	// The terminal supplies another printer and observes task IDs for Esc.
 	printer printer
 	observe func(event)
+	styles  *ui.Styles // the terminal chat's resolved theme, for its closing hint
 }
 
 // errDetached is the turn's error when the person stopped it.
@@ -388,7 +389,11 @@ func (s *session) left() {
 // resumeHint names this session explicitly, even if another run has since
 // changed which session --continue would choose.
 func (s *session) resumeHint() {
-	ui.ResumeHint(s.errOut, fmt.Sprintf("airo agent -a %s -r %s", s.agent, s.id))
+	styles := ui.NewStyles(s.errOut)
+	if s.styles != nil {
+		styles = *s.styles
+	}
+	styles.ResumeHint(s.errOut, fmt.Sprintf("airo agent -a %s -r %s", s.agent, s.id))
 }
 
 // printer is the output of a turn. The wire and snapshot handling are the

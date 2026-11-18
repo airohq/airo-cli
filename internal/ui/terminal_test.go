@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -48,16 +49,34 @@ func TestTerminalCapabilities(t *testing.T) {
 	})
 	os.Unsetenv("NO_COLOR")
 	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("COLORTERM", "truecolor")
 	if !Chat(tty, tty, tty) {
 		t.Fatal("terminal chat was disabled")
 	}
+	if got := NewPalette(tty).Profile; got != colorprofile.TrueColor {
+		t.Fatalf("RGB terminal profile = %v", got)
+	}
+	t.Setenv("COLORTERM", "")
+	if got := NewPalette(tty).Profile; got != colorprofile.ANSI256 {
+		t.Fatalf("256-colour terminal profile = %v", got)
+	}
+	t.Setenv("TERM", "vt100")
+	if got := NewPalette(tty).Profile; got != colorprofile.ANSI {
+		t.Fatalf("16-colour terminal profile = %v", got)
+	}
+	t.Setenv("TERM", "xterm-256color")
 	var pipe bytes.Buffer
 	if Chat(tty, &pipe, tty) || Chat(tty, tty, &pipe) || Interactive(&pipe, tty) {
 		t.Fatal("redirected input or output enabled chat")
 	}
 	t.Setenv("NO_COLOR", "")
+	t.Setenv("CLICOLOR_FORCE", "1")
+	t.Setenv("COLORTERM", "truecolor")
 	if Styled(tty) || Chat(tty, tty, tty) {
 		t.Fatal("empty NO_COLOR must disable styling and redraws")
+	}
+	if got := NewPalette(tty).Styles().Accent.Render(">"); got != ">" {
+		t.Fatalf("forced colours overrode NO_COLOR: %q", got)
 	}
 	if !Interactive(tty, tty) {
 		t.Fatal("NO_COLOR must still allow plain prompts")
@@ -67,10 +86,13 @@ func TestTerminalCapabilities(t *testing.T) {
 	if Styled(tty) || Chat(tty, tty, tty) {
 		t.Fatal("TERM=dumb must disable styling and redraws")
 	}
+	if got := NewPalette(tty).Styles().Accent.Render(">"); got != ">" {
+		t.Fatalf("forced colours overrode TERM=dumb: %q", got)
+	}
 }
 
 func TestMarkdownFitsAndPreservesText(t *testing.T) {
-	r, err := Markdown(40)
+	r, err := Markdown(40, Palette{})
 	if err != nil {
 		t.Fatal(err)
 	}

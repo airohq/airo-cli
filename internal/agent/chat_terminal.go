@@ -13,11 +13,11 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/glamour/v2"
-	"github.com/charmbracelet/colorprofile"
 
 	"github.com/airohq/airo-cli/internal/ui"
 )
+
+const userPromptMarker = "› "
 
 // terminalPrinter delivers events in order. Only the Bubble Tea model touches
 // the terminal; the network worker never writes over the person's draft.
@@ -84,10 +84,13 @@ func (s *session) chat(ctx context.Context, in io.Reader, prompt string) error {
 		fmt.Fprintf(errOut, "Session %s with agent %s.\n", ui.Text(s.id), ui.Text(s.agent))
 	}
 	_, err := tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(errOut),
-		tea.WithoutSignalHandler(), tea.WithColorProfile(colorprofile.ANSI)).Run()
+		tea.WithoutSignalHandler(), tea.WithColorProfile(m.palette.Profile)).Run()
 	closeChat()    // detach the stream, never cancel the remote task on exit
 	workers.Wait() // session fields belong to the worker until it has stopped
 	s.errOut = errOut
+	// Keep the resolved theme for the closing hint after the renderer stops.
+	s.styles = &m.styles
+	defer func() { s.styles = nil }()
 	// A failed or interrupted history load says nothing about whether a
 	// remote turn is still running, and has no closing hint.
 	if !m.loading {
@@ -107,10 +110,12 @@ type chatModel struct {
 	ctx                         context.Context
 	events                      <-chan tea.Msg
 	out, errOut                 io.Writer
+	styled                      bool
+	palette                     ui.Palette
 	styles                      ui.Styles
 	input                       textarea.Model
 	spinner                     spinner.Model
-	markdown                    *glamour.TermRenderer
+	markdown                    *ui.MarkdownRenderer
 	width, height               int
 	initial                     string
 	once                        bool
@@ -136,12 +141,12 @@ type chatModel struct {
 }
 
 func newChatModel(ctx context.Context, events <-chan tea.Msg, out, errOut io.Writer, initial string) *chatModel {
-	styles := ui.NewStyles(errOut)
+	palette := ui.NewPalette(errOut)
 	input := textarea.New()
-	input.Prompt, input.Placeholder = "> ", "Ask the agent…"
+	input.Prompt, input.Placeholder = userPromptMarker, "Ask the agent…"
 	input.SetPromptFunc(2, func(info textarea.PromptInfo) string {
 		if info.LineNumber == 0 {
-			return "> "
+			return userPromptMarker
 		}
 		return "  "
 	})
@@ -149,31 +154,47 @@ func newChatModel(ctx context.Context, events <-chan tea.Msg, out, errOut io.Wri
 	input.DynamicHeight, input.MinHeight, input.MaxHeight = true, 1, 5
 	input.SetVirtualCursor(false)
 	input.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"))
-	input.SetStyles(textarea.Styles{
-		Focused: textarea.StyleState{Prompt: styles.Accent, Placeholder: styles.Muted},
-		Blurred: textarea.StyleState{Prompt: styles.Accent, Placeholder: styles.Muted},
-	})
 	input.Focus()
 	m := &chatModel{ctx: ctx, events: events, out: out, errOut: errOut,
-		styles: styles, input: input, spinner: spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(styles.Muted)),
+		styled: ui.Styled(errOut), palette: palette, input: input, spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
 		width: 80, height: 24, initial: initial, once: initial != ""}
+	m.applyPalette()
 	m.resize(80, 24)
 	return m
 }
 
 func (m *chatModel) Init() tea.Cmd {
 	watch := func() tea.Msg { <-m.ctx.Done(); return externalExitMsg{} }
+	cmds := []tea.Cmd{watch}
+	if m.styled {
+		// Let Bubble Tea parse replies alongside keystrokes. Missing replies
+		// leave the neutral fallback in place; startup never waits for them.
+		cmds = append(cmds, tea.RequestBackgroundColor, tea.RequestForegroundColor)
+	}
 	if m.loading {
 		m.started = time.Now()
-		return tea.Batch(watch, m.spinner.Tick, func() tea.Msg {
+		cmds = append(cmds, m.spinner.Tick, func() tea.Msg {
 			turns, err := m.load(m.ctx)
 			return historyLoadedMsg{turns, err}
 		})
+	} else if m.initial != "" {
+		cmds = append(cmds, m.start(m.initial))
 	}
-	if m.initial != "" {
-		return tea.Batch(watch, m.start(m.initial))
+	return tea.Batch(cmds...)
+}
+
+func (m *chatModel) applyPalette() {
+	m.styles = m.palette.Styles()
+	if m.styled {
+		m.styles.Accent = m.styles.Accent.Bold(true)
 	}
-	return watch
+	m.input.SetStyles(textarea.Styles{
+		Focused: textarea.StyleState{Prompt: m.styles.Accent, Placeholder: m.styles.Muted},
+		Blurred: textarea.StyleState{Prompt: m.styles.Accent, Placeholder: m.styles.Muted},
+	})
+	m.spinner.Style = m.styles.Muted
+	m.markdown, _ = ui.Markdown(m.width-2, m.palette)
+	m.render()
 }
 
 func (m *chatModel) wait() tea.Cmd {
@@ -208,6 +229,17 @@ func (m *chatModel) start(prompt string) tea.Cmd {
 
 func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.ColorProfileMsg:
+		if m.styled {
+			m.palette.Profile = msg.Profile
+			m.applyPalette()
+		}
+	case tea.BackgroundColorMsg:
+		m.palette.Background = msg.Color
+		m.applyPalette()
+	case tea.ForegroundColorMsg:
+		m.palette.Foreground = msg.Color
+		m.applyPalette()
 	case tea.WindowSizeMsg:
 		m.resize(msg.Width, msg.Height)
 	case externalExitMsg:
@@ -323,7 +355,7 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.hint = "Ctrl-C again leaves; the session stays"
 		}
 		if msg.err != nil {
-			return m, m.print(m.styles.Error.Render("✗ Error: "+ui.Text(msg.err.Error())), m.errOut)
+			return m, m.print(m.styles.Error.Render("✗ Error:")+" "+ui.Text(msg.err.Error()), m.errOut)
 		}
 	case tea.KeyPressMsg:
 		return m, m.key(msg)
@@ -462,7 +494,7 @@ func (m *chatModel) resize(width, height int) {
 	m.width, m.height = max(4, width), max(4, height)
 	m.input.MaxHeight = min(5, max(1, height-4))
 	m.input.SetWidth(m.width)
-	m.markdown, _ = ui.Markdown(m.width - 2)
+	m.markdown, _ = ui.Markdown(m.width-2, m.palette)
 	m.render()
 }
 
@@ -480,7 +512,7 @@ func (m *chatModel) render() { m.preview = m.formatAnswer(m.pending) }
 
 func (m *chatModel) formatMessage(from, text string) string {
 	if from == FromYou {
-		return messageLines(ui.Wrap(ui.Text(text), m.width-2), m.styles.Accent.Render("> "))
+		return messageLines(ui.Wrap(ui.Text(text), m.width-2), m.styles.Accent.Render(userPromptMarker))
 	}
 	return messageLines(m.renderMarkdown(text), m.styles.Muted.Render("• "))
 }

@@ -173,7 +173,7 @@ func TestTerminalResumeRendersSavedAnswers(t *testing.T) {
 			t.Errorf("saved answers contain raw Markdown or notes: %q", text)
 		}
 	}
-	for _, want := range []string{"> Earlier prompt", "State when loaded: working", "Resume this session with:\nairo agent -a reviewer -r ctx-1"} {
+	for _, want := range []string{"› Earlier prompt", "State when loaded: working", "Resume this session with:\nairo agent -a reviewer -r ctx-1"} {
 		if !strings.Contains(ansi.Strip(notes.String()), want) {
 			t.Errorf("notes lack %q: %q", want, notes.String())
 		}

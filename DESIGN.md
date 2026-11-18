@@ -146,17 +146,65 @@ printed.
 **Colours are named for what they mean, in one place.** `internal/ui` holds
 them, and a command writes no escape code of its own.
 
-| Role | Used for |
-| --- | --- |
-| Default | Most text. What the person reads is not coloured |
-| Muted | What supports the text: IDs, hints, keys, timestamps |
-| Accent | The one thing to see first: the prompt mark, the selected row |
-| Success, warning, error | An outcome, with `✓`, `!` or `✗` |
+**Keep the UI accent separate from Markdown.** Use Codex's quiet hierarchy
+and adaptation to the terminal as the reference. Keep the current prompt
+accent for small UI details: the `›` marker, focus and the current choice.
+Do not carry that colour through every heading, link and code token. Markdown
+has its own theme, described below. Prose and commands stay prominent through
+readable text, spacing and weight. Use warm, muted amber for UI warnings.
 
-- **Take the terminal's own 16 colours**, so the person's theme decides the
-  shades and the output reads on light and on dark.
-- **Colour little.** A screen with one accent reads faster than a screen
-  with five.
+| Role | Tone | Used for |
+| --- | --- | --- |
+| Default | The terminal's own foreground and background | Answer prose, prompts, commands and other ordinary text |
+| Muted | A readable secondary neutral | Supporting IDs, hints, keys, timestamps and the agent's `•` marker |
+| Accent | The existing prompt accent | The prompt's `›` marker, a focused control or the selected item's label |
+| Success | The terminal's green | A completed outcome, with `✓` or a word such as `Done` |
+| Warning | Warm, muted amber | Something needing attention, with `!` and an explanation |
+| Error | The terminal's red | A failure, with `✗` or `Error` and what went wrong |
+
+**Adapt the shades to the terminal.** Codex's [semantic styles][codex-colours]
+and [contrast handling][codex-contrast], pinned to CLI 0.169.0, are references
+for the approach. The UI shades below retain the current prompt accent and
+attention colour. They do not define the Markdown theme. Use them as starting
+points on terminals that support RGB colours, then adjust for the actual
+background:
+
+| Tone | Dark background | Light background |
+| --- | --- | --- |
+| Accent | `#6BB8C4` | `#226D7A` |
+| Warning | `#C6A46A` | `#826021` |
+| Muted text | Blend about 60% of the terminal foreground with 40% of its background, then adjust for readability | The same rule, using the light theme's colours |
+
+- **Inherit the canvas.** Do not impose a black background or white text.
+  Optional input and selection fills should be subtle. For a neutral input
+  fill, start with 12% white over a dark background or 4% black over a light
+  one. Leave ordinary transcript text on the terminal's background.
+- **Readability wins over an exact hex value.** When the background is known,
+  aim for at least 4.5:1 contrast for informative text, including muted hints
+  and coloured labels. Check the foreground against a selection's actual
+  fill too. Faint decorative rules may have less contrast; essential text
+  may not. Do not rely on the terminal's dim attribute to make text readable.
+- **Fall back by capability.** RGB terminals can use the preferred tones;
+  256-colour terminals use the nearest readable palette entry. On a terminal
+  with only 16 colours, prefer its cyan for the accent when readable, and
+  keep semantic green and red for outcomes. Use the default foreground with
+  bold or underline wherever a palette colour lacks contrast. If the
+  background cannot be determined, omit custom fills and favour the default
+  foreground. Never assume ANSI colour 8 is readable grey on every theme,
+  or yellow is readable on white. Colour detection must not delay startup
+  or consume the person's input.
+- **Use UI colour for UI meaning.** Keep the main accent on small controls.
+  Colour a status marker or short label, leaving its explanation in Default.
+  Markdown colours describe document structure and syntax; they do not reuse
+  the UI's success, warning or error roles. Keep selection, warnings and
+  failures distinguishable through words, markers or emphasis when colour is
+  disabled.
+- **Review both themes and fallbacks.** Preview dark and light terminals,
+  16- and 256-colour output, `NO_COLOR`, `TERM=dumb`, and redirected output.
+  A quiet appearance must still be easy to read.
+
+[codex-colours]: https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/tui/src/style.rs
+[codex-contrast]: https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/tui/src/style/contrast.rs
 
 **Waiting is shown.** What takes longer than a moment shows a spinner on
 standard error, with what it waits for and for how long. It leaves no trace
@@ -165,25 +213,56 @@ when it ends.
 **An agent's text is rendered as markdown on a terminal, and is the agent's
 own text in a pipe.**
 
+**Markdown has its own theme.** Use Catppuccin Mocha on dark terminals and
+Catppuccin Latte on light terminals, the default theme family used by Codex's
+[Markdown renderer][codex-markdown] and [syntax highlighting][codex-syntax].
+Follow [Catppuccin's markup scopes][catppuccin-markup] for document colours and
+use the bundled Catppuccin syntax styles for code. Do not recolour the whole
+theme with Airo's UI accent.
+
+| Markdown element | Treatment |
+| --- | --- |
+| Headings | Rose for H1, peach for H2, yellow for the remaining levels; H1 is bold and underlined, H2 bold, H3 bold and italic, H4–H6 italic |
+| Strong and emphasis | Rose, with bold and italic respectively |
+| Inline code | Green |
+| Links | Blue and underlined |
+| Quotes and list markers | Pink quotes, Catppuccin's teal for bullet markers; ordinary list text stays neutral |
+| Fenced code | The full syntax theme: distinct keyword, type, function, string and number colours, with readable muted comments |
+
+Preserve these hues where readable, adjusting for the actual terminal
+background and colour capability. Prose inherits the terminal foreground;
+all content inherits its background, including diff tokens inside code.
+Use the same theme for live answers and replayed history. Unknown terminal
+colours fall back to readable neutral Markdown; pipes retain the original
+Markdown source.
+
+[codex-markdown]: https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/tui/src/markdown_render.rs
+[codex-syntax]: https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/tui/src/render/highlight.rs
+[catppuccin-markup]: https://github.com/catppuccin/bat/tree/main/themes
+
 **Messages have space to breathe in the styled chat.** Leave one blank line
 between messages, and between the conversation and the live input or status.
-The person's message starts with `> ` in Accent; the agent's starts with
-`• ` in Muted. Reserve those two columns on every continuation line, so
-wrapped prose and multiline prompts align with the first character after
-the marker. Markdown lists, quotes, tables and code keep their own
+The person's message starts with bold `› ` in Accent, using the same
+U+203A character as [Codex's prompt][codex-prompt]; the agent's starts with
+`• ` in Muted. Use the same marker in the editable prompt. Reserve those two
+columns on every continuation line, so wrapped prose and multiline prompts
+align with the first character after the marker. Markdown lists, quotes,
+tables and code keep their own
 indentation inside that margin. Show a marker once per message, never once
 per streamed chunk or paragraph. Live answers and restored history use the
 same layout. Pipes keep the agent's original text without these markers.
 
 ```text
-> Explain the failure and suggest
+› Explain the failure and suggest
   what to try next.
 
 • The build fails during lint.
   Remove the unused import and rerun it.
 
-> Can you fix it?
+› Can you fix it?
 ```
+
+[codex-prompt]: https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/tui/src/bottom_pane/chat_composer.rs#L4895
 
 **Resuming an interactive conversation restores what was said.** Both
 `--resume` and `--continue` load saved prompts and answers, oldest first,

@@ -325,13 +325,33 @@ printed; use `airo session view SESSION` to read the saved conversation.
 **On a terminal, the chat stays in your scrollback.** Answers render as
 Markdown above the input, with a status and elapsed time while the agent
 works. It uses your terminal's colours and never takes over the full screen.
+The prompt mark keeps its UI accent; hints and the agent's marker use a
+readable neutral. These adapt to the terminal's reported
+background and colour support, with separate tones for light and dark themes.
+RGB and 256-colour terminals get shades adjusted for readable contrast;
+limited or unreported colours fall back to the default foreground and
+emphasis. Warning labels use muted amber when supported; success and error
+labels keep the terminal's green and red. The UI accent stays on small
+controls such as the prompt marker.
+
+**Markdown has its own colours.** It uses Catppuccin Mocha for dark terminals
+and Latte for light terminals, the same default theme family as Codex.
+Headings use rose, peach and yellow; inline code is green, links are blue,
+and quotes are pink. Fenced code uses the full syntax theme, with distinct
+colours for keywords, functions, strings and numbers. Comments remain
+readable. Prose and typed text keep the terminal's foreground, and all
+content inherits its background. If the terminal cannot report its colours,
+Markdown uses neutral emphasis. Theme detection runs alongside the chat
+without delaying input or sending a draft.
+
 In the styled chat, a blank line separates messages. Your messages start
-with `> ` and the agent's with `• `; continuation lines align two columns
-in, including wrapped prompts and Markdown lists or code blocks. The marker
-appears once per message, also while an answer streams or history reloads.
+with bold `› `, also used in the editable prompt; the agent's start with `• `.
+Continuation lines align two columns in, including wrapped prompts and
+Markdown lists or code blocks. Each marker appears once per message, also
+while an answer streams or history reloads.
 The closing hint is separated from the answer by a blank line.
-`Resume this session with:` is muted when colour is enabled; the command
-follows on its own line, with no indentation or prefix, ready to copy.
+`Resume this session with:` uses the chat's muted tone when available; the
+command follows on its own line, with no indentation or prefix, ready to copy.
 Both a single prompt and a conversation end with one resume command
 carrying the session ID, without a separate `Session` line. The hint appears
 when the command exits, not after every turn.
