@@ -179,8 +179,8 @@ CURRENT   NAME           AGE
 | `airo project NAME` | Makes that project the context's namespace. The name must be one of your projects |
 | `airo project -` | Switches to the project you last switched away from in this context, so twice brings you back. `airo` keeps its name in your cache directory |
 | `airo project list` | Lists the projects the platform's API shows you, and marks the current one with `*`. `-o yaml` and `-o json` print the Namespaces |
-| `airo project create NAME` | Creates the project. It does not switch to it |
-| `airo project delete NAME` | Deletes the project and everything in it. If your commands work in it, it says so, and they keep working there until you switch |
+| `airo project create NAME` | Creates the project, and returns when the platform lists it, so `airo project NAME` takes it. It does not switch to it |
+| `airo project delete NAME` | Deletes the project and everything in it. If your commands work in it, they switch to the project you were in before, as `airo project -`, or else to your default project, as `airo login` chooses it |
 
 **It changes the current context, or the one `--context` names**, and only a
 context that signs in through the platform. For one command in another
@@ -306,6 +306,25 @@ the first that applies:
    place of the platform's `assistant`.
 3. The one you choose in a picker, on a terminal: type to filter and press
    Enter. Elsewhere the command stops and lists the names.
+
+**`airo` waits until the agent can take a session, and says why it waits.**
+It reads the Agent's `Ready` condition, such as in a new project, where the
+agent's first snapshot takes a few minutes. When the project's endpoint declares a
+credential readiness ConfigMap, `airo` also waits for it before sending the prompt. On a terminal a spinner shows
+the reason and the time, and Ctrl-C stops the wait. Elsewhere each reason
+is a line on standard error. An agent the cluster has turned down, such as
+for a model its Harness cannot use, stops the command with the reason.
+
+```text
+Waiting for agent assistant to become ready: waiting for the ActorTemplate golden snapshot
+Agent assistant is ready.
+```
+
+**The first prompt of a session starts its sandbox in the cluster**, and so
+does the first one after `--continue` or `--resume`, when the sandbox has
+paused. The terminal chat's status line says `Waking up the agent` until
+the answer starts. The agents' API does not tell a starting sandbox from a
+thinking model, so later prompts show the agent's state instead.
 
 **A session stays in the cluster after the command ends.** Nothing is
 deleted. `--resume` takes the session's ID, which every run prints and

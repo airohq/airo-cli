@@ -209,13 +209,31 @@ func TestCreateProject(t *testing.T) {
 	var created string
 	var out bytes.Buffer
 	create := func(_ context.Context, name string) error { created = name; return nil }
-	if err := createProject(context.Background(), &out, "airo-web", create); err != nil {
+	// The cluster lists the project on its second look.
+	looks := 0
+	list := func(ctx context.Context) (*unstructured.UnstructuredList, error) {
+		looks++
+		if looks < 2 {
+			return projectsOf("airo-default")(ctx)
+		}
+		return projectsOf("airo-default", "airo-web")(ctx)
+	}
+	if err := createProject(context.Background(), &out, "airo-web", create, list, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if created != "airo-web" {
-		t.Errorf("created %q, want airo-web", created)
+	if created != "airo-web" || looks != 2 {
+		t.Errorf("created %q after %d looks, want airo-web and 2", created, looks)
 	}
 	if want := "Created project airo-web\n  work in it: airo project airo-web\n"; out.String() != want {
+		t.Errorf("the output is %q, want %q", out.String(), want)
+	}
+
+	// A cluster that does not list it in time.
+	out.Reset()
+	if err := createProject(context.Background(), &out, "airo-web", create, projectsOf("airo-default"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if want := "Created project airo-web\n  the platform does not list it yet: in a moment, work in it with airo project airo-web\n"; out.String() != want {
 		t.Errorf("the output is %q, want %q", out.String(), want)
 	}
 
@@ -231,7 +249,7 @@ func TestCreateProject(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			create := func(context.Context, string) error { return tc.err }
-			err := createProject(context.Background(), &bytes.Buffer{}, "airo-web", create)
+			err := createProject(context.Background(), &bytes.Buffer{}, "airo-web", create, projectsOf(), 0)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("error = %v, want it to contain %q", err, tc.want)
 			}
@@ -240,32 +258,102 @@ func TestCreateProject(t *testing.T) {
 }
 
 func TestDeleteProject(t *testing.T) {
-	access, _, _ := projectFixture(t)
-	for _, tc := range []struct {
-		name, context, project, out string
-	}{
-		{"another project", "", "airo-web", "Deleted project airo-web\n"},
-		{"the current one", "", "airo-default", "Deleted project airo-default\n  your commands still work in it: choose another with airo project\n"},
-		{"the project of another context", "customer", "customer-default", "Deleted project customer-default\n  your commands still work in it: choose another with airo project\n"},
+	ctx := context.Background()
+	var deleted string
+	remove := func(_ context.Context, name string) error { deleted = name; return nil }
+	defaultIs := func(project string) func(context.Context) (string, error) {
+		return func(context.Context) (string, error) { return project, nil }
+	}
+	noDefault := defaultIs("")
+	// The cluster lists airo-web, airo-default and airo-test; it still does
+	// right after a delete, while the namespace terminates.
+	list := projectsOf("airo-web", "airo-default", "airo-test")
+
+	t.Run("another project", func(t *testing.T) {
+		access, storeFor, _ := projectFixture(t)
+		var out bytes.Buffer
+		if err := deleteProject(ctx, &out, access, "", "airo-web", remove, storeFor, list, noDefault); err != nil {
+			t.Fatal(err)
+		}
+		if deleted != "airo-web" || out.String() != "Deleted project airo-web\n" || projectOf(t, access, "airo") != "airo-default" {
+			t.Errorf("deleted %q, said %q, project %q; want airo-web deleted and the context unchanged", deleted, out.String(), projectOf(t, access, "airo"))
+		}
+	})
+
+	t.Run("the current one goes back to the previous", func(t *testing.T) {
+		access, storeFor, _ := projectFixture(t)
+		if err := switchProject(ctx, &bytes.Buffer{}, access, "", storeFor, list, "airo-test", nil); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		if err := deleteProject(ctx, &out, access, "", "airo-test", remove, storeFor, list, defaultIs("airo-web")); err != nil {
+			t.Fatal(err)
+		}
+		if want := "Deleted project airo-test\nSwitched to project airo-default\n"; out.String() != want {
+			t.Errorf("the output is %q, want %q", out.String(), want)
+		}
+		if got := projectOf(t, access, "airo"); got != "airo-default" {
+			t.Errorf("the project is %q, want airo-default", got)
+		}
+		// "-" does not lead back to the deleted project.
+		err := switchProject(ctx, &bytes.Buffer{}, access, "", storeFor, list, "-", nil)
+		if err == nil || !strings.Contains(err.Error(), "remembers no previous project") {
+			t.Errorf("airo project - after the delete: %v, want nothing remembered", err)
+		}
+	})
+
+	t.Run("the current one without a previous goes to the default", func(t *testing.T) {
+		access, storeFor, _ := projectFixture(t)
+		var out bytes.Buffer
+		if err := deleteProject(ctx, &out, access, "", "airo-default", remove, storeFor, list, defaultIs("airo-web")); err != nil {
+			t.Fatal(err)
+		}
+		if want := "Deleted project airo-default\nSwitched to project airo-web\n"; out.String() != want {
+			t.Errorf("the output is %q, want %q", out.String(), want)
+		}
+	})
+
+	for name, fallback := range map[string]func(context.Context) (string, error){
+		"no default":                          noDefault,
+		"the default is the deleted one":      defaultIs("airo-default"),
+		"a default the cluster does not list": defaultIs("airo-gone"),
+		"the identity cannot be read": func(context.Context) (string, error) {
+			return "", errors.New("unauthorized")
+		},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var deleted string
+		t.Run("the current one, and "+name, func(t *testing.T) {
+			access, storeFor, _ := projectFixture(t)
 			var out bytes.Buffer
-			remove := func(_ context.Context, name string) error { deleted = name; return nil }
-			if err := deleteProject(context.Background(), &out, access, tc.context, tc.project, remove); err != nil {
+			if err := deleteProject(ctx, &out, access, "", "airo-default", remove, storeFor, list, fallback); err != nil {
 				t.Fatal(err)
 			}
-			if deleted != tc.project {
-				t.Errorf("deleted %q, want %q", deleted, tc.project)
+			if want := "Deleted project airo-default\n  your commands still work in it: choose another with airo project\n"; out.String() != want {
+				t.Errorf("the output is %q, want %q", out.String(), want)
 			}
-			if out.String() != tc.out {
-				t.Errorf("the output is %q, want %q", out.String(), tc.out)
+			if got := projectOf(t, access, "airo"); got != "airo-default" {
+				t.Errorf("the project is %q, want it unchanged", got)
 			}
 		})
 	}
 
-	remove := func(context.Context, string) error { return apierrors.NewNotFound(namespacesResource, "nope") }
-	err := deleteProject(context.Background(), &bytes.Buffer{}, access, "", "nope", remove)
+	t.Run("the project of another context", func(t *testing.T) {
+		access, storeFor, _ := projectFixture(t)
+		var out bytes.Buffer
+		customers := projectsOf("customer-default", "customer-web")
+		if err := deleteProject(ctx, &out, access, "customer", "customer-default", remove, storeFor, customers, defaultIs("customer-web")); err != nil {
+			t.Fatal(err)
+		}
+		if got := projectOf(t, access, "customer"); got != "customer-web" {
+			t.Errorf("the project of customer is %q, want customer-web", got)
+		}
+		if got := projectOf(t, access, "airo"); got != "airo-default" {
+			t.Errorf("the project of airo is %q, want it unchanged", got)
+		}
+	})
+
+	gone := func(context.Context, string) error { return apierrors.NewNotFound(namespacesResource, "nope") }
+	access, storeFor, _ := projectFixture(t)
+	err := deleteProject(ctx, &bytes.Buffer{}, access, "", "nope", gone, storeFor, list, noDefault)
 	if err == nil || !strings.Contains(err.Error(), `you have no project "nope"`) {
 		t.Errorf("error = %v, want that there is no such project", err)
 	}

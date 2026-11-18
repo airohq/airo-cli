@@ -371,25 +371,8 @@ func waitReady(ctx context.Context, c client.Client, a *unstructured.Unstructure
 		if err := c.Get(ctx, client.ObjectKeyFromObject(a), a); err != nil {
 			return false, err
 		}
-		conditions, _, _ := unstructured.NestedSlice(a.Object, "status", "conditions")
-		reason, ready, refused = "", false, false
-		for _, item := range conditions {
-			cond, _ := item.(map[string]any)
-			seen = true
-			if cond["status"] == "True" {
-				ready = ready || cond["type"] == "Ready"
-				continue
-			}
-			// The first condition that is not met says what is wrong.
-			if reason == "" {
-				reason, _ = cond["message"].(string)
-			}
-			// The cluster has read this Agent and turned it down, such as a
-			// model its Harness cannot use. Waiting does not change that.
-			if cond["type"] != "Ready" && cond["status"] == "False" && current(cond, a.GetGeneration()) {
-				refused = true
-			}
-		}
+		s := stateOf(a)
+		ready, refused, seen, reason = s.ready, s.refused, s.seen, s.reason
 		return ready || refused, nil
 	})
 	name := a.GetNamespace() + "/" + a.GetName()
@@ -411,6 +394,39 @@ func waitReady(ctx context.Context, c client.Client, a *unstructured.Unstructure
 		return fmt.Errorf("agent %s has no Ready condition after %s: this airo may be too old for the cluster, update it", name, timeout)
 	}
 	return fmt.Errorf("agent %s is not ready after %s: %s. %s", name, timeout, reason, stays)
+}
+
+// agentState is what an Agent's conditions say.
+type agentState struct {
+	// ready: the Agent takes sessions.
+	ready bool
+	// refused: the cluster has read the Agent and turned it down, such as a
+	// model its Harness cannot use. Waiting does not change that.
+	refused bool
+	// seen: the Agent has conditions at all.
+	seen bool
+	// reason is the message of the first condition that is not met.
+	reason string
+}
+
+func stateOf(a *unstructured.Unstructured) agentState {
+	var s agentState
+	conditions, _, _ := unstructured.NestedSlice(a.Object, "status", "conditions")
+	for _, item := range conditions {
+		cond, _ := item.(map[string]any)
+		s.seen = true
+		if cond["status"] == "True" {
+			s.ready = s.ready || (cond["type"] == "Ready" && current(cond, a.GetGeneration()))
+			continue
+		}
+		if s.reason == "" {
+			s.reason, _ = cond["message"].(string)
+		}
+		if cond["type"] != "Ready" && cond["status"] == "False" && current(cond, a.GetGeneration()) {
+			s.refused = true
+		}
+	}
+	return s
 }
 
 // current reports whether a condition is about the Agent as it is now. A
