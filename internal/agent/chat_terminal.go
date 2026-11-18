@@ -50,6 +50,10 @@ type cancelDoneMsg struct {
 }
 type externalExitMsg struct{}
 type printedMsg struct{ err error }
+type historyLoadedMsg struct {
+	turns []Turn
+	err   error
+}
 
 // chat runs inline, never in the alternate screen. The same session.turn
 // drives both printers, including errors, snapshots and remembering the ID.
@@ -64,6 +68,9 @@ func (s *session) chat(ctx context.Context, in io.Reader, prompt string) error {
 
 	var workers sync.WaitGroup
 	m := newChatModel(runCtx, p.events, out, errOut, prompt)
+	if s.id != "" && prompt == "" {
+		m.load, m.loading = s.history, true
+	}
 	m.run = func(ctx context.Context, prompt string) {
 		workers.Go(func() { p.send(turnDoneMsg{s.turn(ctx, prompt)}) })
 	}
@@ -81,10 +88,14 @@ func (s *session) chat(ctx context.Context, in io.Reader, prompt string) error {
 	closeChat()    // detach the stream, never cancel the remote task on exit
 	workers.Wait() // session fields belong to the worker until it has stopped
 	s.errOut = errOut
-	if m.detached || ctx.Err() != nil {
-		s.detached()
-	} else {
-		s.left()
+	// A failed or interrupted history load says nothing about whether a
+	// remote turn is still running, and has no closing hint.
+	if !m.loading {
+		if m.detached || ctx.Err() != nil {
+			s.detached()
+		} else {
+			s.left()
+		}
 	}
 	if err != nil {
 		return err
@@ -103,6 +114,8 @@ type chatModel struct {
 	width, height               int
 	initial                     string
 	once                        bool
+	load                        func(context.Context) ([]Turn, error)
+	loading                     bool
 	run                         func(context.Context, string)
 	cancel                      func(context.Context, string) (string, error)
 	stopTurn                    context.CancelFunc
@@ -143,6 +156,13 @@ func newChatModel(ctx context.Context, events <-chan tea.Msg, out, errOut io.Wri
 
 func (m *chatModel) Init() tea.Cmd {
 	watch := func() tea.Msg { <-m.ctx.Done(); return externalExitMsg{} }
+	if m.loading {
+		m.started = time.Now()
+		return tea.Batch(watch, m.spinner.Tick, func() tea.Msg {
+			turns, err := m.load(m.ctx)
+			return historyLoadedMsg{turns, err}
+		})
+	}
 	if m.initial != "" {
 		return tea.Batch(watch, m.start(m.initial))
 	}
@@ -175,7 +195,7 @@ func (m *chatModel) start(prompt string) tea.Cmd {
 	if m.once {
 		return tea.Batch(m.wait(), m.spinner.Tick)
 	}
-	return tea.Batch(m.print(m.styles.Accent.Render("> ")+ui.Wrap(ui.Text(prompt), m.width-2), m.errOut), m.spinner.Tick)
+	return tea.Batch(m.print(m.formatMessage(FromYou, prompt), m.errOut), m.spinner.Tick)
 }
 
 func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -184,6 +204,29 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resize(msg.Width, msg.Height)
 	case externalExitMsg:
 		return m, m.leave()
+	case historyLoadedMsg:
+		if m.exiting {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.err = msg.err
+			return m, m.leave()
+		}
+		m.loading = false
+		if !m.interrupt {
+			m.hint = ""
+		}
+		for _, turn := range msg.turns {
+			for _, message := range turn.Messages {
+				if message.From == FromYou {
+					m.history = append(m.history, ui.Text(message.Text))
+				}
+			}
+		}
+		m.historyAt = len(m.history)
+		return m, m.printWith(func() error {
+			return writeHistory(msg.turns, m.out, m.errOut, m.formatMessage)
+		})
 	case printedMsg:
 		m.printing = false
 		if msg.err != nil {
@@ -282,7 +325,7 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	case spinner.TickMsg:
-		if m.active {
+		if m.active || m.loading {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -341,6 +384,10 @@ func (m *chatModel) key(msg tea.KeyPressMsg) tea.Cmd {
 			return nil
 		case "/exit":
 			return m.leave()
+		}
+		if m.loading || (m.printing && !m.active) {
+			m.hint = "Draft kept. Enter sends it when the conversation is ready."
+			return nil
 		}
 		if m.active {
 			m.hint = "Draft kept. Enter sends it when this turn finishes."
@@ -421,6 +468,13 @@ func (m *chatModel) renderMarkdown(text string) string {
 
 func (m *chatModel) render() { m.preview = m.renderMarkdown(m.pending) }
 
+func (m *chatModel) formatMessage(from, text string) string {
+	if from == FromYou {
+		return m.styles.Accent.Render("> ") + ui.Wrap(ui.Text(text), m.width-2)
+	}
+	return m.renderMarkdown(text)
+}
+
 func (m *chatModel) flush() tea.Cmd {
 	text := m.renderMarkdown(m.pending)
 	m.pending, m.preview = "", ""
@@ -430,22 +484,23 @@ func (m *chatModel) flush() tea.Cmd {
 // The renderer uses stderr. Releasing it before writing completed paragraphs
 // to stdout keeps the streams separate without racing its cursor movements.
 func (m *chatModel) print(text string, out io.Writer) tea.Cmd {
+	return m.printWith(func() error {
+		_, err := fmt.Fprintln(out, strings.TrimRight(text, "\n"))
+		return err
+	})
+}
+
+func (m *chatModel) printWith(write func() error) tea.Cmd {
 	m.printing = true
-	return tea.Exec(&scrollback{out: out, text: text}, func(err error) tea.Msg { return printedMsg{err} })
+	return tea.Exec(scrollback(write), func(err error) tea.Msg { return printedMsg{err} })
 }
 
-type scrollback struct {
-	out  io.Writer
-	text string
-}
+type scrollback func() error
 
-func (s *scrollback) Run() error {
-	_, err := fmt.Fprintln(s.out, strings.TrimRight(s.text, "\n"))
-	return err
-}
-func (*scrollback) SetStdin(io.Reader)  {}
-func (*scrollback) SetStdout(io.Writer) {}
-func (*scrollback) SetStderr(io.Writer) {}
+func (s scrollback) Run() error        { return s() }
+func (scrollback) SetStdin(io.Reader)  {}
+func (scrollback) SetStdout(io.Writer) {}
+func (scrollback) SetStderr(io.Writer) {}
 
 func (m *chatModel) View() tea.View {
 	if m.exiting || m.printing {
@@ -453,9 +508,11 @@ func (m *chatModel) View() tea.View {
 	}
 	var rows []string
 	statusLines := 0
-	if m.active {
+	if m.active || m.loading {
 		status := "Waiting for the agent"
-		if m.state != "" {
+		if m.loading {
+			status = "Loading the conversation"
+		} else if m.state != "" {
 			status = "Agent " + ui.Text(stateWord(m.state))
 		}
 		if m.stopping {
@@ -469,7 +526,9 @@ func (m *chatModel) View() tea.View {
 		rows = append(rows, m.input.View())
 	}
 	keys := "Enter sends · Ctrl-J / Shift-Enter newline · ↑↓ history · Ctrl-D leaves"
-	if m.active {
+	if m.loading {
+		keys = "Draft the next prompt · Ctrl-C twice leaves"
+	} else if m.active {
 		keys = "Draft the next prompt · Esc stops · Ctrl-C twice leaves"
 		if m.once {
 			keys = "Esc stops · Ctrl-C twice leaves"

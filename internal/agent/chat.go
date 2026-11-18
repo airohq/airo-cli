@@ -346,6 +346,13 @@ func (s *session) converse(ctx context.Context, in *lines) error {
 		fmt.Fprintf(s.errOut, "A new session with agent %s. Ctrl-D ends the conversation, and the session stays.\n", s.agent)
 	} else {
 		fmt.Fprintf(s.errOut, "Session %s with agent %s. Ctrl-D ends the conversation, and the session stays.\n", s.id, s.agent)
+		turns, err := s.history(ctx)
+		if err != nil {
+			return err
+		}
+		if err := writeHistory(turns, s.out, s.errOut, nil); err != nil {
+			return err
+		}
 	}
 	for {
 		fmt.Fprint(s.errOut, "> ")

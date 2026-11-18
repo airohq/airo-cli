@@ -144,6 +144,15 @@ when it ends.
 **An agent's text is rendered as markdown on a terminal, and is the agent's
 own text in a pipe.**
 
+**Resuming an interactive conversation restores what was said.** Both
+`--resume` and `--continue` load saved prompts and answers, oldest first,
+before accepting the next prompt. Use the same formatting as live chat,
+and include earlier prompts in Up/Down history. Keep a draft typed during
+loading, without sending it automatically. Plain terminal conversations
+replay history too. A single prompt, supplied as an argument or on stdin,
+prints only its new answer. Loading history is a snapshot, not a connection
+to an already-running turn's stream; label saved unfinished states clearly.
+
 **Keys mean what people know from other tools.** A line under the input
 names the ones that matter now.
 

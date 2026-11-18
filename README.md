@@ -187,6 +187,14 @@ deleted. `--resume` takes the session's ID, which every run prints and
 the agent. `airo` remembers one ID for each agent in `airo/sessions.json` in
 your cache directory.
 
+With no prompt argument, `airo agent -r SESSION` and `airo agent -c` load the
+saved conversation before taking your next prompt. Earlier answers render
+as Markdown in the terminal chat, and Up and Down recall earlier prompts
+too. Plain terminal conversations show the same history without styling.
+History is a snapshot; resuming does not follow new output from a turn that
+is already running. With an argument or piped input, only the new answer is
+printed; use `airo session view SESSION` to read the saved conversation.
+
 **On a terminal, the chat stays in your scrollback.** Answers render as
 Markdown above the input, with a status and elapsed time while the agent
 works. It uses your terminal's colours and never takes over the full screen.
