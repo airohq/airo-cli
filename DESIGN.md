@@ -39,8 +39,7 @@ the help. `airo context` is another: a context lives in the kubeconfig.
 
 **A noun that is the platform's word for a kind has its own verbs too.**
 `airo project` is one: a project is a Namespace, and `airo namespace list`
-still works for the kind. `airo project list` marks the project the commands
-work in.
+still works for the kind. Its `list` and `get` use the same Namespace table.
 
 **A noun gets a short form when people already know one**, such as `airo
 ctx` for `airo context`. Add it as an alias when you add the noun.
@@ -341,7 +340,8 @@ unchanged. Arguments and piped input are always prompts, so
 `airo chat /help` sends the literal text. A slash command never adds a
 second way to manage platform resources; those remain CLI commands.
 
-**A resource looks as kubectl prints it.** `list` and `get` keep the
+**A resource looks as kubectl prints it.** `list` and `get` without a name
+show the collection. `get NAME` shows one object. Both verbs keep the
 cluster's table: its columns, their order and their upper-case headers. On a
 terminal, style may mute the header and colour a status word, and adds or
 removes nothing.

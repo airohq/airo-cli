@@ -18,12 +18,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/duration"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"k8s.io/cli-runtime/pkg/printers"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/picker"
 )
 
@@ -126,17 +125,8 @@ in another project, pass -n to that command instead.`,
 			return switchProject(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, newPreviousProjectStore, list, target, ask)
 		},
 	}
-	var output string
-	listCmd := &cobra.Command{
-		Use:   "list",
-		Short: "List your projects",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return listProjects(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, list, output, time.Now())
-		},
-	}
-	listCmd.Flags().StringVarP(&output, "output", "o", "", "print the whole resources as yaml or json")
-	cmd.AddCommand(listCmd, &cobra.Command{
+	cmd.AddCommand(generic.ReadCommands(flags, projectResource.Resource)...)
+	cmd.AddCommand(&cobra.Command{
 		Use:   "create NAME",
 		Short: "Create a project",
 		Long: `Create makes a new project, a namespace of the platform. The platform
@@ -314,62 +304,6 @@ func switchProject(ctx context.Context, out io.Writer, access clientcmd.ConfigAc
 		fmt.Fprintf(out, "  context: %s\n", name)
 	}
 	return nil
-}
-
-// listProjects prints the projects and marks the one the context name works
-// in, or the current context when name is empty.
-func listProjects(ctx context.Context, out io.Writer, access clientcmd.ConfigAccess, name string, list projectLister, output string, now time.Time) error {
-	var p printers.ResourcePrinter
-	switch output {
-	case "":
-	case "yaml":
-		p = &printers.YAMLPrinter{}
-	case "json":
-		p = &printers.JSONPrinter{}
-	default:
-		return fmt.Errorf("-o %s is not supported: use yaml or json", output)
-	}
-	projects, err := list(ctx)
-	if err != nil {
-		return err
-	}
-	if p != nil {
-		for i := range projects.Items {
-			projects.Items[i].SetManagedFields(nil)
-		}
-		return p.PrintObj(projects, out)
-	}
-	if len(projects.Items) == 0 {
-		fmt.Fprintln(out, "No projects")
-		return nil
-	}
-
-	cfg, err := access.GetStartingConfig()
-	if err != nil {
-		return err
-	}
-	if name == "" {
-		name = cfg.CurrentContext
-	}
-	current := ""
-	if kctx := cfg.Contexts[name]; kctx != nil {
-		current = kctx.Namespace
-	}
-	sort.Slice(projects.Items, func(i, j int) bool { return projects.Items[i].GetName() < projects.Items[j].GetName() })
-	w := printers.GetNewTabWriter(out)
-	fmt.Fprintln(w, "CURRENT\tNAME\tAGE")
-	for _, project := range projects.Items {
-		mark := ""
-		if project.GetName() == current {
-			mark = "*"
-		}
-		age := "<unknown>"
-		if created := project.GetCreationTimestamp(); !created.IsZero() {
-			age = duration.HumanDuration(now.Sub(created.Time))
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", mark, project.GetName(), age)
-	}
-	return w.Flush()
 }
 
 // projectNames returns the names of the person's projects, sorted.

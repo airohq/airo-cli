@@ -179,9 +179,9 @@ airo project delete acme-web
 ```
 
 ```text
-CURRENT   NAME           AGE
-*         acme-default   9d
-          acme-web       2d
+NAME           STATUS   AGE
+acme-default   Active   9d
+acme-web       Active   2d
 ```
 
 | Command | What happens |
@@ -189,7 +189,7 @@ CURRENT   NAME           AGE
 | `airo project` | Shows a picker with the cursor on the current project. Type to filter, press Enter to choose, or Esc to leave things as they are. Where nobody can answer, such as in a script, it stops and lists the names |
 | `airo project NAME` | Makes that project the context's namespace. The name must be one of your projects |
 | `airo project -` | Switches to the project you last switched away from in this context, so twice brings you back. `airo` keeps its name in your cache directory |
-| `airo project list` | Lists the projects the platform's API shows you, and marks the current one with `*`. `-o yaml` and `-o json` print the Namespaces |
+| `airo project list` | Lists accessible Namespaces with the cluster's columns. Use `airo status` to see the current project |
 | `airo project create NAME` | Creates the project, and returns when the platform lists it, so `airo project NAME` takes it. It does not switch to it |
 | `airo project delete NAME` | Deletes the project and everything in it. If your commands work in it, they switch to the project you were in before, as `airo project -`, or else to your default project, as `airo login` chooses it |
 
@@ -282,14 +282,18 @@ A value of `"true"` shows as enabled. Any other value shows as disabled.
 ## Resources
 
 **Every kind of resource in the cluster is a noun with `list`, `get` and
-`delete`**, also kinds this version of `airo` does not know. `airo` asks the
-cluster for the kind and its columns.
+`delete`**, including custom resources added after this CLI was built.
+`airo RESOURCE list` and `airo RESOURCE get` both run the equivalent of
+`kubectl get RESOURCE`. Add a name to `get` to show one object. Both verbs
+use kubectl's Go library for discovery, server-provided columns, pagination,
+and output formatting, using your kubeconfig credentials and permissions.
 
 ```sh
 airo agent list                    # in your project
 airo agent list -A                 # in every namespace you may read
 airo agent get my-agent            # one row
 airo agent get my-agent -o yaml    # the whole resource, or -o json
+airo pods get -o wide              # include the API's additional columns
 airo agent delete my-agent
 airo apply -f agent.yaml           # create or update from a file, a directory, a URL or -
 ```
@@ -298,7 +302,8 @@ airo apply -f agent.yaml           # create or update from a file, a directory, 
 agent list`, and the same holds for `airo sessions` and `airo tunnels`.
 
 **A kind takes the names kubectl takes**: `agent`, `agents`, a short name, or
-`agents.api.kagent.dev` when two groups have the same kind. `airo apply` is a
+`agents.api.kagent.dev` when two groups have the same kind or a resource
+shares a name with an Airo command. `airo apply` is a
 server-side apply with the field manager `airo`.
 
 ## Chat

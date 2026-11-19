@@ -31,7 +31,6 @@ func main() {
 func newRoot() *cobra.Command {
 	// kubectl's flags, such as -n, --context and --kubeconfig.
 	flags := genericclioptions.NewConfigFlags(true)
-	var o generic.Options
 	root := &cobra.Command{
 		Use:   "airo [resource] [verb] [options]",
 		Short: "Work with the Airo platform from your machine",
@@ -40,23 +39,15 @@ func newRoot() *cobra.Command {
 Use a resource's singular or plural name. Every resource kind in the cluster
 supports list, get and delete.`,
 		Example: `  airo login                     # See 'airo login -h' for first-time setup
-  airo project list              # Find your projects (* marks the current one)
+  airo project list              # List the namespaces you can access
   airo agent list                # List agents in the current project
   airo agent get my-agent        # Inspect an agent from the list
   airo chat                      # Chat with the default agent`,
 		Version:      buildVersion(),
 		SilenceUsage: true,
-		// A first word that is no command below is a kind in the cluster.
-		Args: cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return cmd.Help()
-			}
-			return generic.Run(cmd.Context(), cmd.OutOrStdout(), flags, o, args)
-		},
 	}
 	flags.AddFlags(root.PersistentFlags())
-	o.AddFlags(root)
+	generic.AddResourceHandler(root, flags)
 	root.SetUsageTemplate(usageTemplate)
 	addGroup := func(id, title string, commands ...*cobra.Command) {
 		root.AddGroup(&cobra.Group{ID: id, Title: title})

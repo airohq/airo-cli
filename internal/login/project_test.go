@@ -11,13 +11,10 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/clientcmd"
 )
-
-var projectNow = time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
 
 // projectFixture is contextFixture with a cluster that lists the projects
 // airo-web and airo-default, in that order, and a store for each context.
@@ -31,18 +28,17 @@ func projectFixture(t *testing.T) (clientcmd.ConfigAccess, func(string) (previou
 	return access, storeFor, projectsOf("airo-web", "airo-default")
 }
 
-// projectsOf lists the names as Namespaces, each a day older than the last.
+// projectsOf lists the names as Namespaces.
 func projectsOf(names ...string) projectLister {
 	return func(context.Context) (*unstructured.UnstructuredList, error) {
 		list := &unstructured.UnstructuredList{}
 		list.SetAPIVersion("v1")
 		list.SetKind("NamespaceList")
-		for i, name := range names {
+		for _, name := range names {
 			u := unstructured.Unstructured{}
 			u.SetAPIVersion("v1")
 			u.SetKind("Namespace")
 			u.SetName(name)
-			u.SetCreationTimestamp(metav1.NewTime(projectNow.Add(-time.Duration(i+1) * 24 * time.Hour)))
 			list.Items = append(list.Items, u)
 		}
 		return list, nil
@@ -166,40 +162,6 @@ func TestSwitchProjectAsks(t *testing.T) {
 	}
 	if got := projectOf(t, access, "airo"); got != "airo-web" || out.Len() != 0 {
 		t.Errorf("the project is %q and the output %q, want airo-web and none", got, out.String())
-	}
-}
-
-func TestListProjects(t *testing.T) {
-	access, _, list := projectFixture(t)
-	var out bytes.Buffer
-	if err := listProjects(context.Background(), &out, access, "", list, "", projectNow); err != nil {
-		t.Fatal(err)
-	}
-	want := "CURRENT   NAME           AGE\n" +
-		"*         airo-default   2d\n" +
-		"          airo-web       24h\n"
-	if out.String() != want {
-		t.Errorf("list =\n%s\nwant\n%s", out.String(), want)
-	}
-
-	out.Reset()
-	if err := listProjects(context.Background(), &out, access, "", list, "yaml", projectNow); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "kind: NamespaceList") || !strings.Contains(out.String(), "name: airo-web") {
-		t.Errorf("list -o yaml =\n%s\nwant the Namespaces", out.String())
-	}
-
-	out.Reset()
-	if err := listProjects(context.Background(), &out, access, "", projectsOf(), "", projectNow); err != nil {
-		t.Fatal(err)
-	}
-	if out.String() != "No projects\n" {
-		t.Errorf("an empty list = %q, want No projects", out.String())
-	}
-
-	if err := listProjects(context.Background(), &out, access, "", list, "wide", projectNow); err == nil {
-		t.Error("-o wide: no error, want it refused")
 	}
 }
 
