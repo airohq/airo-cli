@@ -1,153 +1,136 @@
-// Package generic implements the verbs every kind has: list, get and delete,
+// Package generic implements the verbs every kind has: list, get, describe and delete,
 // for any kind the cluster serves, and apply for files. It asks the cluster
 // what a kind is and how to show it, so a new kind needs no new airo.
 package generic
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"strings"
 
 	"github.com/spf13/cobra"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"k8s.io/cli-runtime/pkg/printers"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
+	"k8s.io/cli-runtime/pkg/genericiooptions"
+	"k8s.io/kubectl/pkg/cmd/describe"
+	"k8s.io/kubectl/pkg/cmd/get"
+	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 )
 
 // Verbs is the help line for a kind without a command of its own.
-const Verbs = "list, get NAME or delete NAME"
+const Verbs = "list, get [NAME], describe NAME or delete NAME"
 
-// Options are the flags of list and get.
-type Options struct {
-	output        string
-	allNamespaces bool
-}
-
-// AddFlags adds the flags of list and get to cmd.
-func (o *Options) AddFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVarP(&o.output, "output", "o", "", "print the whole resource as yaml or json")
-	cmd.Flags().BoolVarP(&o.allNamespaces, "all-namespaces", "A", false, "list across all namespaces")
-}
-
-// Run handles airo KIND VERB [NAME] for a kind that has no command of its
-// own in this binary.
-func Run(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlags, o Options, args []string) error {
-	kind := args[0]
-	m, err := mapping(flags, kind)
-	if err != nil {
-		return err
-	}
-	if len(args) == 1 {
-		return fmt.Errorf("airo %s needs a verb: %s", kind, Verbs)
-	}
-	verb, rest := args[1], args[2:]
-	name := ""
-	switch {
-	case verb == "list" && len(rest) == 0:
-	case (verb == "get" || verb == "delete") && len(rest) == 1:
-		name = rest[0]
-	case verb == "list" || verb == "get" || verb == "delete":
+// AddResourceHandler handles kinds that do not have a dedicated Airo command.
+func AddResourceHandler(cmd *cobra.Command, flags *genericclioptions.ConfigFlags) {
+	o := addReadFlags(cmd)
+	runDescribe := describeRunner(cmd, flags)
+	runDelete := deleteRunner(cmd, flags, nil)
+	cmd.Args = cobra.ArbitraryArgs
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return cmd.Help()
+		}
+		kind := args[0]
+		if len(args) == 1 {
+			if _, err := mapping(flags, kind); err != nil {
+				return err
+			}
+			return fmt.Errorf("airo %s needs a verb: %s", kind, Verbs)
+		}
+		switch args[1] {
+		case "list":
+			if len(args) == 2 {
+				return read(cmd, flags, o, []string{kind})
+			}
+		case "get":
+			if len(args) <= 3 {
+				return read(cmd, flags, o, append([]string{kind}, args[2:]...))
+			}
+		case "describe":
+			if len(args) == 3 {
+				return runDescribe(kind, args[2])
+			}
+		case "delete":
+			if len(args) == 3 {
+				return runDelete(kind, args[2])
+			}
+		default:
+			return fmt.Errorf("airo %s has no verb %q: use %s", kind, args[1], Verbs)
+		}
 		return fmt.Errorf("usage: airo %s %s", kind, Verbs)
-	default:
-		return fmt.Errorf("airo %s has no verb %q: use %s", kind, verb, Verbs)
-	}
-	return do(ctx, out, flags, o, m, verb, name)
-}
-
-// Commands returns list, get and delete for a kind that has its own command,
-// such as tunnel. kind is what a person would type, such as
-// tunnel.tunnels.airohq.dev.
-func Commands(flags *genericclioptions.ConfigFlags, kind string) []*cobra.Command {
-	noun, _, _ := strings.Cut(kind, ".")
-	verb := func(use, short string, args cobra.PositionalArgs) *cobra.Command {
-		var o Options
-		name, _, _ := strings.Cut(use, " ")
-		cmd := &cobra.Command{
-			Use:   use,
-			Short: short,
-			Args:  args,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				m, err := mapping(flags, kind)
-				if err != nil {
-					return err
-				}
-				return do(cmd.Context(), cmd.OutOrStdout(), flags, o, m, name, strings.Join(args, ""))
-			},
-		}
-		if name != "delete" {
-			o.AddFlags(cmd)
-		}
-		return cmd
-	}
-	return []*cobra.Command{
-		verb("list", "List the "+noun+"s of the project", cobra.NoArgs),
-		verb("get NAME", "Show one "+noun, cobra.ExactArgs(1)),
-		verb("delete NAME", "Delete one "+noun, cobra.ExactArgs(1)),
 	}
 }
 
-func do(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlags, o Options, m *meta.RESTMapping, verb, name string) error {
-	err := doVerb(ctx, out, flags, o, m, verb, name)
-	if name != "" && apierrors.IsNotFound(err) {
-		return fmt.Errorf("no %s named %s", strings.ToLower(m.GroupVersionKind.Kind), name)
-	}
-	return err
+func addReadFlags(cmd *cobra.Command) *get.GetOptions {
+	o := get.NewGetOptions("airo", genericiooptions.IOStreams{})
+	o.PrintFlags.AddFlags(cmd)
+	cmdutil.AddLabelSelectorFlagVar(cmd, &o.LabelSelector)
+	cmd.Flags().StringVar(&o.FieldSelector, "field-selector", "", "filter by fields supported by the API")
+	cmd.Flags().BoolVarP(&o.AllNamespaces, "all-namespaces", "A", false, "list across all namespaces")
+	return o
 }
 
-func doVerb(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlags, o Options, m *meta.RESTMapping, verb, name string) error {
-	cfg, err := flags.ToRESTConfig()
-	if err != nil {
+// read passes kubectl the same resource and optional name as kubectl get.
+func read(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, o *get.GetOptions, args []string) error {
+	o.IOStreams = genericiooptions.IOStreams{In: cmd.InOrStdin(), Out: cmd.OutOrStdout(), ErrOut: cmd.ErrOrStderr()}
+	f := cmdutil.NewFactory(flags)
+	if err := o.Complete(f, cmd, args); err != nil {
 		return err
 	}
-	ns := ""
-	if m.Scope.Name() == meta.RESTScopeNameNamespace && !(verb == "list" && o.allNamespaces) {
-		if ns, _, err = flags.ToRawKubeConfigLoader().Namespace(); err != nil {
-			return err
-		}
+	if err := o.Validate(); err != nil {
+		return err
 	}
-	noun := strings.ToLower(m.GroupVersionKind.Kind)
-	full := name
-	if ns != "" {
-		full = ns + "/" + name
-	}
+	return o.Run(f, args)
+}
 
-	if verb == "delete" {
-		c, err := dynamic.NewForConfig(cfg)
+// describeRunner uses kubectl's describers and its generic fallback for CRDs.
+func describeRunner(cmd *cobra.Command, flags *genericclioptions.ConfigFlags) func(string, string) error {
+	showEvents := cmd.Flags().Bool("show-events", true, "include related events when describing a resource")
+	return func(resource, name string) error {
+		streams := genericiooptions.IOStreams{In: cmd.InOrStdin(), Out: cmd.OutOrStdout(), ErrOut: cmd.ErrOrStderr()}
+		d := describe.NewDescribeFlags(cmdutil.NewFactory(flags), streams)
+		d.DescriberSettings.ShowEvents = *showEvents
+		d.ShowEventsExplicitlySet = cmd.Flags().Changed("show-events")
+		o, err := d.ToOptions("airo", []string{resource, name})
 		if err != nil {
 			return err
 		}
-		if err := c.Resource(m.Resource).Namespace(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+		if err := o.Validate(); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Deleted %s %s\n", noun, full)
-		return nil
+		return o.Run()
 	}
+}
 
-	if o.output != "" {
-		return printObject(ctx, out, cfg, o.output, m, ns, name)
-	}
-	t, err := table(ctx, cfg, m, ns, name, o.allNamespaces)
-	if err != nil {
-		return err
-	}
-	if len(t.Rows) == 0 {
-		if ns == "" {
-			fmt.Fprintf(out, "No %ss\n", noun)
-		} else {
-			fmt.Fprintf(out, "No %ss in %s\n", noun, ns)
+// ReadCommands adds the same list, get and describe operations to built-in nouns.
+// A platform synonym such as project supplies its Kubernetes resource.
+func ReadCommands(flags *genericclioptions.ConfigFlags, resource string) []*cobra.Command {
+	newRead := func(use, short string, args cobra.PositionalArgs) *cobra.Command {
+		cmd := &cobra.Command{Use: use, Short: short, Args: args}
+		o := addReadFlags(cmd)
+		cmd.RunE = func(cmd *cobra.Command, names []string) error {
+			return read(cmd, flags, o, append([]string{resource}, names...))
 		}
-		return nil
+		return cmd
 	}
-	return printers.NewTablePrinter(printers.PrintOptions{WithNamespace: o.allNamespaces}).PrintObj(t, out)
+	describeCmd := &cobra.Command{
+		Use:   "describe NAME",
+		Short: "Describe a resource and its related events",
+		Args:  cobra.ExactArgs(1),
+	}
+	runDescribe := describeRunner(describeCmd, flags)
+	describeCmd.RunE = func(_ *cobra.Command, args []string) error {
+		return runDescribe(resource, args[0])
+	}
+	return []*cobra.Command{
+		newRead("list", "List resources", cobra.NoArgs),
+		newRead("get [NAME]", "Show one resource or list the collection", cobra.MaximumNArgs(1)),
+		describeCmd,
+	}
+}
+
+// Commands returns the resource verbs for a built-in noun.
+func Commands(flags *genericclioptions.ConfigFlags, resource string) []*cobra.Command {
+	return append(ReadCommands(flags, resource), NewDeleteCommand(flags, resource, nil))
 }
 
 // mapping asks the cluster which kind the word means. It takes what kubectl
@@ -178,87 +161,4 @@ func mapping(flags *genericclioptions.ConfigFlags, kind string) (*meta.RESTMappi
 		return nil, err
 	}
 	return mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-}
-
-// table asks the API server for the kind's own columns, the ones kubectl get
-// prints, so airo knows nothing about the kind.
-func table(ctx context.Context, cfg *rest.Config, m *meta.RESTMapping, ns, name string, withNamespace bool) (*metav1.Table, error) {
-	c := rest.CopyConfig(cfg)
-	gv := m.Resource.GroupVersion()
-	c.GroupVersion = &gv
-	c.APIPath = "/apis"
-	if gv.Group == "" {
-		c.APIPath = "/api"
-	}
-	c.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
-	rc, err := rest.RESTClientFor(c)
-	if err != nil {
-		return nil, err
-	}
-	req := rc.Get().Resource(m.Resource.Resource).
-		SetHeader("Accept", "application/json;as=Table;v=v1;g=meta.k8s.io,application/json")
-	if ns != "" {
-		req = req.Namespace(ns)
-	}
-	if name != "" {
-		req = req.Name(name)
-	}
-	raw, err := req.Do(ctx).Raw()
-	if err != nil {
-		return nil, err
-	}
-	t := &metav1.Table{}
-	if err := json.Unmarshal(raw, t); err != nil {
-		return nil, err
-	}
-	if len(t.ColumnDefinitions) == 0 {
-		return nil, fmt.Errorf("the cluster gave no table for %s: use -o yaml", m.Resource.Resource)
-	}
-	// The printer reads the namespace from each row's object.
-	for i := range t.Rows {
-		if !withNamespace || len(t.Rows[i].Object.Raw) == 0 {
-			continue
-		}
-		obj := &metav1.PartialObjectMetadata{}
-		if err := json.Unmarshal(t.Rows[i].Object.Raw, obj); err == nil {
-			t.Rows[i].Object.Object = obj
-		}
-	}
-	return t, nil
-}
-
-func printObject(ctx context.Context, out io.Writer, cfg *rest.Config, format string, m *meta.RESTMapping, ns, name string) error {
-	var p printers.ResourcePrinter
-	switch format {
-	case "yaml":
-		p = &printers.YAMLPrinter{}
-	case "json":
-		p = &printers.JSONPrinter{}
-	default:
-		return fmt.Errorf("-o %s is not supported: use yaml or json", format)
-	}
-	c, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return err
-	}
-	r := c.Resource(m.Resource).Namespace(ns)
-	var obj runtime.Object
-	if name != "" {
-		u, err := r.Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-		u.SetManagedFields(nil)
-		obj = u
-	} else {
-		list, err := r.List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return err
-		}
-		for i := range list.Items {
-			list.Items[i].SetManagedFields(nil)
-		}
-		obj = list
-	}
-	return p.PrintObj(obj, out)
 }

@@ -11,13 +11,10 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/clientcmd"
 )
-
-var projectNow = time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
 
 // projectFixture is contextFixture with a cluster that lists the projects
 // airo-web and airo-default, in that order, and a store for each context.
@@ -31,18 +28,17 @@ func projectFixture(t *testing.T) (clientcmd.ConfigAccess, func(string) (previou
 	return access, storeFor, projectsOf("airo-web", "airo-default")
 }
 
-// projectsOf lists the names as Namespaces, each a day older than the last.
+// projectsOf lists the names as Namespaces.
 func projectsOf(names ...string) projectLister {
 	return func(context.Context) (*unstructured.UnstructuredList, error) {
 		list := &unstructured.UnstructuredList{}
 		list.SetAPIVersion("v1")
 		list.SetKind("NamespaceList")
-		for i, name := range names {
+		for _, name := range names {
 			u := unstructured.Unstructured{}
 			u.SetAPIVersion("v1")
 			u.SetKind("Namespace")
 			u.SetName(name)
-			u.SetCreationTimestamp(metav1.NewTime(projectNow.Add(-time.Duration(i+1) * 24 * time.Hour)))
 			list.Items = append(list.Items, u)
 		}
 		return list, nil
@@ -169,40 +165,6 @@ func TestSwitchProjectAsks(t *testing.T) {
 	}
 }
 
-func TestListProjects(t *testing.T) {
-	access, _, list := projectFixture(t)
-	var out bytes.Buffer
-	if err := listProjects(context.Background(), &out, access, "", list, "", projectNow); err != nil {
-		t.Fatal(err)
-	}
-	want := "CURRENT   NAME           AGE\n" +
-		"*         airo-default   2d\n" +
-		"          airo-web       24h\n"
-	if out.String() != want {
-		t.Errorf("list =\n%s\nwant\n%s", out.String(), want)
-	}
-
-	out.Reset()
-	if err := listProjects(context.Background(), &out, access, "", list, "yaml", projectNow); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "kind: NamespaceList") || !strings.Contains(out.String(), "name: airo-web") {
-		t.Errorf("list -o yaml =\n%s\nwant the Namespaces", out.String())
-	}
-
-	out.Reset()
-	if err := listProjects(context.Background(), &out, access, "", projectsOf(), "", projectNow); err != nil {
-		t.Fatal(err)
-	}
-	if out.String() != "No projects\n" {
-		t.Errorf("an empty list = %q, want No projects", out.String())
-	}
-
-	if err := listProjects(context.Background(), &out, access, "", list, "wide", projectNow); err == nil {
-		t.Error("-o wide: no error, want it refused")
-	}
-}
-
 var namespacesResource = schema.GroupResource{Resource: "namespaces"}
 
 func TestCreateProject(t *testing.T) {
@@ -257,10 +219,8 @@ func TestCreateProject(t *testing.T) {
 	}
 }
 
-func TestDeleteProject(t *testing.T) {
+func TestSwitchAfterProjectDeletion(t *testing.T) {
 	ctx := context.Background()
-	var deleted string
-	remove := func(_ context.Context, name string) error { deleted = name; return nil }
 	defaultIs := func(project string) func(context.Context) (string, error) {
 		return func(context.Context) (string, error) { return project, nil }
 	}
@@ -272,11 +232,11 @@ func TestDeleteProject(t *testing.T) {
 	t.Run("another project", func(t *testing.T) {
 		access, storeFor, _ := projectFixture(t)
 		var out bytes.Buffer
-		if err := deleteProject(ctx, &out, access, "", "airo-web", remove, storeFor, list, noDefault); err != nil {
+		if err := switchAfterProjectDeletion(ctx, &out, access, "", "airo-web", storeFor, list, noDefault); err != nil {
 			t.Fatal(err)
 		}
-		if deleted != "airo-web" || out.String() != "Deleted project airo-web\n" || projectOf(t, access, "airo") != "airo-default" {
-			t.Errorf("deleted %q, said %q, project %q; want airo-web deleted and the context unchanged", deleted, out.String(), projectOf(t, access, "airo"))
+		if out.Len() != 0 || projectOf(t, access, "airo") != "airo-default" {
+			t.Errorf("said %q, project %q; want no switch from airo-default", out.String(), projectOf(t, access, "airo"))
 		}
 	})
 
@@ -286,10 +246,10 @@ func TestDeleteProject(t *testing.T) {
 			t.Fatal(err)
 		}
 		var out bytes.Buffer
-		if err := deleteProject(ctx, &out, access, "", "airo-test", remove, storeFor, list, defaultIs("airo-web")); err != nil {
+		if err := switchAfterProjectDeletion(ctx, &out, access, "", "airo-test", storeFor, list, defaultIs("airo-web")); err != nil {
 			t.Fatal(err)
 		}
-		if want := "Deleted project airo-test\nSwitched to project airo-default\n"; out.String() != want {
+		if want := "Switched to project airo-default\n"; out.String() != want {
 			t.Errorf("the output is %q, want %q", out.String(), want)
 		}
 		if got := projectOf(t, access, "airo"); got != "airo-default" {
@@ -305,10 +265,10 @@ func TestDeleteProject(t *testing.T) {
 	t.Run("the current one without a previous goes to the default", func(t *testing.T) {
 		access, storeFor, _ := projectFixture(t)
 		var out bytes.Buffer
-		if err := deleteProject(ctx, &out, access, "", "airo-default", remove, storeFor, list, defaultIs("airo-web")); err != nil {
+		if err := switchAfterProjectDeletion(ctx, &out, access, "", "airo-default", storeFor, list, defaultIs("airo-web")); err != nil {
 			t.Fatal(err)
 		}
-		if want := "Deleted project airo-default\nSwitched to project airo-web\n"; out.String() != want {
+		if want := "Switched to project airo-web\n"; out.String() != want {
 			t.Errorf("the output is %q, want %q", out.String(), want)
 		}
 	})
@@ -324,10 +284,10 @@ func TestDeleteProject(t *testing.T) {
 		t.Run("the current one, and "+name, func(t *testing.T) {
 			access, storeFor, _ := projectFixture(t)
 			var out bytes.Buffer
-			if err := deleteProject(ctx, &out, access, "", "airo-default", remove, storeFor, list, fallback); err != nil {
+			if err := switchAfterProjectDeletion(ctx, &out, access, "", "airo-default", storeFor, list, fallback); err != nil {
 				t.Fatal(err)
 			}
-			if want := "Deleted project airo-default\n  your commands still work in it: choose another with airo project\n"; out.String() != want {
+			if want := "  your commands still work in it: choose another with airo project\n"; out.String() != want {
 				t.Errorf("the output is %q, want %q", out.String(), want)
 			}
 			if got := projectOf(t, access, "airo"); got != "airo-default" {
@@ -340,7 +300,7 @@ func TestDeleteProject(t *testing.T) {
 		access, storeFor, _ := projectFixture(t)
 		var out bytes.Buffer
 		customers := projectsOf("customer-default", "customer-web")
-		if err := deleteProject(ctx, &out, access, "customer", "customer-default", remove, storeFor, customers, defaultIs("customer-web")); err != nil {
+		if err := switchAfterProjectDeletion(ctx, &out, access, "customer", "customer-default", storeFor, customers, defaultIs("customer-web")); err != nil {
 			t.Fatal(err)
 		}
 		if got := projectOf(t, access, "customer"); got != "customer-web" {
@@ -351,10 +311,4 @@ func TestDeleteProject(t *testing.T) {
 		}
 	})
 
-	gone := func(context.Context, string) error { return apierrors.NewNotFound(namespacesResource, "nope") }
-	access, storeFor, _ := projectFixture(t)
-	err := deleteProject(ctx, &bytes.Buffer{}, access, "", "nope", gone, storeFor, list, noDefault)
-	if err == nil || !strings.Contains(err.Error(), `you have no project "nope"`) {
-		t.Errorf("error = %v, want that there is no such project", err)
-	}
 }

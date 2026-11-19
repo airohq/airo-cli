@@ -18,6 +18,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/airohq/airo-cli/internal/picker"
+	"github.com/airohq/airo-cli/internal/ui"
 )
 
 // previousArg is the argument that switches back, as in cd - and kubectx -.
@@ -33,8 +34,8 @@ func NewContextCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 every later command of airo and kubectl. A sign-in is a context that airo
 login made: one person at one platform.
 
-Without a name it shows a picker. Type to filter, and press Enter to choose
-or Esc to leave. "-" switches back to the context you were in before.
+Without a name it offers an inline choice. Use the arrow keys or type to
+filter, then press Enter. Plain terminals show numbered choices. "-" switches back to the context you were in before.
 
 Contexts that do not sign in through the platform, such as a local
 cluster's, are not listed and not switched to.`,
@@ -55,9 +56,9 @@ cluster's, are not listed and not switched to.`,
 				target = args[0]
 			}
 			var ask func([]string, int) (string, error)
-			if picker.Terminal(cmd.InOrStdin()) {
+			if ui.Interactive(cmd.InOrStdin(), cmd.OutOrStdout()) && ui.IsTerminal(cmd.ErrOrStderr()) {
 				ask = func(names []string, current int) (string, error) {
-					return picker.One(cmd.Context(), "context", names, current)
+					return picker.One(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr(), "context", names, current)
 				}
 			}
 			return switchContext(cmd.OutOrStdout(), flags.ToRawKubeConfigLoader().ConfigAccess(), store, target, ask)
@@ -69,6 +70,37 @@ cluster's, are not listed and not switched to.`,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return listContexts(cmd.OutOrStdout(), flags.ToRawKubeConfigLoader().ConfigAccess())
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:     "delete NAME",
+		Short:   "Remove a sign-in context from your kubeconfig",
+		Long:    "Remove the named Airo context. If it is current, clear the selection. Its cluster and user entries stay in the kubeconfig.",
+		Example: "  airo context delete customer",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			access := flags.ToRawKubeConfigLoader().ConfigAccess()
+			cfg, err := access.GetStartingConfig()
+			if err != nil {
+				return err
+			}
+			name := args[0]
+			if _, err := oidcOf(cfg, name); err != nil {
+				return contextError(name, err)
+			}
+			delete(cfg.Contexts, name)
+			current := cfg.CurrentContext == name
+			if current {
+				cfg.CurrentContext = ""
+			}
+			if err := clientcmd.ModifyConfig(access, *cfg, true); err != nil {
+				return err
+			}
+			if current {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Removed the active context. Use 'airo context NAME' to select another sign-in.")
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Deleted context %s\n", name)
+			return err
 		},
 	})
 	cmd.AddCommand(newContextSetCommand(flags))

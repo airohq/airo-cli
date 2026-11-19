@@ -18,13 +18,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/duration"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"k8s.io/cli-runtime/pkg/printers"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/picker"
+	"github.com/airohq/airo-cli/internal/ui"
 )
 
 // A project is a Namespace. The platform's API lists the ones the person
@@ -34,7 +34,7 @@ var projectResource = schema.GroupVersionResource{Version: "v1", Resource: "name
 // projectLister asks the cluster for the person's projects.
 type projectLister func(context.Context) (*unstructured.UnstructuredList, error)
 
-// projectWriter creates or deletes one project in the cluster.
+// projectWriter creates one project in the cluster.
 type projectWriter func(ctx context.Context, name string) error
 
 // NewProjectCommand returns the project command.
@@ -74,13 +74,6 @@ func NewProjectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		_, err = r.Create(ctx, ns, metav1.CreateOptions{})
 		return err
 	}
-	remove := func(ctx context.Context, name string) error {
-		r, _, err := namespaces()
-		if err != nil {
-			return err
-		}
-		return r.Delete(ctx, name, metav1.DeleteOptions{})
-	}
 	// The project airo login chooses at a first sign-in.
 	defaultOf := func(ctx context.Context) (string, error) {
 		cfg, err := flags.ToRESTConfig()
@@ -102,8 +95,8 @@ func NewProjectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 later command of airo and kubectl. A project is a namespace of the platform,
 and the switch sets the namespace of your kubeconfig's context.
 
-Without a name it shows a picker. Type to filter, and press Enter to choose
-or Esc to leave. "-" switches back to the project you were in before.
+Without a name it offers an inline choice. Use the arrow keys or type to
+filter, then press Enter. Plain terminals show numbered choices. "-" switches back to the project you were in before.
 
 It changes the current context, or the one --context names. For one command
 in another project, pass -n to that command instead.`,
@@ -118,25 +111,16 @@ in another project, pass -n to that command instead.`,
 				target = args[0]
 			}
 			var ask func([]string, int) (string, error)
-			if picker.Terminal(cmd.InOrStdin()) {
+			if ui.Interactive(cmd.InOrStdin(), cmd.OutOrStdout()) && ui.IsTerminal(cmd.ErrOrStderr()) {
 				ask = func(names []string, current int) (string, error) {
-					return picker.One(cmd.Context(), "project", names, current)
+					return picker.One(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr(), "project", names, current)
 				}
 			}
 			return switchProject(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, newPreviousProjectStore, list, target, ask)
 		},
 	}
-	var output string
-	listCmd := &cobra.Command{
-		Use:   "list",
-		Short: "List your projects",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return listProjects(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, list, output, time.Now())
-		},
-	}
-	listCmd.Flags().StringVarP(&output, "output", "o", "", "print the whole resources as yaml or json")
-	cmd.AddCommand(listCmd, &cobra.Command{
+	cmd.AddCommand(generic.ReadCommands(flags, projectResource.Resource)...)
+	cmd.AddCommand(&cobra.Command{
 		Use:   "create NAME",
 		Short: "Create a project",
 		Long: `Create makes a new project, a namespace of the platform. The platform
@@ -148,17 +132,15 @@ tenant's name, and how many projects you may have.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return createProject(cmd.Context(), cmd.OutOrStdout(), args[0], create, list, time.Minute)
 		},
-	}, &cobra.Command{
-		Use:   "delete NAME",
-		Short: "Delete a project and everything in it",
-		Long: `Delete removes a project and everything in it. When your commands work in
-it, airo switches them to the project you were in before, as airo project -
-does, or else to your default project, as airo login chooses it.`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return deleteProject(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, args[0], remove, newPreviousProjectStore, list, defaultOf)
-		},
 	})
+	deleteCmd := generic.NewDeleteCommand(flags, projectResource.Resource, func(cmd *cobra.Command, name string) error {
+		return switchAfterProjectDeletion(cmd.Context(), cmd.ErrOrStderr(), access(), *flags.Context, name, newPreviousProjectStore, list, defaultOf)
+	})
+	deleteCmd.Short = "Delete a project and everything in it"
+	deleteCmd.Long = `Delete removes a project and everything in it. When your commands work in
+it, airo switches them to the project you were in before, or else to your
+default project, as airo login chooses it.`
+	cmd.AddCommand(deleteCmd)
 	return cmd
 }
 
@@ -191,19 +173,9 @@ func createProject(ctx context.Context, out io.Writer, name string, create proje
 	}
 }
 
-// deleteProject deletes the project name. When the context kctxName, or the
-// current context when it is empty, works in it, the context switches to the
-// project it was in before, or else to the default project that fallback
-// returns, as airo login chooses it. With neither, it says so.
-func deleteProject(ctx context.Context, out io.Writer, access clientcmd.ConfigAccess, kctxName, name string, remove projectWriter, storeFor func(string) (previousStore, error), list projectLister, fallback func(context.Context) (string, error)) error {
-	err := remove(ctx, name)
-	if apierrors.IsNotFound(err) {
-		return fmt.Errorf("you have no project %q", name)
-	}
-	if err != nil {
-		return fmt.Errorf("could not delete project %s: %w", name, err)
-	}
-	fmt.Fprintf(out, "Deleted project %s\n", name)
+// switchAfterProjectDeletion moves a context off its deleted namespace.
+// Prefer the previous project, then the default chosen at login.
+func switchAfterProjectDeletion(ctx context.Context, out io.Writer, access clientcmd.ConfigAccess, kctxName, name string, storeFor func(string) (previousStore, error), list projectLister, fallback func(context.Context) (string, error)) error {
 	cfg, err := access.GetStartingConfig()
 	if err != nil {
 		return nil
@@ -314,62 +286,6 @@ func switchProject(ctx context.Context, out io.Writer, access clientcmd.ConfigAc
 		fmt.Fprintf(out, "  context: %s\n", name)
 	}
 	return nil
-}
-
-// listProjects prints the projects and marks the one the context name works
-// in, or the current context when name is empty.
-func listProjects(ctx context.Context, out io.Writer, access clientcmd.ConfigAccess, name string, list projectLister, output string, now time.Time) error {
-	var p printers.ResourcePrinter
-	switch output {
-	case "":
-	case "yaml":
-		p = &printers.YAMLPrinter{}
-	case "json":
-		p = &printers.JSONPrinter{}
-	default:
-		return fmt.Errorf("-o %s is not supported: use yaml or json", output)
-	}
-	projects, err := list(ctx)
-	if err != nil {
-		return err
-	}
-	if p != nil {
-		for i := range projects.Items {
-			projects.Items[i].SetManagedFields(nil)
-		}
-		return p.PrintObj(projects, out)
-	}
-	if len(projects.Items) == 0 {
-		fmt.Fprintln(out, "No projects")
-		return nil
-	}
-
-	cfg, err := access.GetStartingConfig()
-	if err != nil {
-		return err
-	}
-	if name == "" {
-		name = cfg.CurrentContext
-	}
-	current := ""
-	if kctx := cfg.Contexts[name]; kctx != nil {
-		current = kctx.Namespace
-	}
-	sort.Slice(projects.Items, func(i, j int) bool { return projects.Items[i].GetName() < projects.Items[j].GetName() })
-	w := printers.GetNewTabWriter(out)
-	fmt.Fprintln(w, "CURRENT\tNAME\tAGE")
-	for _, project := range projects.Items {
-		mark := ""
-		if project.GetName() == current {
-			mark = "*"
-		}
-		age := "<unknown>"
-		if created := project.GetCreationTimestamp(); !created.IsZero() {
-			age = duration.HumanDuration(now.Sub(created.Time))
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", mark, project.GetName(), age)
-	}
-	return w.Flush()
 }
 
 // projectNames returns the names of the person's projects, sorted.

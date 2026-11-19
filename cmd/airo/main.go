@@ -31,32 +31,23 @@ func main() {
 func newRoot() *cobra.Command {
 	// kubectl's flags, such as -n, --context and --kubeconfig.
 	flags := genericclioptions.NewConfigFlags(true)
-	var o generic.Options
 	root := &cobra.Command{
 		Use:   "airo [resource] [verb] [options]",
 		Short: "Work with the Airo platform from your machine",
 		Long: `Work with the Airo platform from your machine.
 
 Use a resource's singular or plural name. Every resource kind in the cluster
-supports list, get and delete.`,
+supports list, get, describe and delete.`,
 		Example: `  airo login                     # See 'airo login -h' for first-time setup
-  airo project list              # Find your projects (* marks the current one)
+  airo project list              # List the namespaces you can access
   airo agent list                # List agents in the current project
   airo agent get my-agent        # Inspect an agent from the list
   airo chat                      # Chat with the default agent`,
 		Version:      buildVersion(),
 		SilenceUsage: true,
-		// A first word that is no command below is a kind in the cluster.
-		Args: cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return cmd.Help()
-			}
-			return generic.Run(cmd.Context(), cmd.OutOrStdout(), flags, o, args)
-		},
 	}
 	flags.AddFlags(root.PersistentFlags())
-	o.AddFlags(root)
+	generic.AddResourceHandler(root, flags)
 	root.SetUsageTemplate(usageTemplate)
 	addGroup := func(id, title string, commands ...*cobra.Command) {
 		root.AddGroup(&cobra.Group{ID: id, Title: title})
@@ -68,6 +59,7 @@ supports list, get and delete.`,
 	addGroup("resource", "Resource Commands:",
 		agent.NewCommand(flags),
 		session.NewCommand(flags),
+		login.NewTenantCommand(flags),
 		tunnel.NewCommand(flags),
 	)
 	addGroup("auth", "Authentication Commands:",
@@ -79,7 +71,7 @@ supports list, get and delete.`,
 		login.NewProjectCommand(flags),
 		login.NewStatusCommand(flags),
 	)
-	addGroup("advanced", "Advanced Commands:", generic.NewApplyCommand(flags))
+	addGroup("advanced", "Advanced Commands:", generic.NewApplyCommand(flags), generic.NewCreateCommand(flags))
 	root.SetCompletionCommandGroupID("advanced")
 	addGroup("other", "Other Commands:",
 		agent.NewChatCommand(flags),

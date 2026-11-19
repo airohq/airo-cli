@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/airohq/airo-cli/internal/generic"
+	"github.com/airohq/airo-cli/internal/wizard"
 )
 
 // The kind behind airo tunnel, named only here: an Airo-owned kind is planned
@@ -96,7 +97,7 @@ minutes. A Tunnel made with airo tunnel create is used as it is and stays.`,
 	cmd.Flags().BoolVar(&public, "public", false, "make the tunnel reachable from the internet too")
 	cmd.Flags().BoolVar(&noAuth, "no-auth", false, "let callers in without a token")
 	cmd.AddCommand(newCreateCommand(flags))
-	cmd.AddCommand(generic.Commands(flags, strings.ToLower(tunnelGVK.Kind)+"."+tunnelGVK.Group)...)
+	cmd.AddCommand(generic.Commands(flags, cmd.Name())...)
 	return cmd
 }
 
@@ -105,19 +106,40 @@ minutes. A Tunnel made with airo tunnel create is used as it is and stays.`,
 func newCreateCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	var public, noAuth bool
 	cmd := &cobra.Command{
-		Use:   "create NAME",
+		Use:   "create [NAME]",
 		Short: "Create a Tunnel that stays until you delete it",
 		Long: `Create makes a Tunnel and leaves it in the project. Serve it with
-airo tunnel PORT --name NAME, which leaves it in place on exit.`,
+airo tunnel PORT --name NAME, which leaves it in place on exit.
+Omit NAME on a terminal to choose the name, visibility and authentication.`,
 		Example: `  airo tunnel create my-app --public
   airo tunnel 3000 --name my-app`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := flags.ToRESTConfig()
+			ns, _, err := flags.ToRawKubeConfigLoader().Namespace()
 			if err != nil {
 				return err
 			}
-			ns, _, err := flags.ToRawKubeConfigLoader().Namespace()
+			w := wizard.New(cmd, "tunnel", ns)
+			name, err := w.Name(args)
+			if err != nil {
+				return err
+			}
+			if len(args) == 0 {
+				if !cmd.Flags().Changed("public") {
+					public, err = w.Confirm("Make it reachable from the internet?", false)
+					if err != nil {
+						return err
+					}
+				}
+				if !cmd.Flags().Changed("no-auth") {
+					auth, err := w.Confirm("Require caller authentication?", true)
+					if err != nil {
+						return err
+					}
+					noAuth = !auth
+				}
+			}
+			cfg, err := flags.ToRESTConfig()
 			if err != nil {
 				return err
 			}
@@ -125,14 +147,14 @@ airo tunnel PORT --name NAME, which leaves it in place on exit.`,
 			if err != nil {
 				return err
 			}
-			t := build(ns, args[0], spec{public: &public, noAuth: &noAuth})
+			t := build(ns, name, spec{public: &public, noAuth: &noAuth})
 			if err := c.Create(cmd.Context(), t); err != nil {
 				return err
 			}
 			if err := waitReady(cmd.Context(), c, t); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Created tunnel %s/%s\n", ns, args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "Created tunnel %s/%s\n", ns, name)
 			printURLs(cmd.OutOrStdout(), t)
 			return nil
 		},
