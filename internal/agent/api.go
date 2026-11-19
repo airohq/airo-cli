@@ -58,7 +58,7 @@ func (a *API) Project() string { return a.ns }
 // when it is not empty. It fails for a name the project does not have.
 func (a *API) Agents(ctx context.Context, name string) ([]string, error) {
 	if name != "" {
-		item, err := choose(ctx, a.k8s, a.ns, agents, name)
+		item, err := choose(ctx, a.k8s, a.ns, agents, name, nil)
 		if err != nil {
 			return nil, err
 		}

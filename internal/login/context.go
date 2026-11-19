@@ -18,6 +18,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/airohq/airo-cli/internal/picker"
+	"github.com/airohq/airo-cli/internal/ui"
 )
 
 // previousArg is the argument that switches back, as in cd - and kubectx -.
@@ -33,8 +34,8 @@ func NewContextCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 every later command of airo and kubectl. A sign-in is a context that airo
 login made: one person at one platform.
 
-Without a name it shows a picker. Type to filter, and press Enter to choose
-or Esc to leave. "-" switches back to the context you were in before.
+Without a name it offers an inline choice. Use the arrow keys or type to
+filter, then press Enter. Plain terminals show numbered choices. "-" switches back to the context you were in before.
 
 Contexts that do not sign in through the platform, such as a local
 cluster's, are not listed and not switched to.`,
@@ -55,9 +56,9 @@ cluster's, are not listed and not switched to.`,
 				target = args[0]
 			}
 			var ask func([]string, int) (string, error)
-			if picker.Terminal(cmd.InOrStdin()) {
+			if ui.Interactive(cmd.InOrStdin(), cmd.OutOrStdout()) && ui.IsTerminal(cmd.ErrOrStderr()) {
 				ask = func(names []string, current int) (string, error) {
-					return picker.One(cmd.Context(), "context", names, current)
+					return picker.One(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr(), "context", names, current)
 				}
 			}
 			return switchContext(cmd.OutOrStdout(), flags.ToRawKubeConfigLoader().ConfigAccess(), store, target, ask)

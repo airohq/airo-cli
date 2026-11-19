@@ -124,7 +124,7 @@ Switched to context customer
 
 | Command | What happens |
 | --- | --- |
-| `airo context` | Shows a picker with the cursor on the current context. Type to filter, press Enter to choose, or Esc to leave things as they are. Where nobody can answer, such as in a script, it stops and lists the names |
+| `airo context` | Shows an inline list with the current context selected. Use the arrow keys or type to filter, Enter to choose, and Esc to cancel. Plain terminals show numbered choices. Where nobody can answer, such as in a script, it stops and lists the names |
 | `airo context NAME` | Makes that context the kubeconfig's current one |
 | `airo context -` | Switches to the context you last switched away from, so twice brings you back. `airo` keeps its name in your cache directory |
 | `airo context list` | Lists the sign-ins with their namespaces, and marks the current one with `*` |
@@ -187,7 +187,7 @@ acme-web       Active   2d
 
 | Command | What happens |
 | --- | --- |
-| `airo project` | Shows a picker with the cursor on the current project. Type to filter, press Enter to choose, or Esc to leave things as they are. Where nobody can answer, such as in a script, it stops and lists the names |
+| `airo project` | Shows an inline list with the current project selected. Use the arrow keys or type to filter, Enter to choose, and Esc to cancel. Plain terminals show numbered choices. Where nobody can answer, such as in a script, it stops and lists the names |
 | `airo project NAME` | Makes that project the context's namespace. The name must be one of your projects |
 | `airo project -` | Switches to the project you last switched away from in this context, so twice brings you back. `airo` keeps its name in your cache directory |
 | `airo project list` | Lists accessible Namespaces with the cluster's columns. Use `airo status` to see the current project |
@@ -307,8 +307,14 @@ airo agent get my-agent -o yaml    # the whole resource, or -o json
 airo agent describe my-agent       # details and related events
 airo pods get -o wide              # include the API's additional columns
 airo agent delete my-agent
+airo create -f agent.yaml          # create once, including custom resource kinds
 airo apply -f agent.yaml           # create or update from a file, a directory, a URL or -
 ```
+
+`airo create -f FILE` uses kubectl to create the resources in a YAML or JSON
+manifest. An existing object returns an AlreadyExists error. Use
+`airo create -f -` to read standard input or add `--dry-run=server -o yaml`
+to see what the API would accept.
 
 **A noun works in the singular and the plural.** `airo agents list` is `airo
 agent list`, and the same holds for `airo sessions` and `airo tunnels`.
@@ -351,8 +357,8 @@ the first that applies:
 2. The Agent with the annotation `airohq.dev/default-agent: "true"`. When
    several have it, the one created last: mark your own agent to use it in
    place of the platform's `assistant`.
-3. The one you choose in a picker, on a terminal: type to filter and press
-   Enter. Elsewhere the command stops and lists the names.
+3. The one you choose inline on a terminal. Use the arrows or type to filter
+   and press Enter. Plain terminals show numbered choices. Elsewhere the command stops and lists the names.
 
 **`airo` waits until the agent can take a session, and says why it waits.**
 It reads the Agent's `Ready` condition, such as in a new project, where the
@@ -500,6 +506,7 @@ agent, use `airo agent get NAME`. To talk to it, use `airo chat -a NAME`.
 ready.**
 
 ```sh
+airo agent create                  # choose a name and instructions or template
 airo agent create reviewer --prompt "You review pull requests."
 airo agent create reviewer --prompt-file prompt.md --model opus-5.5 --harness claude
 airo agent list
@@ -515,7 +522,7 @@ Created agent my-project/reviewer
 
 | Argument or flag | Default | Meaning |
 | --- | --- | --- |
-| `NAME` | required | The Agent's name |
+| `NAME` | prompted on a terminal | The Agent's name. Required in scripts |
 | `--prompt` | none | The system prompt (`spec.template.inline.systemPrompt`) |
 | `--prompt-file` | none | A file with the system prompt, or `-` for standard input |
 | `--description` | none | What the agent is for, in a line (`spec.template.inline.description`) |
@@ -525,18 +532,20 @@ Created agent my-project/reviewer
 
 **The Harness, the ModelConfig and the AgentTemplate exist in the project
 already.** The platform puts Harnesses and ModelConfigs there, and `airo`
-creates neither. Without `--harness` or `--model`, `airo` takes the first
-that applies:
+creates neither. The wizard lists harnesses, models and templates directly
+below their questions. Use ↑/↓ or type to filter, then press Enter. The
+selected name stays beside the question as the wizard continues. Plain
+terminals show numbered choices. A project default appears first and is marked `(default)`.
+Passing `--harness` or `--model` supplies that choice directly.
 
-1. The project's only one.
-2. The one marked as the default: a Harness with the annotation
-   `airohq.dev/default-harness: "true"`, a ModelConfig with
-   `airohq.dev/default-model: "true"`. When several have it, the one created
-   last.
+A template supplies the agent's model configuration. A harness that runs
+its own image (`byo`) lets you skip the model or choose one.
 
-Otherwise it stops and lists the names, and for a Harness what it runs, such
-as `claude`. A Harness that runs its own image (`byo`) gets a model only
-with `--model`.
+In scripts, supply a name and one of `--prompt`, `--prompt-file` or
+`--template`. An omitted harness or required model uses the project's only
+choice or its annotated default (`airohq.dev/default-harness: "true"` or
+`airohq.dev/default-model: "true"`). The newest default wins. If the choice
+is ambiguous, the command lists the names and the flag to pass.
 
 **The Agent has only the fields the flags set:**
 
@@ -698,9 +707,13 @@ deletes the Tunnel on exit.
 on the Tunnel.**
 
 **`airo tunnel create` makes a Tunnel that stays**, for a URL that other
-people and manifests rely on. Serve it with `--name`.
+people and manifests rely on. On a terminal, omit the name to choose it
+and answer the visibility and caller authentication questions. Press Enter
+at both questions for a cluster-only URL that requires a token. Supplying
+the name skips the wizard. Serve the tunnel with `--name`.
 
 ```sh
+airo tunnel create                    # open the creation wizard
 airo tunnel create my-app --public    # takes --public and --no-auth
 airo tunnel 3000 --name my-app        # serves it, and leaves it on exit
 airo tunnel list

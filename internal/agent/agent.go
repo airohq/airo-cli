@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/airohq/airo-cli/internal/generic"
+	"github.com/airohq/airo-cli/internal/wizard"
 )
 
 // The kinds behind airo agent, named only here: Airo-owned kinds are planned
@@ -79,27 +80,39 @@ type options struct {
 func newCreateCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	var o options
 	cmd := &cobra.Command{
-		Use:   "create NAME",
+		Use:   "create [NAME]",
 		Short: "Create an agent from a prompt, or from an AgentTemplate",
 		Long: `Create makes an Agent in the project and waits until it is ready.
 
 The agent runs on a Harness and, with a prompt, uses a ModelConfig. Both
-exist in the project already. Without --harness or --model, airo takes the
-project's only one, then the one marked as the default. Otherwise it stops
-and lists the names.
+exist in the project already. The wizard lets you choose each and highlights
+the project default. Use --harness or --model to supply the choice directly.
+In scripts, give NAME and one of --prompt, --prompt-file or --template.
+A script uses the project's only choice or its default when a flag is omitted.
 
 Tools, skills and the other fields of an Agent go in a file, for
 airo apply -f.`,
 		Example: `  airo agent create reviewer --prompt "You review pull requests."
   airo agent create reviewer --prompt-file prompt.md --model sonnet-5.5 --harness claude
   airo agent create reviewer --template reviewer`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := flags.ToRESTConfig()
+			ns, _, err := flags.ToRawKubeConfigLoader().Namespace()
 			if err != nil {
 				return err
 			}
-			ns, _, err := flags.ToRawKubeConfigLoader().Namespace()
+			var w *wizard.Wizard
+			if o.promptFile != "-" {
+				w = wizard.New(cmd, "agent", ns)
+			}
+			name, err := w.Name(args)
+			if err != nil {
+				return err
+			}
+			if w == nil && o.promptFile == "" && strings.TrimSpace(o.prompt) == "" && o.template == "" {
+				return fmt.Errorf("provide instructions with --prompt or --prompt-file, or select an AgentTemplate with --template")
+			}
+			cfg, err := flags.ToRESTConfig()
 			if err != nil {
 				return err
 			}
@@ -112,7 +125,7 @@ airo apply -f.`,
 					return err
 				}
 			}
-			return create(cmd.Context(), cmd.OutOrStdout(), c, ns, args[0], o, readyTimeout)
+			return create(cmd.Context(), cmd.OutOrStdout(), c, ns, name, o, w, readyTimeout)
 		},
 	}
 	cmd.Flags().StringVar(&o.prompt, "prompt", "", "the agent's system prompt")
@@ -149,21 +162,51 @@ func readPrompt(in io.Reader, path string) (string, error) {
 
 // create resolves the flags against the project, creates the Agent and waits
 // until it is ready.
-func create(ctx context.Context, out io.Writer, c client.Client, ns, name string, o options, timeout time.Duration) error {
-	harness, err := choose(ctx, c, ns, harnesses, o.harness)
+func create(ctx context.Context, out io.Writer, c client.Client, ns, name string, o options, w *wizard.Wizard, timeout time.Duration) error {
+	fromTemplate := o.template != ""
+	if w != nil && !fromTemplate && strings.TrimSpace(o.prompt) == "" {
+		var err error
+		if o.model == "" && o.description == "" {
+			fromTemplate, err = w.Confirm("Use a project template?", false)
+			if err != nil {
+				return err
+			}
+		}
+		if !fromTemplate {
+			o.prompt, err = w.Required("Instructions")
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	var pick func(string, []string) (string, error)
+	if w != nil {
+		pick = w.Pick
+	}
+	harness, err := choose(ctx, c, ns, harnesses, o.harness, pick)
 	if err != nil {
 		return err
 	}
 	o.harness = harness.GetName()
-	if o.template != "" {
+	if fromTemplate {
 		// A name the project lacks would leave an Agent that never gets ready.
-		if _, err := choose(ctx, c, ns, templates, o.template); err != nil {
+		template, err := choose(ctx, c, ns, templates, o.template, pick)
+		if err != nil {
+			return err
+		}
+		o.template = template.GetName()
+	}
+	// A Harness with its own image may need no model. The others do.
+	useModel := o.template == "" && (o.model != "" || runtime(harness) != runtimeBYO)
+	if w != nil && o.template == "" && !useModel {
+		useModel, err = w.Confirm("Choose a project model for this harness?", false)
+		if err != nil {
 			return err
 		}
 	}
-	// A Harness with its own image may need no model. The others do.
-	if o.template == "" && (o.model != "" || runtime(harness) != runtimeBYO) {
-		model, err := choose(ctx, c, ns, models, o.model)
+	if useModel {
+		model, err := choose(ctx, c, ns, models, o.model, pick)
 		if err != nil {
 			return err
 		}
@@ -271,15 +314,17 @@ func newestDefault(items []unstructured.Unstructured, marker string) *unstructur
 	return newest
 }
 
-// choose returns the resource of a kind that the Agent refers to: the one
-// named, the project's only one, or the one marked as the default. It never
-// guesses between several without a default.
-func choose(ctx context.Context, c client.Client, ns string, k choice, name string) (*unstructured.Unstructured, error) {
+// choose honours an explicit name. The wizard offers the project's resources
+// with the default first. A script accepts the only choice or the default.
+func choose(ctx context.Context, c client.Client, ns string, k choice, name string, pick func(string, []string) (string, error)) (*unstructured.Unstructured, error) {
 	items, err := list(ctx, c, ns, k)
 	if err != nil {
 		return nil, err
 	}
+	def := newestDefault(items, k.marker)
+	var defaultLabel string
 	var names []string
+	byLabel := make(map[string]*unstructured.Unstructured, len(items))
 	for i := range items {
 		item := &items[i]
 		if item.GetName() == name {
@@ -289,21 +334,39 @@ func choose(ctx context.Context, c client.Client, ns string, k choice, name stri
 		if k.note != nil && k.note(item) != "" {
 			n += " (" + k.note(item) + ")"
 		}
-		names = append(names, n)
+		if pick != nil && name == "" && item == def {
+			defaultLabel = n + " (default)"
+			byLabel[defaultLabel] = item
+		} else {
+			byLabel[n] = item
+			names = append(names, n)
+		}
 	}
 	sort.Strings(names)
+	if defaultLabel != "" {
+		names = append([]string{defaultLabel}, names...)
+	}
 	switch {
 	case name != "" && len(names) == 0:
 		return nil, fmt.Errorf("project %s has no %s named %s, and no other", ns, k.noun, name)
 	case name != "":
 		return nil, fmt.Errorf("project %s has no %s named %s: it has %s", ns, k.noun, name, strings.Join(names, ", "))
+	case len(names) == 0 && k.gvk == templateGVK:
+		return nil, fmt.Errorf("project %s has no templates. Create the agent with --prompt or --prompt-file", ns)
 	case len(names) == 0:
 		return nil, fmt.Errorf("project %s has no %s, and an agent needs one: ask who runs the platform, or add one with airo apply -f", ns, k.noun)
-	case len(names) == 1:
+	case len(names) == 1 && (pick == nil || k.gvk == templateGVK):
 		return &items[0], nil
 	}
-	if d := newestDefault(items, k.marker); d != nil {
-		return d, nil
+	if pick != nil {
+		selected, err := pick(k.noun, names)
+		if err != nil {
+			return nil, err
+		}
+		return byLabel[selected], nil
+	}
+	if def != nil {
+		return def, nil
 	}
 	return nil, fmt.Errorf("project %s has %d %s and no default, name one with %s: %s", ns, len(names), k.plural, k.flag, strings.Join(names, ", "))
 }

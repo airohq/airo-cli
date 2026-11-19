@@ -24,6 +24,7 @@ import (
 
 	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/picker"
+	"github.com/airohq/airo-cli/internal/ui"
 )
 
 // A project is a Namespace. The platform's API lists the ones the person
@@ -94,8 +95,8 @@ func NewProjectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 later command of airo and kubectl. A project is a namespace of the platform,
 and the switch sets the namespace of your kubeconfig's context.
 
-Without a name it shows a picker. Type to filter, and press Enter to choose
-or Esc to leave. "-" switches back to the project you were in before.
+Without a name it offers an inline choice. Use the arrow keys or type to
+filter, then press Enter. Plain terminals show numbered choices. "-" switches back to the project you were in before.
 
 It changes the current context, or the one --context names. For one command
 in another project, pass -n to that command instead.`,
@@ -110,9 +111,9 @@ in another project, pass -n to that command instead.`,
 				target = args[0]
 			}
 			var ask func([]string, int) (string, error)
-			if picker.Terminal(cmd.InOrStdin()) {
+			if ui.Interactive(cmd.InOrStdin(), cmd.OutOrStdout()) && ui.IsTerminal(cmd.ErrOrStderr()) {
 				ask = func(names []string, current int) (string, error) {
-					return picker.One(cmd.Context(), "project", names, current)
+					return picker.One(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr(), "project", names, current)
 				}
 			}
 			return switchProject(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, newPreviousProjectStore, list, target, ask)

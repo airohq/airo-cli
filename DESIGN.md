@@ -22,9 +22,9 @@ airo chat "fix the build"    # a prompt for the default agent
 | Noun | A kind of resource, such as `tunnel` or `agent`. `tunnels` and `agents` mean the same |
 | No verb | The noun's default task, if it has one. Otherwise the help |
 | `list`, `get`, `describe`, `delete` | Work for every kind the cluster serves, also kinds this binary does not know |
-| `create` | Hand-written for each noun, with flags |
+| `create` | Resource-specific flags. Agent and tunnel also prompt for missing input on a terminal |
 | Other verbs | Actions of one noun, such as `airo agent logs` |
-| No noun | Standalone actions such as `airo chat [PROMPT]`, `airo login`, `airo status`, `airo whoami`, `airo apply -f`, `airo version` |
+| No noun | Standalone actions such as `airo chat [PROMPT]`, `airo login`, `airo status`, `airo whoami`, `airo create -f`, `airo apply -f`, `airo version` |
 
 **Every noun takes its plural.** `airo sessions list` is `airo session
 list`, and `airo tunnels 3000` is `airo tunnel 3000`. A noun with its own
@@ -75,9 +75,10 @@ tunnel 3000` serves a local port. A bare `airo agent` shows its resource command
   `--agent`, `airo chat` takes the project's only agent, then the one marked
   as default with the annotation `airohq.dev/default-agent: "true"`, then
   shows a picker. Where nobody can answer, such as in a script, it stops and
-  lists the names. `airo agent create` finds its Harness and ModelConfig the
-  same way, with `airohq.dev/default-harness` and `airohq.dev/default-model`,
-  and without a picker.
+  lists the names. The agent creation wizard shows the harness and applicable
+  model choices, including a sole option. Its picker starts on the default
+  marked by `airohq.dev/default-harness` or `airohq.dev/default-model`.
+  Scripts use the only choice or the annotated default.
 - **A default is an annotation on the resource, and the newest default
   wins.** Wherever a kind can be marked as the default, the mark is an
   annotation `airohq.dev/default-<noun>: "true"`, never a reserved name such
@@ -88,8 +89,10 @@ tunnel 3000` serves a local port. A bare `airo agent` shows its resource command
   marking their own, and get it back by removing the mark. What the command
   creates refers to the resource by its real name, so a later change of the
   default moves nothing that exists.
-- **Every picker is the same one**, from `internal/picker`: the person types
-  to filter, Enter chooses and Esc leaves. It opens only on a terminal.
+- **Every picker is the same one**, from `internal/picker`. Choices appear inline
+  below the question. Arrow keys move, typing filters, Enter chooses and Esc
+  cancels. The selected name stays in the transcript. Plain terminals use
+  numbered choices. Redirected commands take explicit arguments and flags.
 
 ## Arguments and flags
 
@@ -138,6 +141,11 @@ same in a pipe, in a log and to someone who does not see the colour.
 **A command is interactive only when both its input and its output are
 terminals.** Everything a person can choose in a picker or a prompt is also
 a flag. Where nobody can answer, the command stops and names the choices.
+
+**Creation prompts start with the resource and current project.** Mark each
+question with `?` in the chat prompt's Accent style. Ask only for missing
+input and keep questions on standard error. A manifest supplied to
+`airo create -f` goes directly through kubectl's generic creation path.
 
 **A command stays in the scrollback.** No full-screen mode. A conversation
 keeps a live region at the bottom, for the input and the status, and what

@@ -104,7 +104,11 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 	var ask func([]string) (string, error)
 	if terminal && ui.IsTerminal(errOut) {
 		ask = func(names []string) (string, error) {
-			name, err := picker.One(ctx, "agent", names, -1)
+			input := cmd.InOrStdin()
+			if !ui.Styled(errOut) {
+				input = in.r
+			}
+			name, err := picker.One(ctx, input, errOut, "agent", names, -1)
 			if err == nil && name == "" {
 				err = errors.New("no agent chosen: name one with --agent")
 			}
@@ -191,7 +195,7 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 // is nil when there is nobody to ask.
 func pick(ctx context.Context, c client.Client, ns, name string, ask func([]string) (string, error)) (string, error) {
 	if name != "" {
-		a, err := choose(ctx, c, ns, agents, name)
+		a, err := choose(ctx, c, ns, agents, name, nil)
 		if err != nil {
 			return "", err
 		}
@@ -497,7 +501,7 @@ var readyPoll = 2 * time.Second
 // does not change that. A new Agent has no conditions until kagent has read
 // it, and takes no session before.
 func readiness(ctx context.Context, c client.Client, ns, name string) (ready bool, why string, err error) {
-	a, err := choose(ctx, c, ns, agents, name)
+	a, err := choose(ctx, c, ns, agents, name, nil)
 	if err != nil {
 		return false, "", err
 	}
@@ -567,23 +571,5 @@ type lines struct {
 
 // read returns the next line, or ctx's error when ctx is done first.
 func (l *lines) read(ctx context.Context) (string, error) {
-	type result struct {
-		line string
-		err  error
-	}
-	done := make(chan result, 1)
-	go func() {
-		line, err := l.r.ReadString('\n')
-		done <- result{line, err}
-	}()
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case r := <-done:
-		if r.line != "" {
-			// The last line may end without a newline.
-			return strings.TrimRight(r.line, "\r\n"), nil
-		}
-		return "", r.err
-	}
+	return ui.ReadLine(ctx, l.r)
 }

@@ -71,7 +71,7 @@ supports list, get, describe and delete.`,
 		login.NewProjectCommand(flags),
 		login.NewStatusCommand(flags),
 	)
-	addGroup("advanced", "Advanced Commands:", generic.NewApplyCommand(flags))
+	addGroup("advanced", "Advanced Commands:", generic.NewApplyCommand(flags), generic.NewCreateCommand(flags))
 	root.SetCompletionCommandGroupID("advanced")
 	addGroup("other", "Other Commands:",
 		agent.NewChatCommand(flags),

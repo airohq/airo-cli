@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -47,11 +48,38 @@ func created(t *testing.T, c client.Client) *unstructured.Unstructured {
 func run(t *testing.T, c client.Client, o options) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
-	err := create(context.Background(), &out, c, "team", "my-agent", o, 10*time.Millisecond)
+	err := create(context.Background(), &out, c, "team", "my-agent", o, nil, 10*time.Millisecond)
 	if err != nil && strings.Contains(err.Error(), "has no status") {
 		err = nil
 	}
 	return out.String(), err
+}
+
+func TestWizardOffersProjectRuntimeChoices(t *testing.T) {
+	c := fake.NewClientBuilder().WithObjects(
+		model("small"), marked(model("standard"), models.marker), harness("local", "codex"),
+	).Build()
+	for _, tc := range []struct {
+		kind           choice
+		labels         []string
+		selected, want string
+	}{
+		{harnesses, []string{"local (codex)"}, "local (codex)", "local"},
+		{models, []string{"standard (default)", "small"}, "small", "small"},
+		{models, []string{"standard (default)", "small"}, "standard (default)", "standard"},
+	} {
+		asked := false
+		item, err := choose(t.Context(), c, "team", tc.kind, "", func(label string, names []string) (string, error) {
+			asked = true
+			if label != tc.kind.noun || !slices.Equal(names, tc.labels) {
+				t.Errorf("picker showed %s %v, want %s %v", label, names, tc.kind.noun, tc.labels)
+			}
+			return tc.selected, nil
+		})
+		if err != nil || !asked || item == nil || item.GetName() != tc.want {
+			t.Fatalf("%s selection: asked %v, got %v, error %v", tc.kind.noun, asked, item, err)
+		}
+	}
 }
 
 func TestCreateTakesTheProjectsOnlyHarnessAndModel(t *testing.T) {
