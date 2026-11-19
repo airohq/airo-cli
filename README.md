@@ -261,6 +261,24 @@ there is no customer group, such as for a platform admin. Groups are shown
 as returned by the API, or `none` when empty. An identity check that fails
 makes either command exit nonzero.
 
+## Tenant details
+
+`airo tenant` shows your tenant's feature flags. They apply to all projects
+in that tenant. The command uses the tenant membership shown by `airo whoami`.
+If you belong to several tenants, choose one with `airo tenant --tenant NAME`.
+Platform admins can use the same flag to inspect a tenant by name.
+
+```console
+$ airo tenant
+Tenant: acme
+
+FEATURE  STATE
+agents   enabled
+```
+
+Each `features.airohq.dev/<feature>` label on the Tenant contributes one row.
+A value of `"true"` shows as enabled. Any other value shows as disabled.
+
 ## Resources
 
 **Every kind of resource in the cluster is a noun with `list`, `get` and

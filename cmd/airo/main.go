@@ -68,6 +68,7 @@ supports list, get and delete.`,
 	addGroup("resource", "Resource Commands:",
 		agent.NewCommand(flags),
 		session.NewCommand(flags),
+		login.NewTenantCommand(flags),
 		tunnel.NewCommand(flags),
 	)
 	addGroup("auth", "Authentication Commands:",
