@@ -3,9 +3,12 @@ package login
 import (
 	"bytes"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
@@ -238,6 +241,65 @@ func TestSetContextRefuses(t *testing.T) {
 			}
 			if got := cfg.Clusters["kind"].Server; got != "https://127.0.0.1:6443" {
 				t.Errorf("the other cluster's server changed to %q", got)
+			}
+		})
+	}
+}
+
+func TestContextDelete(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		args      []string
+		deleted   string
+		active    bool
+		wantError string
+	}{
+		{name: "inactive", args: []string{"contexts", "delete", "customer"}, deleted: "customer"},
+		{name: "active", args: []string{"ctx", "delete", "airo"}, deleted: "airo", active: true},
+		{name: "not a sign-in", args: []string{"context", "delete", "kind"}, wantError: "does not sign in through the platform"},
+		{name: "unknown context", args: []string{"context", "delete", "missing"}, wantError: "has no context"},
+		{name: "missing name", args: []string{"context", "delete"}, wantError: "accepts 1 arg"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			access, _ := contextFixture(t)
+			before, err := access.GetStartingConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A second context uses the same cluster and credentials.
+			before.Contexts["shared"] = before.Contexts["airo"].DeepCopy()
+			if err := clientcmd.ModifyConfig(access, *before, true); err != nil {
+				t.Fatal(err)
+			}
+			flags := genericclioptions.NewConfigFlags(true)
+			root := &cobra.Command{Use: "airo", SilenceErrors: true, SilenceUsage: true}
+			flags.AddFlags(root.PersistentFlags())
+			root.AddCommand(NewContextCommand(flags))
+			var out, stderr bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&stderr)
+			root.SetArgs(append([]string{"--kubeconfig", access.GetExplicitFile()}, tt.args...))
+			err = root.Execute()
+			if tt.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantError) || out.Len() != 0 {
+					t.Fatalf("output %q, error %v", out.String(), err)
+				}
+			} else if err != nil || out.String() != "Deleted context "+tt.deleted+"\n" || (stderr.Len() > 0) != tt.active {
+				t.Fatalf("output %q, stderr %q, error %v", out.String(), stderr.String(), err)
+			}
+			want := before.DeepCopy()
+			if tt.deleted != "" {
+				delete(want.Contexts, tt.deleted)
+			}
+			if tt.active {
+				want.CurrentContext = ""
+			}
+			after, err := access.GetStartingConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(after, want) {
+				t.Fatal("unexpected change to kubeconfig entries or current context")
 			}
 		})
 	}

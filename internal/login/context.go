@@ -71,6 +71,37 @@ cluster's, are not listed and not switched to.`,
 			return listContexts(cmd.OutOrStdout(), flags.ToRawKubeConfigLoader().ConfigAccess())
 		},
 	})
+	cmd.AddCommand(&cobra.Command{
+		Use:     "delete NAME",
+		Short:   "Remove a sign-in context from your kubeconfig",
+		Long:    "Remove the named Airo context. If it is current, clear the selection. Its cluster and user entries stay in the kubeconfig.",
+		Example: "  airo context delete customer",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			access := flags.ToRawKubeConfigLoader().ConfigAccess()
+			cfg, err := access.GetStartingConfig()
+			if err != nil {
+				return err
+			}
+			name := args[0]
+			if _, err := oidcOf(cfg, name); err != nil {
+				return contextError(name, err)
+			}
+			delete(cfg.Contexts, name)
+			current := cfg.CurrentContext == name
+			if current {
+				cfg.CurrentContext = ""
+			}
+			if err := clientcmd.ModifyConfig(access, *cfg, true); err != nil {
+				return err
+			}
+			if current {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Removed the active context. Use 'airo context NAME' to select another sign-in.")
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Deleted context %s\n", name)
+			return err
+		},
+	})
 	cmd.AddCommand(newContextSetCommand(flags))
 	return cmd
 }

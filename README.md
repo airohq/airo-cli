@@ -128,6 +128,7 @@ Switched to context customer
 | `airo context NAME` | Makes that context the kubeconfig's current one |
 | `airo context -` | Switches to the context you last switched away from, so twice brings you back. `airo` keeps its name in your cache directory |
 | `airo context list` | Lists the sign-ins with their namespaces, and marks the current one with `*` |
+| `airo context delete NAME` | Removes the named sign-in context from the kubeconfig. If it was active, clears its selection. The cluster and user entries stay available to other contexts |
 | `airo context set [NAME]` | Changes what a sign-in holds, without signing in again |
 
 **`airo context set` changes a sign-in's values in the kubeconfig**, such as
