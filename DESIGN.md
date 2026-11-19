@@ -6,7 +6,7 @@ daily tasks and managing resources, without kubectl.
 
 ## Grammar
 
-**Every command is `airo <noun> [verb] [argument]`**, like `gh issue list`.
+**A resource command is `airo <noun> [verb] [argument]`**, like `gh issue list`.
 The noun is a kind of resource. The docs and the help write it in the
 singular, and the plural works too.
 
@@ -14,7 +14,7 @@ singular, and the plural works too.
 airo tunnel 3000             # the noun's default task
 airo tunnel list             # a verb
 airo tunnel delete my-app
-airo agent "fix the build"   # the default task of another noun
+airo chat "fix the build"    # a prompt for the default agent
 ```
 
 | Part | Rule |
@@ -24,7 +24,7 @@ airo agent "fix the build"   # the default task of another noun
 | `list`, `get`, `delete` | Work for every kind the cluster serves, also kinds this binary does not know |
 | `create` | Hand-written for each noun, with flags |
 | Other verbs | Actions of one noun, such as `airo agent logs` |
-| No noun | Only what belongs to no resource: `airo login`, `airo status`, `airo whoami`, `airo apply -f`, `airo version` |
+| No noun | Standalone actions such as `airo chat [PROMPT]`, `airo login`, `airo status`, `airo whoami`, `airo apply -f`, `airo version` |
 
 **Every noun takes its plural.** `airo sessions list` is `airo session
 list`, and `airo tunnels 3000` is `airo tunnel 3000`. A noun with its own
@@ -58,19 +58,22 @@ conversation.
 ## Default task
 
 **A noun's default task is the one thing most people want from it**: `airo
-tunnel 3000` serves a local port, `airo agent` starts a fresh session.
+tunnel 3000` serves a local port. A bare `airo agent` shows its resource commands.
 
 - **Its argument is what the task acts on, never a resource's name.** It is
-  the port for a tunnel and the prompt for an agent. A resource's name is a
+  the port for a tunnel. A resource's name is a
   flag, such as `--name` or `--agent`.
 - **A noun whose task is to switch to one of its own is the exception.**
   `airo context customer` takes the context's name, because the name is all
   the task needs. `-` switches back to the previous one, as in `cd -`.
   `airo project acme-web` is the same for the project the commands work in.
-- **A verb wins over an argument.** `airo agent list` lists agents. A prompt
-  that equals a verb goes after `--`, as in `airo agent -- list`.
+- **A verb wins over an argument.** `airo context list` lists contexts.
+  A context named `list` is selected with `airo context -- list`.
+- **Free-form prompts belong to `airo chat`.** `airo chat list` sends the
+  word `list`. `airo agent list` lists agents, and an unknown agent verb
+  returns an error.
 - **A missing choice is resolved in the cluster, then by asking.** With no
-  `--agent`, `airo agent` takes the project's only agent, then the one marked
+  `--agent`, `airo chat` takes the project's only agent, then the one marked
   as default with the annotation `airohq.dev/default-agent: "true"`, then
   shows a picker. Where nobody can answer, such as in a script, it stops and
   lists the names. `airo agent create` finds its Harness and ModelConfig the
@@ -115,8 +118,8 @@ standard error.** An agent's answer can be piped, and the session's ID does
 not end up in it.
 
 **An ID a command prints is one another command takes as it is.** The
-session ID of `airo agent` and `airo session list` goes into `airo session
-view`, `airo session cancel` and `airo agent -r`.
+session ID of `airo chat` and `airo session list` goes into `airo session
+view`, `airo session cancel` and `airo chat -r`.
 
 ## Terminal
 
@@ -335,7 +338,7 @@ past the newest one.
 Only the whole prompts `/help` and `/exit` are reserved: they show help and
 leave the conversation. Other slash-prefixed prompts go to the agent
 unchanged. Arguments and piped input are always prompts, so
-`airo agent /help` sends the literal text. A slash command never adds a
+`airo chat /help` sends the literal text. A slash command never adds a
 second way to manage platform resources; those remain CLI commands.
 
 **A resource looks as kubectl prints it.** `list` and `get` keep the
@@ -398,7 +401,7 @@ An ordinary exit:
 The build fails in the step lint: main.go has an unused import.
 
 Resume this session with:
-airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+airo chat -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
 ```
 
 Detaching from work that is still running:
@@ -408,7 +411,7 @@ I am checking the build logs.
 
 Detached. The agent works on in the cluster.
 Resume this session with:
-airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+airo chat -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
 ```
 
 [codex-exit]: https://github.com/openai/codex/blob/main/codex-rs/tui/src/app/exit_summary.rs

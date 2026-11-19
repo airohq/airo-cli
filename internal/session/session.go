@@ -63,7 +63,7 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		Aliases: []string{"sessions"},
 		Short:   "List and view your sessions with agents, or cancel a running turn",
 		Long: `Session shows your sessions with the agents of the project. A session is a
-conversation with one agent: airo agent starts one and prints its ID.
+conversation with one agent: airo chat starts one and prints its ID.
 
 Sessions are private. You see only the ones you started. A session is not a
 resource of the cluster, so it has no get or delete.
@@ -73,7 +73,7 @@ Without --agent, each command asks every agent of the project.`,
   airo session list -a reviewer
   airo session view SESSION
   airo session cancel SESSION
-  airo agent -a reviewer -r SESSION "And the tests?"   # go on in a session`,
+  airo chat -a reviewer -r SESSION "And the tests?"   # go on in a session`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
@@ -205,7 +205,7 @@ func view(ctx context.Context, out, errOut io.Writer, api *agent.API, o options,
 	}
 	fmt.Fprintf(out, "\nState: %s, last active %s ago\n", s.State, age(now, s.LastActive))
 	fmt.Fprintln(errOut)
-	ui.ResumeHint(errOut, fmt.Sprintf("airo agent -a %s -r %s", s.Agent, s.ID))
+	ui.ResumeHint(errOut, fmt.Sprintf("airo chat -a %s -r %s", s.Agent, s.ID))
 	return nil
 }
 
@@ -241,7 +241,7 @@ func cancel(ctx context.Context, out, errOut io.Writer, api *agent.API, o option
 		return nil
 	}
 	fmt.Fprintln(errOut, "\nThe session stays.")
-	ui.ResumeHint(errOut, fmt.Sprintf("airo agent -a %s -r %s", s.Agent, s.ID))
+	ui.ResumeHint(errOut, fmt.Sprintf("airo chat -a %s -r %s", s.Agent, s.ID))
 	return nil
 }
 

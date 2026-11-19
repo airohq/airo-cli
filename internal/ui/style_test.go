@@ -102,9 +102,9 @@ func TestPaletteFallbacks(t *testing.T) {
 func TestResumeHintRetainsPaletteAndCopyableCommand(t *testing.T) {
 	s := (Palette{Profile: colorprofile.TrueColor, Background: lipgloss.Color("#181A1F"), Foreground: lipgloss.Color("#E5E5E5")}).Styles()
 	var out bytes.Buffer
-	s.ResumeHint(&out, "airo agent -a assistant -r session-id")
+	s.ResumeHint(&out, "airo chat -a assistant -r session-id")
 	lines := strings.Split(out.String(), "\n")
-	if lines[0] != s.Muted.Render("Resume this session with:") || lines[1] != "airo agent -a assistant -r session-id" || lines[2] != "" {
+	if lines[0] != s.Muted.Render("Resume this session with:") || lines[1] != "airo chat -a assistant -r session-id" || lines[2] != "" {
 		t.Fatalf("closing hint = %q", out.String())
 	}
 }

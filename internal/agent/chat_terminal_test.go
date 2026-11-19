@@ -446,7 +446,7 @@ func TestTerminalChatPrintsMarkdownOnceAndKeepsStreamsSeparate(t *testing.T) {
 	if strings.Contains(text, "Session") || strings.Contains(text, "DUPLICATE") || strings.Contains(text, "Waiting") {
 		t.Fatalf("stdout contains notes or duplicate snapshot: %q", text)
 	}
-	if !strings.Contains(notes.String(), "Resume this session with:\nairo agent -a reviewer -r ctx-1\n") {
+	if !strings.Contains(notes.String(), "Resume this session with:\nairo chat -a reviewer -r ctx-1\n") {
 		t.Fatal("chat did not print how to resume")
 	}
 	if strings.Contains(notes.String(), "\x1b[?1049h") {

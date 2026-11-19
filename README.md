@@ -283,22 +283,23 @@ agent list`, and the same holds for `airo sessions` and `airo tunnels`.
 `agents.api.kagent.dev` when two groups have the same kind. `airo apply` is a
 server-side apply with the field manager `airo`.
 
-## Agent
+## Chat
 
-**`airo agent` sends a prompt to an agent of your project and prints the
-answer as it arrives.** The prompt starts a new session.
+**`airo chat` sends a prompt to an agent of your project and prints the
+answer as it arrives.** The prompt starts a new session. If you used
+`airo agent [PROMPT]` in an earlier release, use `airo chat [PROMPT]` now.
 
 ```sh
-airo agent "Why does the build fail?"    # a new session
-airo agent -c "Fix it."                  # the next prompt of the same session
-airo agent                               # a conversation, on a terminal
+airo chat "Why does the build fail?"    # a new session
+airo chat -c "Fix it."                  # the next prompt of the same session
+airo chat                               # a conversation, on a terminal
 ```
 
 ```text
 The build fails in the step lint: main.go has an unused import.
 
 Resume this session with:
-airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+airo chat -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
 ```
 
 | Argument or flag | Default | Meaning |
@@ -344,7 +345,7 @@ deleted. `--resume` takes the session's ID, which every run prints and
 the agent. `airo` remembers one ID for each agent in `airo/sessions.json` in
 your cache directory.
 
-With no prompt argument, `airo agent -r SESSION` and `airo agent -c` load the
+With no prompt argument, `airo chat -r SESSION` and `airo chat -c` load the
 saved conversation before taking your next prompt. Earlier answers render
 as Markdown in the terminal chat, and Up and Down recall earlier prompts
 too. Plain terminal conversations show the same history without styling.
@@ -418,7 +419,7 @@ when the command exits, not after every turn.
 draft until the turn ends; press Enter again when ready to send it. Nothing
 is sent automatically. `/help` shows the chat's help, and `/exit` leaves.
 Other slash-prefixed prompts go to the agent unchanged. These two shortcuts
-apply only in the chat input: `airo agent /help` sends `/help` to the agent.
+apply only in the chat input: `airo chat /help` sends `/help` to the agent.
 
 **Leaving a running turn detaches, and the agent works on in the cluster.**
 The command prints how to come back and exits without an error:
@@ -426,7 +427,7 @@ The command prints how to come back and exits without an error:
 ```text
 Detached. The agent works on in the cluster.
 Resume this session with:
-airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+airo chat -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
 ```
 
 **The answer goes to standard output and everything else to standard
@@ -439,10 +440,8 @@ stdout and stderr to be terminals. `NO_COLOR` (even empty), `TERM=dumb`, or
 redirected stderr selects the plain conversation, with one line per prompt
 and no styling or redraws. In plain mode one Ctrl-C detaches. Redirected
 stdout disables prompts and pickers: pass the prompt as an argument or on
-stdin. For example, `airo agent "Explain the build" > answer.md` writes the
+stdin. For example, `airo chat "Explain the build" > answer.md` writes the
 agent's Markdown directly to the file.
-
-**A prompt that equals a verb goes after `--`**, as in `airo agent -- list`.
 
 **The command talks to the agents' API as you**, with the
 [A2A](https://a2a-protocol.org) protocol 1.0. A session is not a resource,
@@ -456,6 +455,11 @@ so this command does not go through the Kubernetes API alone:
 
 A project without that ConfigMap has no agent endpoint. Ask a platform
 admin.
+
+## Agent
+
+Run `airo agent` or `airo agents` to see the resource commands. To inspect an
+agent, use `airo agent get NAME`. To talk to it, use `airo chat -a NAME`.
 
 **`airo agent create` makes an agent from a prompt and waits until it is
 ready.**
@@ -526,7 +530,7 @@ of an Agent go in a file for `airo apply -f` too.
 ## Session
 
 **`airo session` shows your sessions with the agents of your project.** A
-session is a conversation with one agent. `airo agent` starts one and prints
+session is a conversation with one agent. `airo chat` starts one and prints
 its ID.
 
 ```sh
@@ -565,7 +569,7 @@ Agent, 2026-11-17 09:20
 State: done, last active 25m ago
 
 Resume this session with:
-airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+airo chat -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
 ```
 
 ```text
@@ -575,12 +579,12 @@ Canceled the working turn of session 7c9e6679-7425-40de-944b-e07fc1f90ae7 with a
 
 The session stays.
 Resume this session with:
-airo agent -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
+airo chat -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
 ```
 
 **The ID in the list is the one every command takes**: `view`, `cancel` and
-`airo agent -r`. The resume instructions go to standard error, using the
-same format as the closing hint of `airo agent`.
+`airo chat -r`. The resume instructions go to standard error, using the
+same format as the closing hint of `airo chat`.
 
 | State | The newest turn |
 | --- | --- |
@@ -594,7 +598,7 @@ to the person who started it.
 
 **A session is not a resource of the cluster**, so it has no `get` or
 `delete`, and `kubectl` does not show it. The commands talk to the agents'
-API as [`airo agent`](#agent) does, with the same address and sign-in.
+API as [`airo chat`](#chat) does, with the same address and sign-in.
 
 **Without `--agent`, the commands ask every Agent of the project**, because
 the API lists sessions for one agent at a time. An agent that does not answer
