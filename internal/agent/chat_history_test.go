@@ -94,7 +94,7 @@ func TestResumeReadsEveryPageInConversationOrder(t *testing.T) {
 	if got := out.String(); got != "First answer\nNext answer\n" {
 		t.Errorf("answers = %q", got)
 	}
-	if got := notes.String(); !strings.Contains(got, "> First prompt\n> Next prompt\n") || !strings.Contains(got, "airo agent -a reviewer -r ctx-1") {
+	if got := notes.String(); !strings.Contains(got, "> First prompt\n> Next prompt\n") || !strings.Contains(got, "airo chat -a reviewer -r ctx-1") {
 		t.Errorf("prompts and resume hint = %q", got)
 	}
 }
@@ -173,7 +173,7 @@ func TestTerminalResumeRendersSavedAnswers(t *testing.T) {
 			t.Errorf("saved answers contain raw Markdown or notes: %q", text)
 		}
 	}
-	for _, want := range []string{"› Earlier prompt", "State when loaded: working", "Resume this session with:\nairo agent -a reviewer -r ctx-1"} {
+	for _, want := range []string{"› Earlier prompt", "State when loaded: working", "Resume this session with:\nairo chat -a reviewer -r ctx-1"} {
 		if !strings.Contains(ansi.Strip(notes.String()), want) {
 			t.Errorf("notes lack %q: %q", want, notes.String())
 		}

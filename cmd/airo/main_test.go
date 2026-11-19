@@ -19,7 +19,7 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 				"Authentication Commands:", "  login ", "  whoami ",
 				"Configuration Commands:", "  context ", "  project ", "  status ",
 				"Advanced Commands:", "  apply ", "  completion ",
-				"Other Commands:", "  help ", "  options ", "  version ", "airo options"},
+				"Other Commands:", "  chat ", "  help ", "  options ", "  version ", "airo options"},
 			[]string{"--kubeconfig", "modelconfig", "credential", "airo [command]\n"},
 		},
 		{
@@ -55,6 +55,38 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAgentWithoutVerbShowsHelp(t *testing.T) {
+	for _, noun := range []string{"agent", "agents"} {
+		root := newRoot()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetArgs([]string{noun})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), "airo agent [command]") || !strings.Contains(out.String(), "airo chat") {
+			t.Errorf("%s help: %s", noun, &out)
+		}
+	}
+}
+
+func TestAgentRejectsUnknownVerbs(t *testing.T) {
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"agents", "describe", "assistant"}, "airo agent get assistant"},
+		{[]string{"agent", "fix", "the", "build"}, "airo chat"},
+	} {
+		root := newRoot()
+		root.SetArgs(tt.args)
+		root.SilenceErrors = true
+		if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown agent verb") || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%v: got %v, want unknown verb with hint %q", tt.args, err, tt.want)
+		}
 	}
 }
 

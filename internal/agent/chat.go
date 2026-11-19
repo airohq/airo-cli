@@ -8,8 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -23,7 +26,7 @@ import (
 	"github.com/airohq/airo-cli/internal/ui"
 )
 
-// An Agent with this annotation set to "true" is the one airo agent talks to
+// An Agent with this annotation set to "true" is the one airo chat talks to
 // when the project has several and --agent names none. The name is the
 // platform's, not a component's.
 const defaultAnnotation = "airohq.dev/default-agent"
@@ -35,14 +38,51 @@ const (
 	endpointKey       = "url"
 )
 
-// chatOptions are the flags of airo agent without a verb.
+// chatOptions are the flags of airo chat.
 type chatOptions struct {
 	agent  string
 	cont   bool
 	resume string
 }
 
-// runChat is airo agent [PROMPT]: one prompt, or a conversation on a
+// NewChatCommand starts or resumes a conversation with a project agent.
+func NewChatCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
+	var o chatOptions
+	cmd := &cobra.Command{
+		Use:   "chat [PROMPT]",
+		Short: "Chat with an agent in the current project",
+		Long: `Chat sends a prompt to an agent of the project and prints the answer as it
+arrives. Without a prompt, on a terminal, it is a conversation: Enter sends
+a prompt of the same session, Ctrl-J adds a new line, and Ctrl-D leaves on
+an empty prompt. You can draft the next prompt while the agent works.
+
+The prompt starts a new session. The session stays in the cluster, and
+--continue or --resume sends the next prompt to it. In the terminal chat,
+Esc stops the turn, and Ctrl-C twice detaches: the agent works on in the
+cluster. Plain output uses one Ctrl-C to detach.
+
+Without --agent, airo takes the project's only agent, then the one with the
+annotation ` + defaultAnnotation + `: "true", then asks.`,
+		Example: `  airo chat "Why does the build fail?"      # a new session
+  airo chat -c "Fix it."                    # the same session
+  airo chat -a reviewer                     # a conversation with one agent
+  airo chat -r SESSION "And the tests?"     # a session by its ID`,
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Ctrl-C detaches from the session. It is not an error.
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return runChat(ctx, cmd, flags, o, strings.Join(args, " "))
+		},
+	}
+	cmd.Flags().StringVarP(&o.agent, "agent", "a", "", "name of the Agent to talk to (default: the project's only one, or its default)")
+	cmd.Flags().BoolVarP(&o.cont, "continue", "c", false, "continue your last session with the agent from this machine")
+	cmd.Flags().StringVarP(&o.resume, "resume", "r", "", "continue the session with this ID")
+	cmd.MarkFlagsMutuallyExclusive("continue", "resume")
+	return cmd
+}
+
+// runChat is airo chat [PROMPT]: one prompt, or a conversation on a
 // terminal.
 func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.ConfigFlags, o chatOptions, prompt string) error {
 	cfg, err := flags.ToRESTConfig()
@@ -103,7 +143,7 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 	id := o.resume
 	if o.cont {
 		if id = store.get(key); id == "" {
-			return fmt.Errorf("this machine remembers no session with agent %s/%s: start one with airo agent, or name one with --resume", ns, agent)
+			return fmt.Errorf("this machine remembers no session with agent %s/%s: start one with airo chat, or name one with --resume", ns, agent)
 		}
 	}
 
@@ -417,7 +457,7 @@ func (s *session) resumeHint() {
 	if s.styles != nil {
 		styles = *s.styles
 	}
-	styles.ResumeHint(s.errOut, fmt.Sprintf("airo agent -a %s -r %s", s.agent, s.id))
+	styles.ResumeHint(s.errOut, fmt.Sprintf("airo chat -a %s -r %s", s.agent, s.id))
 }
 
 // printer is the output of a turn. The wire and snapshot handling are the

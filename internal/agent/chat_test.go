@@ -475,7 +475,7 @@ func TestOnceSaysHowToResume(t *testing.T) {
 	if err := s.once(context.Background(), "Say hello"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(errOut.String(), "airo agent -a reviewer -r ctx-1") {
+	if !strings.Contains(errOut.String(), "airo chat -a reviewer -r ctx-1") {
 		t.Errorf("notes %q lack how to resume", errOut.String())
 	}
 }
@@ -499,7 +499,7 @@ func TestCtrlCDetaches(t *testing.T) {
 	if out.String() != "I start\n" {
 		t.Errorf("output = %q", out.String())
 	}
-	if !strings.Contains(errOut.String(), "airo agent -a reviewer -r ctx-1") {
+	if !strings.Contains(errOut.String(), "airo chat -a reviewer -r ctx-1") {
 		t.Errorf("notes %q lack how to resume", errOut.String())
 	}
 }
@@ -524,7 +524,7 @@ func TestConverseSendsEachLineToOneSession(t *testing.T) {
 	if out.String() != "Yes.\nYes.\n" {
 		t.Errorf("output = %q", out.String())
 	}
-	if !strings.Contains(errOut.String(), "airo agent -a reviewer -r ctx-1") {
+	if !strings.Contains(errOut.String(), "airo chat -a reviewer -r ctx-1") {
 		t.Errorf("notes %q lack how to resume", errOut.String())
 	}
 }
@@ -599,18 +599,18 @@ func root() *cobra.Command {
 	flags := genericclioptions.NewConfigFlags(true)
 	root := &cobra.Command{Use: "airo"}
 	flags.AddFlags(root.PersistentFlags())
-	root.AddCommand(NewCommand(flags))
+	root.AddCommand(NewCommand(flags), NewChatCommand(flags))
 	return root
 }
 
-func TestAVerbWinsOverAPrompt(t *testing.T) {
+func TestChatAcceptsAgentVerbsAsPrompts(t *testing.T) {
 	for line, want := range map[string]string{
-		"agent list":                "list",
-		"agent -- list":             "agent",
-		"agent -a reviewer -- list": "agent",
-		"agent fix the build":       "agent",
-		"agent -c again":            "agent",
-		"agent create reviewer":     "create",
+		"agent list":               "list",
+		"chat list":                "chat",
+		"chat -a reviewer -- list": "chat",
+		"chat fix the build":       "chat",
+		"chat -c again":            "chat",
+		"agent create reviewer":    "create",
 	} {
 		cmd, _, err := root().Find(strings.Fields(line))
 		if err != nil || cmd.Name() != want {
@@ -622,13 +622,13 @@ func TestAVerbWinsOverAPrompt(t *testing.T) {
 func TestFlagsFitKubectls(t *testing.T) {
 	// A shorthand that kubectl's flags have too would panic here.
 	r := root()
-	r.SetArgs([]string{"agent", "--help"})
+	r.SetArgs([]string{"chat", "--help"})
 	r.SetOut(io.Discard)
 	if err := r.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	r = root()
-	r.SetArgs([]string{"agent", "-c", "-r", "ctx-1", "hi"})
+	r.SetArgs([]string{"chat", "-c", "-r", "ctx-1", "hi"})
 	r.SetOut(io.Discard)
 	r.SetErr(io.Discard)
 	if err := r.Execute(); err == nil || !strings.Contains(err.Error(), "continue") {

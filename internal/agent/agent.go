@@ -1,5 +1,5 @@
-// Package agent implements airo agent: talk to an agent of the project, and
-// create an Agent from flags, next to the verbs every kind has.
+// Package agent implements airo agent for managing agents and airo chat
+// for conversations with them.
 package agent
 
 import (
@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -46,45 +44,26 @@ const runtimeBYO = "byo"
 // Agent's runtime first, which takes longer than a Tunnel's URLs.
 const readyTimeout = 3 * time.Minute
 
-// NewCommand returns the agent command.
+// NewCommand returns the agent resource commands.
 func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
-	var o chatOptions
 	cmd := &cobra.Command{
-		Use:     "agent [PROMPT]",
+		Use:     "agent",
 		Aliases: []string{"agents"},
-		Short:   "Talk to an agent of the project, or create and manage agents",
-		Long: `Agent sends a prompt to an agent of the project and prints the answer as it
-arrives. Without a prompt, on a terminal, it is a conversation: Enter sends
-a prompt of the same session, Ctrl-J adds a new line, and Ctrl-D leaves on
-an empty prompt. You can draft the next prompt while the agent works.
-
-The prompt starts a new session. The session stays in the cluster, and
---continue or --resume sends the next prompt to it. In the terminal chat,
-Esc stops the turn, and Ctrl-C twice detaches: the agent works on in the
-cluster. Plain output uses one Ctrl-C to detach.
-
-Without --agent, airo takes the project's only agent, then the one with the
-annotation ` + defaultAnnotation + `: "true", then asks.
-
-A prompt that equals a verb goes after --, as in airo agent -- list.`,
-		Example: `  airo agent "Why does the build fail?"      # a new session
-  airo agent -c "Fix it."                    # the same session
-  airo agent -a reviewer                     # a conversation with one agent
-  airo agent -r SESSION "And the tests?"     # a session by its ID
-  airo agent create reviewer --prompt "You review pull requests."
-  airo agent list`,
-		Args: cobra.ArbitraryArgs,
+		Short:   "Manage agents in the current project",
+		Long:    "Create, list, inspect, or delete agents in the current project. Use airo chat to start a conversation.",
+		Example: `  airo agent list
+  airo agent get assistant
+  airo agent create reviewer --prompt "You review pull requests."`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Ctrl-C detaches from the session. It is not an error.
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-			return runChat(ctx, cmd, flags, o, strings.Join(args, " "))
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			if len(args) == 2 && args[0] == "describe" {
+				return fmt.Errorf("unknown agent verb %q: use airo agent get %s", args[0], args[1])
+			}
+			return fmt.Errorf("unknown agent verb %q: see airo agent --help for verbs, or use airo chat to send a prompt", args[0])
 		},
 	}
-	cmd.Flags().StringVarP(&o.agent, "agent", "a", "", "name of the Agent to talk to (default: the project's only one, or its default)")
-	cmd.Flags().BoolVarP(&o.cont, "continue", "c", false, "continue your last session with the agent from this machine")
-	cmd.Flags().StringVarP(&o.resume, "resume", "r", "", "continue the session with this ID")
-	cmd.MarkFlagsMutuallyExclusive("continue", "resume")
 	cmd.AddCommand(newCreateCommand(flags))
 	cmd.AddCommand(generic.Commands(flags, strings.ToLower(agentGVK.Kind)+"."+agentGVK.Group)...)
 	return cmd

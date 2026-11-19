@@ -42,7 +42,8 @@ supports list, get and delete.`,
 		Example: `  airo login                     # See 'airo login -h' for first-time setup
   airo project list              # Find your projects (* marks the current one)
   airo agent list                # List agents in the current project
-  airo agent get my-agent        # Inspect an agent from the list`,
+  airo agent get my-agent        # Inspect an agent from the list
+  airo chat                      # Chat with the default agent`,
 		Version:      buildVersion(),
 		SilenceUsage: true,
 		// A first word that is no command below is a kind in the cluster.
@@ -81,6 +82,7 @@ supports list, get and delete.`,
 	addGroup("advanced", "Advanced Commands:", generic.NewApplyCommand(flags))
 	root.SetCompletionCommandGroupID("advanced")
 	addGroup("other", "Other Commands:",
+		agent.NewChatCommand(flags),
 		newOptionsCommand(),
 		&cobra.Command{
 			Use:   "version",
