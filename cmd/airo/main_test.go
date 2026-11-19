@@ -78,7 +78,7 @@ func TestAgentRejectsUnknownVerbs(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"agents", "describe", "assistant"}, "airo agent get assistant"},
+		{[]string{"agents", "unknown", "assistant"}, "airo chat"},
 		{[]string{"agent", "fix", "the", "build"}, "airo chat"},
 	} {
 		root := newRoot()

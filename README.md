@@ -281,18 +281,24 @@ A value of `"true"` shows as enabled. Any other value shows as disabled.
 
 ## Resources
 
-**Every kind of resource in the cluster is a noun with `list`, `get` and
+**Every kind of resource in the cluster is a noun with `list`, `get`, `describe` and
 `delete`**, including custom resources added after this CLI was built.
 `airo RESOURCE list` and `airo RESOURCE get` both run the equivalent of
 `kubectl get RESOURCE`. Add a name to `get` to show one object. Both verbs
 use kubectl's Go library for discovery, server-provided columns, pagination,
 and output formatting, using your kubeconfig credentials and permissions.
 
+`airo RESOURCE describe NAME` uses the same describers as `kubectl describe`.
+For custom resources it renders the fields returned by the API. An exact name
+match includes related events when available. Use `--show-events=false` to
+omit them. If the exact name is missing, kubectl tries it as a name prefix.
+
 ```sh
 airo agent list                    # in your project
 airo agent list -A                 # in every namespace you may read
 airo agent get my-agent            # one row
 airo agent get my-agent -o yaml    # the whole resource, or -o json
+airo agent describe my-agent       # details and related events
 airo pods get -o wide              # include the API's additional columns
 airo agent delete my-agent
 airo apply -f agent.yaml           # create or update from a file, a directory, a URL or -

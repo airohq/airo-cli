@@ -1,4 +1,4 @@
-// Package generic implements the verbs every kind has: list, get and delete,
+// Package generic implements the verbs every kind has: list, get, describe and delete,
 // for any kind the cluster serves, and apply for files. It asks the cluster
 // what a kind is and how to show it, so a new kind needs no new airo.
 package generic
@@ -17,16 +17,18 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/genericiooptions"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/kubectl/pkg/cmd/describe"
 	"k8s.io/kubectl/pkg/cmd/get"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 )
 
 // Verbs is the help line for a kind without a command of its own.
-const Verbs = "list, get [NAME] or delete NAME"
+const Verbs = "list, get [NAME], describe NAME or delete NAME"
 
 // AddResourceHandler handles kinds that do not have a dedicated Airo command.
 func AddResourceHandler(cmd *cobra.Command, flags *genericclioptions.ConfigFlags) {
 	o := addReadFlags(cmd)
+	runDescribe := describeRunner(cmd, flags)
 	cmd.Args = cobra.ArbitraryArgs
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
@@ -47,6 +49,10 @@ func AddResourceHandler(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 		case "get":
 			if len(args) <= 3 {
 				return read(cmd, flags, o, append([]string{kind}, args[2:]...))
+			}
+		case "describe":
+			if len(args) == 3 {
+				return runDescribe(kind, args[2])
 			}
 		case "delete":
 			if len(args) == 3 {
@@ -81,7 +87,26 @@ func read(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, o *get.GetOp
 	return o.Run(f, args)
 }
 
-// ReadCommands adds the same list and get operations to built-in nouns.
+// describeRunner uses kubectl's describers and its generic fallback for CRDs.
+func describeRunner(cmd *cobra.Command, flags *genericclioptions.ConfigFlags) func(string, string) error {
+	showEvents := cmd.Flags().Bool("show-events", true, "include related events when describing a resource")
+	return func(resource, name string) error {
+		streams := genericiooptions.IOStreams{In: cmd.InOrStdin(), Out: cmd.OutOrStdout(), ErrOut: cmd.ErrOrStderr()}
+		d := describe.NewDescribeFlags(cmdutil.NewFactory(flags), streams)
+		d.DescriberSettings.ShowEvents = *showEvents
+		d.ShowEventsExplicitlySet = cmd.Flags().Changed("show-events")
+		o, err := d.ToOptions("airo", []string{resource, name})
+		if err != nil {
+			return err
+		}
+		if err := o.Validate(); err != nil {
+			return err
+		}
+		return o.Run()
+	}
+}
+
+// ReadCommands adds the same list, get and describe operations to built-in nouns.
 // A platform synonym such as project supplies its Kubernetes resource.
 func ReadCommands(flags *genericclioptions.ConfigFlags, resource string) []*cobra.Command {
 	newRead := func(use, short string, args cobra.PositionalArgs) *cobra.Command {
@@ -92,9 +117,19 @@ func ReadCommands(flags *genericclioptions.ConfigFlags, resource string) []*cobr
 		}
 		return cmd
 	}
+	describeCmd := &cobra.Command{
+		Use:   "describe NAME",
+		Short: "Describe a resource and its related events",
+		Args:  cobra.ExactArgs(1),
+	}
+	runDescribe := describeRunner(describeCmd, flags)
+	describeCmd.RunE = func(_ *cobra.Command, args []string) error {
+		return runDescribe(resource, args[0])
+	}
 	return []*cobra.Command{
 		newRead("list", "List resources", cobra.NoArgs),
 		newRead("get [NAME]", "Show one resource or list the collection", cobra.MaximumNArgs(1)),
+		describeCmd,
 	}
 }
 

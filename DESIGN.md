@@ -21,7 +21,7 @@ airo chat "fix the build"    # a prompt for the default agent
 | --- | --- |
 | Noun | A kind of resource, such as `tunnel` or `agent`. `tunnels` and `agents` mean the same |
 | No verb | The noun's default task, if it has one. Otherwise the help |
-| `list`, `get`, `delete` | Work for every kind the cluster serves, also kinds this binary does not know |
+| `list`, `get`, `describe`, `delete` | Work for every kind the cluster serves, also kinds this binary does not know |
 | `create` | Hand-written for each noun, with flags |
 | Other verbs | Actions of one noun, such as `airo agent logs` |
 | No noun | Standalone actions such as `airo chat [PROMPT]`, `airo login`, `airo status`, `airo whoami`, `airo apply -f`, `airo version` |

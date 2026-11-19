@@ -37,7 +37,7 @@ func newRoot() *cobra.Command {
 		Long: `Work with the Airo platform from your machine.
 
 Use a resource's singular or plural name. Every resource kind in the cluster
-supports list, get and delete.`,
+supports list, get, describe and delete.`,
 		Example: `  airo login                     # See 'airo login -h' for first-time setup
   airo project list              # List the namespaces you can access
   airo agent list                # List agents in the current project

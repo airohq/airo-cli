@@ -13,12 +13,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// The API adds a kind and its short name, serves a built-in Airo noun from
-// another group, and supplies a column the CLI cannot know.
-func TestResourceReads(t *testing.T) {
-	const group = "example.test/v1"
-	const api = "/apis/" + group
-	const widgets = api + "/namespaces/acme-web/widgets"
+const testResourceAPI = "/apis/example.test/v1"
+
+func resourceDiscovery() *http.ServeMux {
 	discovery := http.NewServeMux()
 	discovery.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"kind":"APIVersions","apiVersion":"v1","versions":["v1"]}`)
@@ -27,12 +24,21 @@ func TestResourceReads(t *testing.T) {
 		io.WriteString(w, `{"kind":"APIGroupList","apiVersion":"v1","groups":[{"name":"example.test","versions":[{"groupVersion":"example.test/v1","version":"v1"}],"preferredVersion":{"groupVersion":"example.test/v1","version":"v1"}}]}`)
 	})
 	discovery.HandleFunc("/api/v1", func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"kind":"APIResourceList","groupVersion":"v1","resources":[{"name":"namespaces","singularName":"namespace","kind":"Namespace","namespaced":false,"verbs":["get","list"]}]}`)
+		io.WriteString(w, `{"kind":"APIResourceList","groupVersion":"v1","resources":[{"name":"namespaces","singularName":"namespace","kind":"Namespace","namespaced":false,"verbs":["get","list"]},{"name":"secrets","singularName":"secret","kind":"Secret","namespaced":true,"verbs":["get","list"]}]}`)
 	})
-	discovery.HandleFunc(api, func(w http.ResponseWriter, r *http.Request) {
+	discovery.HandleFunc(testResourceAPI, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"kind":"APIResourceList","groupVersion":"example.test/v1","resources":[{"name":"widgets","singularName":"widget","kind":"Widget","namespaced":true,"shortNames":["wd"],"verbs":["get","list"]},{"name":"agents","singularName":"agent","kind":"Agent","namespaced":true,"verbs":["get","list"]}]}`)
 	})
 
+	return discovery
+}
+
+// The API adds a kind and its short name, serves a built-in Airo noun from
+// another group, and supplies a column the CLI cannot know.
+func TestResourceReads(t *testing.T) {
+	const api = testResourceAPI
+	const widgets = api + "/namespaces/acme-web/widgets"
+	discovery := resourceDiscovery()
 	for _, tt := range []struct {
 		name string
 		args []string
@@ -116,6 +122,56 @@ func TestResourceReads(t *testing.T) {
 			}
 			if got := strings.Join(strings.Fields(out.String()), " "); got != tt.want {
 				t.Errorf("got %q, want %q (stderr %q)", got, tt.want, stderr.String())
+			}
+		})
+	}
+}
+
+func TestResourceDescribe(t *testing.T) {
+	const api = testResourceAPI + "/namespaces/acme-web/"
+	discovery := resourceDiscovery()
+	for _, tt := range []struct {
+		resource, path, object, want string
+		events                       bool
+	}{
+		{"wd", api + "widgets/sample", `{"apiVersion":"example.test/v1","kind":"Widget","metadata":{"name":"sample","namespace":"acme-web","uid":"widget-1"},"spec":{"score":42}}`, "Score: 42", true},
+		{"agents", api + "agents/sample", `{"apiVersion":"example.test/v1","kind":"Agent","metadata":{"name":"sample","namespace":"acme-web"},"status":{"phase":"Idle"}}`, "Phase: Idle", false},
+		{"secret", "/api/v1/namespaces/acme-web/secrets/sample", `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"sample","namespace":"acme-web"},"data":{"example":"dGVzdA=="}}`, "example: 4 bytes", false},
+	} {
+		t.Run(tt.resource, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer customer-token" {
+					t.Errorf("unexpected method or credentials for %s", r.URL.Path)
+				}
+				if _, pattern := discovery.Handler(r); pattern != "" {
+					discovery.ServeHTTP(w, r)
+					return
+				}
+				switch r.URL.Path {
+				case tt.path:
+					io.WriteString(w, tt.object)
+				case "/api/v1/namespaces/acme-web/events":
+					if !tt.events || !strings.Contains(r.URL.Query().Get("fieldSelector"), "involvedObject.name=sample") {
+						t.Errorf("unexpected event lookup: %s", r.URL)
+					}
+					io.WriteString(w, `{"apiVersion":"v1","kind":"EventList","items":[]}`)
+				default:
+					t.Errorf("unexpected request for %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			args := []string{"--cache-dir", t.TempDir(), tt.resource, "describe", "sample"}
+			if !tt.events {
+				args = append(args, "--show-events=false")
+			}
+			out, err := runIdentityCommand(t, identityConfig(t, server.URL), args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(strings.Join(strings.Fields(out), " "), tt.want) || strings.Contains(out, "Events:") != tt.events {
+				t.Errorf("unexpected description:\n%s", out)
 			}
 		})
 	}

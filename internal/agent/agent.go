@@ -58,9 +58,6 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			if len(args) == 2 && args[0] == "describe" {
-				return fmt.Errorf("unknown agent verb %q: use airo agent get %s", args[0], args[1])
-			}
 			return fmt.Errorf("unknown agent verb %q: see airo agent --help for verbs, or use airo chat to send a prompt", args[0])
 		},
 	}
