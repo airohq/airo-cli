@@ -293,6 +293,11 @@ For custom resources it renders the fields returned by the API. An exact name
 match includes related events when available. Use `--show-events=false` to
 omit them. If the exact name is missing, kubectl tries it as a name prefix.
 
+`airo RESOURCE delete NAME` uses kubectl to delete one named object and
+waits for deletion by default. Use `--wait=false` to return when the API
+accepts the request, or `--dry-run=server` to have the API check it without
+deleting the object. A project dry run also preserves the selected project.
+
 ```sh
 airo agent list                    # in your project
 airo agent list -A                 # in every namespace you may read

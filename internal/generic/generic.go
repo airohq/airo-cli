@@ -4,19 +4,13 @@
 package generic
 
 import (
-	"context"
 	"fmt"
-	"io"
-	"strings"
 
 	"github.com/spf13/cobra"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/genericiooptions"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/kubectl/pkg/cmd/describe"
 	"k8s.io/kubectl/pkg/cmd/get"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
@@ -29,6 +23,7 @@ const Verbs = "list, get [NAME], describe NAME or delete NAME"
 func AddResourceHandler(cmd *cobra.Command, flags *genericclioptions.ConfigFlags) {
 	o := addReadFlags(cmd)
 	runDescribe := describeRunner(cmd, flags)
+	runDelete := deleteRunner(cmd, flags, nil)
 	cmd.Args = cobra.ArbitraryArgs
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
@@ -56,7 +51,7 @@ func AddResourceHandler(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 			}
 		case "delete":
 			if len(args) == 3 {
-				return deleteResource(cmd.Context(), cmd.OutOrStdout(), flags, kind, args[2])
+				return runDelete(kind, args[2])
 			}
 		default:
 			return fmt.Errorf("airo %s has no verb %q: use %s", kind, args[1], Verbs)
@@ -133,52 +128,9 @@ func ReadCommands(flags *genericclioptions.ConfigFlags, resource string) []*cobr
 	}
 }
 
-// Commands keeps deletion scoped to the component's kind while reads resolve
-// the noun through discovery just as they do for a kind without a command.
-func Commands(flags *genericclioptions.ConfigFlags, kind string) []*cobra.Command {
-	noun, _, _ := strings.Cut(kind, ".")
-	return append(ReadCommands(flags, noun), &cobra.Command{
-		Use:   "delete NAME",
-		Short: "Delete one " + noun,
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return deleteResource(cmd.Context(), cmd.OutOrStdout(), flags, kind, args[0])
-		},
-	})
-}
-
-func deleteResource(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlags, kind, name string) error {
-	m, err := mapping(flags, kind)
-	if err != nil {
-		return err
-	}
-	cfg, err := flags.ToRESTConfig()
-	if err != nil {
-		return err
-	}
-	ns := ""
-	if m.Scope.Name() == meta.RESTScopeNameNamespace {
-		if ns, _, err = flags.ToRawKubeConfigLoader().Namespace(); err != nil {
-			return err
-		}
-	}
-	c, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return err
-	}
-	noun := strings.ToLower(m.GroupVersionKind.Kind)
-	err = c.Resource(m.Resource).Namespace(ns).Delete(ctx, name, metav1.DeleteOptions{})
-	if apierrors.IsNotFound(err) {
-		return fmt.Errorf("no %s named %s", noun, name)
-	}
-	if err != nil {
-		return err
-	}
-	if ns != "" {
-		name = ns + "/" + name
-	}
-	_, err = fmt.Fprintf(out, "Deleted %s %s\n", noun, name)
-	return err
+// Commands returns the resource verbs for a built-in noun.
+func Commands(flags *genericclioptions.ConfigFlags, resource string) []*cobra.Command {
+	return append(ReadCommands(flags, resource), NewDeleteCommand(flags, resource, nil))
 }
 
 // mapping asks the cluster which kind the word means. It takes what kubectl

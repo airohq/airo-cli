@@ -24,10 +24,10 @@ func resourceDiscovery() *http.ServeMux {
 		io.WriteString(w, `{"kind":"APIGroupList","apiVersion":"v1","groups":[{"name":"example.test","versions":[{"groupVersion":"example.test/v1","version":"v1"}],"preferredVersion":{"groupVersion":"example.test/v1","version":"v1"}}]}`)
 	})
 	discovery.HandleFunc("/api/v1", func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"kind":"APIResourceList","groupVersion":"v1","resources":[{"name":"namespaces","singularName":"namespace","kind":"Namespace","namespaced":false,"verbs":["get","list"]},{"name":"secrets","singularName":"secret","kind":"Secret","namespaced":true,"verbs":["get","list"]}]}`)
+		io.WriteString(w, `{"kind":"APIResourceList","groupVersion":"v1","resources":[{"name":"namespaces","singularName":"namespace","kind":"Namespace","namespaced":false,"verbs":["get","list","delete"]},{"name":"secrets","singularName":"secret","kind":"Secret","namespaced":true,"verbs":["get","list","delete"]}]}`)
 	})
 	discovery.HandleFunc(testResourceAPI, func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"kind":"APIResourceList","groupVersion":"example.test/v1","resources":[{"name":"widgets","singularName":"widget","kind":"Widget","namespaced":true,"shortNames":["wd"],"verbs":["get","list"]},{"name":"agents","singularName":"agent","kind":"Agent","namespaced":true,"verbs":["get","list"]}]}`)
+		io.WriteString(w, `{"kind":"APIResourceList","groupVersion":"example.test/v1","resources":[{"name":"widgets","singularName":"widget","kind":"Widget","namespaced":true,"shortNames":["wd"],"verbs":["get","list","delete"]},{"name":"agents","singularName":"agent","kind":"Agent","namespaced":true,"verbs":["get","list","delete"]}]}`)
 	})
 
 	return discovery

@@ -62,7 +62,7 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newCreateCommand(flags))
-	cmd.AddCommand(generic.Commands(flags, strings.ToLower(agentGVK.Kind)+"."+agentGVK.Group)...)
+	cmd.AddCommand(generic.Commands(flags, cmd.Name())...)
 	return cmd
 }
 

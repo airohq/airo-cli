@@ -33,7 +33,7 @@ var projectResource = schema.GroupVersionResource{Version: "v1", Resource: "name
 // projectLister asks the cluster for the person's projects.
 type projectLister func(context.Context) (*unstructured.UnstructuredList, error)
 
-// projectWriter creates or deletes one project in the cluster.
+// projectWriter creates one project in the cluster.
 type projectWriter func(ctx context.Context, name string) error
 
 // NewProjectCommand returns the project command.
@@ -72,13 +72,6 @@ func NewProjectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		ns.SetName(name)
 		_, err = r.Create(ctx, ns, metav1.CreateOptions{})
 		return err
-	}
-	remove := func(ctx context.Context, name string) error {
-		r, _, err := namespaces()
-		if err != nil {
-			return err
-		}
-		return r.Delete(ctx, name, metav1.DeleteOptions{})
 	}
 	// The project airo login chooses at a first sign-in.
 	defaultOf := func(ctx context.Context) (string, error) {
@@ -138,17 +131,15 @@ tenant's name, and how many projects you may have.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return createProject(cmd.Context(), cmd.OutOrStdout(), args[0], create, list, time.Minute)
 		},
-	}, &cobra.Command{
-		Use:   "delete NAME",
-		Short: "Delete a project and everything in it",
-		Long: `Delete removes a project and everything in it. When your commands work in
-it, airo switches them to the project you were in before, as airo project -
-does, or else to your default project, as airo login chooses it.`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return deleteProject(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, args[0], remove, newPreviousProjectStore, list, defaultOf)
-		},
 	})
+	deleteCmd := generic.NewDeleteCommand(flags, projectResource.Resource, func(cmd *cobra.Command, name string) error {
+		return switchAfterProjectDeletion(cmd.Context(), cmd.ErrOrStderr(), access(), *flags.Context, name, newPreviousProjectStore, list, defaultOf)
+	})
+	deleteCmd.Short = "Delete a project and everything in it"
+	deleteCmd.Long = `Delete removes a project and everything in it. When your commands work in
+it, airo switches them to the project you were in before, or else to your
+default project, as airo login chooses it.`
+	cmd.AddCommand(deleteCmd)
 	return cmd
 }
 
@@ -181,19 +172,9 @@ func createProject(ctx context.Context, out io.Writer, name string, create proje
 	}
 }
 
-// deleteProject deletes the project name. When the context kctxName, or the
-// current context when it is empty, works in it, the context switches to the
-// project it was in before, or else to the default project that fallback
-// returns, as airo login chooses it. With neither, it says so.
-func deleteProject(ctx context.Context, out io.Writer, access clientcmd.ConfigAccess, kctxName, name string, remove projectWriter, storeFor func(string) (previousStore, error), list projectLister, fallback func(context.Context) (string, error)) error {
-	err := remove(ctx, name)
-	if apierrors.IsNotFound(err) {
-		return fmt.Errorf("you have no project %q", name)
-	}
-	if err != nil {
-		return fmt.Errorf("could not delete project %s: %w", name, err)
-	}
-	fmt.Fprintf(out, "Deleted project %s\n", name)
+// switchAfterProjectDeletion moves a context off its deleted namespace.
+// Prefer the previous project, then the default chosen at login.
+func switchAfterProjectDeletion(ctx context.Context, out io.Writer, access clientcmd.ConfigAccess, kctxName, name string, storeFor func(string) (previousStore, error), list projectLister, fallback func(context.Context) (string, error)) error {
 	cfg, err := access.GetStartingConfig()
 	if err != nil {
 		return nil

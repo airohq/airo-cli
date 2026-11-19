@@ -96,7 +96,7 @@ minutes. A Tunnel made with airo tunnel create is used as it is and stays.`,
 	cmd.Flags().BoolVar(&public, "public", false, "make the tunnel reachable from the internet too")
 	cmd.Flags().BoolVar(&noAuth, "no-auth", false, "let callers in without a token")
 	cmd.AddCommand(newCreateCommand(flags))
-	cmd.AddCommand(generic.Commands(flags, strings.ToLower(tunnelGVK.Kind)+"."+tunnelGVK.Group)...)
+	cmd.AddCommand(generic.Commands(flags, cmd.Name())...)
 	return cmd
 }
 

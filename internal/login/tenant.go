@@ -37,7 +37,7 @@ func NewTenantCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "tenant", "", "tenant to inspect (defaults to your tenant membership)")
-	verbs := generic.Commands(flags, "tenant."+tenantResource.Group)
+	verbs := generic.Commands(flags, cmd.Name())
 	for _, verb := range verbs {
 		if verb.Name() == "list" {
 			verb.Short = "List tenants you can see"
