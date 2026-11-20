@@ -59,9 +59,8 @@ conversation.
 **A noun's default task is the one thing most people want from it**: `airo
 tunnel 3000` serves a local port. A bare `airo agent` shows its resource commands.
 
-- **Its argument is what the task acts on, never a resource's name.** It is
-  the port for a tunnel. A resource's name is a
-  flag, such as `--name` or `--agent`.
+- **Its argument is what the task acts on.** In `airo tunnel 3000 --name my-app`,
+  the argument gives the port and the flag names the tunnel.
 - **A noun whose task is to switch to one of its own is the exception.**
   `airo context customer` takes the context's name, because the name is all
   the task needs. `-` switches back to the previous one, as in `cd -`.
@@ -104,8 +103,12 @@ tunnel 3000` serves a local port. A bare `airo agent` shows its resource command
   `--no-auth`. The README names the field it sets.
 - **kubectl's flags mean the same here**: `-n`, `--context`, `--kubeconfig`,
   and `-o yaml` on `get`, `list` and `view`.
-- **A flag that names a resource is the same on every command**, such as
-  `-a`, `--agent`.
+- **Use `--name` when a flag names the command's own resource.** For example,
+  `airo tenant --name phasi` selects the tenant named `phasi`.
+- **When a flag refers to another resource by name, use the target resource's
+  singular noun as the flag.** In `airo agent create --harness claude`,
+  `--harness` selects the harness named `claude`. Use the same flag wherever
+  another command refers to that resource.
 - **`airo login` keeps what its flags say**: `--server`, `--context` and `-n`
   choose for one command elsewhere, and `airo login` writes them into the
   kubeconfig for every later command.
