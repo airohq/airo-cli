@@ -10,25 +10,38 @@ import (
 
 func TestTenantDetails(t *testing.T) {
 	for _, tt := range []struct {
-		name         string
-		args         []string
-		groups       []string
-		token        string
-		owner        string
-		labels       map[string]string
-		forbidden    bool
-		wantFeatures string
-		wantErr      string
+		name        string
+		args        []string
+		groups      []string
+		token       string
+		owner       string
+		labels      map[string]string
+		forbidden   bool
+		wantDetails string
+		wantErr     string
 	}{
 		{
 			name: "membership regardless of project", args: []string{"tenant", "-n", "unrelated"}, groups: []string{"customer:acme"}, token: "customer-token", owner: "acme",
-			labels:       map[string]string{"features.airohq.dev/agents": "true", "features.airohq.dev/tunnels": "false", "features.airohq.dev/preview": "true", "customer": "true"},
-			wantFeatures: "FEATURE STATE agents enabled preview enabled tunnels disabled",
+			labels: map[string]string{
+				"solutions.airohq.dev/adlc":       "true",
+				"solutions.airohq.dev/preview":    "true",
+				"capabilities.airohq.dev/agents":  "true",
+				"capabilities.airohq.dev/preview": "pending",
+				"capabilities.airohq.dev/tunnels": "true",
+				"features.airohq.dev/legacy":      "true",
+				"customer":                        "true",
+			},
+			wantDetails: "SOLUTION STATE adlc enabled preview enabled CAPABILITY STATE agents enabled preview disabled tunnels enabled",
 		},
 		{
 			name: "explicit tenant", args: []string{"tenants", "--context", "admin", "--tenant", "other"},
 			token: "admin-token", owner: "other",
-			wantFeatures: "No feature labels.",
+			wantDetails: "No solution labels. No capability labels.",
+		},
+		{
+			name: "capabilities only", args: []string{"tenant", "--tenant", "acme"}, token: "customer-token", owner: "acme",
+			labels:      map[string]string{"capabilities.airohq.dev/agents": "true"},
+			wantDetails: "No solution labels. CAPABILITY STATE agents enabled",
 		},
 		{
 			name: "no tenant membership", args: []string{"tenant", "--context", "admin"}, token: "admin-token",
@@ -79,7 +92,7 @@ func TestTenantDetails(t *testing.T) {
 				}
 				return
 			}
-			want := "Tenant: " + tt.owner + " " + tt.wantFeatures
+			want := "Tenant: " + tt.owner + " " + tt.wantDetails
 			if got := strings.Join(strings.Fields(out), " "); err != nil || got != want {
 				t.Fatalf("output %q, error %v, want %q", got, err, want)
 			}

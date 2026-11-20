@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"maps"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -21,15 +20,13 @@ import (
 
 var tenantResource = schema.GroupVersionResource{Group: "capsule.clastix.io", Version: "v1beta2", Resource: "tenants"}
 
-const featureLabelPrefix = "features.airohq.dev/"
-
-// NewTenantCommand shows tenant-wide feature flags.
+// NewTenantCommand shows tenant-wide solutions and capabilities.
 func NewTenantCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	var name string
 	cmd := &cobra.Command{
 		Use:     "tenant",
 		Aliases: []string{"tenants"},
-		Short:   "Show your tenant and its feature flags",
+		Short:   "Show your tenant and its solutions and capabilities",
 		Example: "  airo tenant\n  airo tenant --tenant acme",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -84,27 +81,38 @@ func showTenant(ctx context.Context, out io.Writer, flags *genericclioptions.Con
 		return fmt.Errorf("read tenant %s labels: %w", name, err)
 	}
 
-	features := make(map[string]bool)
-	for label, value := range labels {
-		if feature, ok := strings.CutPrefix(label, featureLabelPrefix); ok {
-			features[feature] = value == "true"
+	if _, err := fmt.Fprintf(out, "Tenant: %s\n", name); err != nil {
+		return err
+	}
+	if err := writeTenantLabels(out, labels, "solutions.airohq.dev/", "solution"); err != nil {
+		return err
+	}
+	return writeTenantLabels(out, labels, "capabilities.airohq.dev/", "capability")
+}
+
+func writeTenantLabels(out io.Writer, labels map[string]string, prefix, kind string) error {
+	var names []string
+	for key := range labels {
+		if name, ok := strings.CutPrefix(key, prefix); ok {
+			names = append(names, name)
 		}
 	}
-	if _, err := fmt.Fprintf(out, "Tenant: %s\n\n", name); err != nil {
+	if _, err := fmt.Fprintln(out); err != nil {
 		return err
 	}
-	if len(features) == 0 {
-		_, err := fmt.Fprintln(out, "No feature labels.")
+	if len(names) == 0 {
+		_, err := fmt.Fprintf(out, "No %s labels.\n", kind)
 		return err
 	}
+	slices.Sort(names)
 	table := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(table, "FEATURE\tSTATE")
-	for _, feature := range slices.Sorted(maps.Keys(features)) {
+	fmt.Fprintf(table, "%s\tSTATE\n", strings.ToUpper(kind))
+	for _, name := range names {
 		state := "disabled"
-		if features[feature] {
+		if labels[prefix+name] == "true" {
 			state = "enabled"
 		}
-		fmt.Fprintf(table, "%s\t%s\n", feature, state)
+		fmt.Fprintf(table, "%s\t%s\n", name, state)
 	}
 	return table.Flush()
 }

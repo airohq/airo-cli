@@ -264,8 +264,8 @@ makes either command exit nonzero.
 
 ## Tenant details
 
-`airo tenant` shows your tenant's feature flags. They apply to all projects
-in that tenant. The command uses the tenant membership shown by `airo whoami`.
+`airo tenant` lists your tenant's solutions and capabilities in separate tables.
+The command uses the tenant membership shown by `airo whoami`.
 If you belong to several tenants, choose one with `airo tenant --tenant NAME`.
 Platform admins can use the same flag to inspect a tenant by name.
 
@@ -273,11 +273,16 @@ Platform admins can use the same flag to inspect a tenant by name.
 $ airo tenant
 Tenant: acme
 
-FEATURE  STATE
-agents   enabled
+SOLUTION  STATE
+adlc      enabled
+
+CAPABILITY  STATE
+agents      enabled
+tunnels     disabled
 ```
 
-Each `features.airohq.dev/<feature>` label on the Tenant contributes one row.
+Each table lists its Tenant labels in alphabetical order. Solutions use
+`solutions.airohq.dev/<name>` and capabilities use `capabilities.airohq.dev/<name>`.
 A value of `"true"` shows as enabled. Any other value shows as disabled.
 
 ## Resources
