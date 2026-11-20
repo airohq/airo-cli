@@ -34,25 +34,25 @@ func TestTenantDetails(t *testing.T) {
 			wantDetails: "SOLUTION STATE adlc enabled preview enabled CAPABILITY STATE agents enabled preview disabled tunnels enabled",
 		},
 		{
-			name: "explicit tenant", args: []string{"tenants", "--context", "admin", "--tenant", "other"},
+			name: "explicit tenant", args: []string{"tenants", "--context", "admin", "--name", "other"},
 			token: "admin-token", owner: "other",
 			wantDetails: "No solution labels. No capability labels.",
 		},
 		{
-			name: "capabilities only", args: []string{"tenant", "--tenant", "acme"}, token: "customer-token", owner: "acme",
+			name: "capabilities only", args: []string{"tenant", "--name", "acme"}, token: "customer-token", owner: "acme",
 			labels:      map[string]string{"capabilities.airohq.dev/agents": "true"},
 			wantDetails: "No solution labels. CAPABILITY STATE agents enabled",
 		},
 		{
 			name: "no tenant membership", args: []string{"tenant", "--context", "admin"}, token: "admin-token",
-			wantErr: "has no tenant membership",
+			wantErr: "then 'airo tenant --name NAME'",
 		},
 		{
 			name: "several memberships", args: []string{"tenant", "--context", "multi"}, token: "multi-token",
-			groups: []string{"customer:acme", "customer:other"}, wantErr: "several tenants (acme, other): choose one with --tenant NAME",
+			groups: []string{"customer:acme", "customer:other"}, wantErr: "several tenants (acme, other): choose one with --name NAME",
 		},
 		{
-			name: "tenant read denied", args: []string{"tenant", "--tenant", "other"}, token: "customer-token", owner: "other",
+			name: "tenant read denied", args: []string{"tenant", "--name", "other"}, token: "customer-token", owner: "other",
 			forbidden: true, wantErr: "read tenant other: forbidden",
 		},
 	} {
