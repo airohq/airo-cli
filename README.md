@@ -579,6 +579,9 @@ of an Agent go in a file for `airo apply -f` too.
 
 ### Serve an agent on your machine
 
+[Create a demo agent and its private Tunnel](docs/remote-agent-demo.md) for a
+first run in a project.
+
 `airo agent serve` attaches this machine to an existing remote agent. Run it
 in one terminal, then use `airo chat -a reviewer` in another. The first
 turn starts a container, later turns reuse it, and five idle minutes release
