@@ -533,7 +533,8 @@ Created agent my-project/reviewer
 **The Harness, the ModelConfig and the AgentTemplate exist in the project
 already.** The platform puts Harnesses and ModelConfigs there, and `airo`
 creates neither. The wizard lists harnesses, models and templates directly
-below their questions. Use ↑/↓ or type to filter, then press Enter. The
+below their questions. A muted keyboard guide appears beneath the choices.
+Use ↑/↓ or type to filter, then press Enter. The
 selected name stays beside the question as the wizard continues. Plain
 terminals show numbered choices. A project default appears first and is marked `(default)`.
 Passing `--harness` or `--model` supplies that choice directly.

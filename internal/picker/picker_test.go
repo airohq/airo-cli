@@ -2,11 +2,15 @@ package picker
 
 import (
 	"bytes"
+	"image/color"
 	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
+
+	"github.com/airohq/airo-cli/internal/ui"
 )
 
 func TestInlineChoice(t *testing.T) {
@@ -32,6 +36,26 @@ func TestInlineChoice(t *testing.T) {
 	view = m.View()
 	if !m.done || m.answer != "alpha" || view.AltScreen || view.Content != "? Choose a model › alpha" {
 		t.Fatal(view)
+	}
+}
+
+func TestKeyboardGuideBelowChoices(t *testing.T) {
+	palette := ui.Palette{Profile: colorprofile.TrueColor, Foreground: color.White, Background: color.Black}
+	m := &menu{names: []string{"claude", "kagent"}, current: -1, visible: 1, filter: textinput.New()}
+	m.Update(tea.ColorProfileMsg{Profile: palette.Profile})
+	m.Update(tea.ForegroundColorMsg{Color: palette.Foreground})
+	m.Update(tea.BackgroundColorMsg{Color: palette.Background})
+	guide := palette.Styles().Muted.Render("↑/↓ move · type to filter · Enter choose · Esc cancel")
+	for _, tt := range []struct{ filter, lastRow string }{
+		{"", "  1–1 of 2"},
+		{"cla", palette.Styles().Accent.Render("›") + " claude"},
+		{"missing", "  No matches"},
+	} {
+		m.filter.SetValue(tt.filter)
+		m.resetMatches()
+		if got := m.View().Content; !strings.HasSuffix(got, "\n"+tt.lastRow+"\n"+guide) {
+			t.Errorf("filter %q: unexpected footer in %q", tt.filter, got)
+		}
 	}
 }
 

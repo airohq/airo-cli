@@ -76,7 +76,9 @@ func (m *menu) option(i int) string {
 	return name
 }
 
-func (m *menu) Init() tea.Cmd { return tea.Batch(m.filter.Focus(), tea.RequestBackgroundColor) }
+func (m *menu) Init() tea.Cmd {
+	return tea.Batch(m.filter.Focus(), tea.RequestBackgroundColor, tea.RequestForegroundColor)
+}
 
 func (m *menu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -84,6 +86,8 @@ func (m *menu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.palette.Profile = msg.Profile
 	case tea.BackgroundColorMsg:
 		m.palette.Background = msg.Color
+	case tea.ForegroundColorMsg:
+		m.palette.Foreground = msg.Color
 	case tea.WindowSizeMsg:
 		m.visible = max(1, min(6, msg.Height-3))
 	case tea.KeyPressMsg:
@@ -127,7 +131,7 @@ func (m *menu) View() tea.View {
 		return tea.NewView(prompt + " › " + ui.Text(m.answer))
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s › %s\n%s", prompt, m.filter.View(), s.Muted.Render("↑/↓ move · type to filter · Enter choose · Esc cancel"))
+	fmt.Fprintf(&b, "%s › %s", prompt, m.filter.View())
 	start := max(0, m.cursor-m.visible+1)
 	end := min(len(m.matches), start+m.visible)
 	for pos := start; pos < end; pos++ {
@@ -144,6 +148,7 @@ func (m *menu) View() tea.View {
 	if len(m.matches) > m.visible {
 		fmt.Fprintf(&b, "\n  %d–%d of %d", start+1, end, len(m.matches))
 	}
+	fmt.Fprintf(&b, "\n%s", s.Muted.Render("↑/↓ move · type to filter · Enter choose · Esc cancel"))
 	return tea.NewView(b.String())
 }
 
