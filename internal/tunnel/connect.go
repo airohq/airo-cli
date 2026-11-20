@@ -37,6 +37,19 @@ const tokenRefresh = 10 * time.Minute
 // connect serves the Tunnel with the service at to until ctx is done. It
 // connects out to the Tunnel's client URL as the kubeconfig's identity.
 func connect(ctx context.Context, out io.Writer, cfg *rest.Config, ns, name, clientURL, to string) error {
+	return maintain(ctx, out, cfg, ns, name, clientURL, func(ctx context.Context, up *client.Upstream, ep string) (connection, error) {
+		return up.ListenAndForward(ctx, ep, to)
+	})
+}
+
+type connection interface {
+	Close() error
+	Wait() error
+}
+
+type endpointListener func(context.Context, *client.Upstream, string) (connection, error)
+
+func maintain(ctx context.Context, out io.Writer, cfg *rest.Config, ns, name, clientURL string, open endpointListener) error {
 	host, _ := os.Hostname()
 	host, _, _ = strings.Cut(host, ".")
 	base, err := url.Parse(strings.TrimSuffix(clientURL, "/") + clientPathPrefix + dnsLabel(host, "machine"))
@@ -54,8 +67,8 @@ func connect(ctx context.Context, out io.Writer, cfg *rest.Config, ns, name, cli
 	// it started with; the new connections start before the old ones close.
 	// The Piko client gives up when the server refuses it, such as after
 	// losing access, so a stopped forwarder also reconnects, with backoff.
-	var current []*client.Forwarder
-	closeAll := func(fs []*client.Forwarder) {
+	var current []connection
+	closeAll := func(fs []connection) {
 		for _, f := range fs {
 			_ = f.Close()
 		}
@@ -63,7 +76,7 @@ func connect(ctx context.Context, out io.Writer, cfg *rest.Config, ns, name, cli
 	defer func() { closeAll(current) }()
 	backoff := time.Second
 	for {
-		next, err := listen(ctx, cfg, base, to)
+		next, err := listen(ctx, cfg, base, open)
 		if ctx.Err() != nil {
 			closeAll(next)
 			return nil
@@ -106,15 +119,15 @@ func connect(ctx context.Context, out io.Writer, cfg *rest.Config, ns, name, cli
 }
 
 // listen connects the pool and direct endpoints with a fresh token.
-func listen(ctx context.Context, cfg *rest.Config, base *url.URL, to string) ([]*client.Forwarder, error) {
+func listen(ctx context.Context, cfg *rest.Config, base *url.URL, open endpointListener) ([]connection, error) {
 	tok, err := bearer.Token(cfg)
 	if err != nil {
 		return nil, err
 	}
 	up := &client.Upstream{URL: base, Token: tok}
-	var fs []*client.Forwarder
+	var fs []connection
 	for _, ep := range []string{endpointPool, endpointDirect} {
-		f, err := up.ListenAndForward(ctx, ep, to)
+		f, err := open(ctx, up, ep)
 		if err != nil {
 			for _, f := range fs {
 				_ = f.Close()

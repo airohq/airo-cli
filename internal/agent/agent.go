@@ -62,7 +62,7 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			return fmt.Errorf("unknown agent verb %q: see airo agent --help for verbs, or use airo chat to send a prompt", args[0])
 		},
 	}
-	cmd.AddCommand(newCreateCommand(flags))
+	cmd.AddCommand(newCreateCommand(flags), newServeCommand(flags))
 	cmd.AddCommand(generic.Commands(flags, cmd.Name())...)
 	return cmd
 }

@@ -577,6 +577,47 @@ with the cluster's reason, such as a model its Harness cannot use. Delete the
 agent, or change it with `airo apply -f`. Tools, skills and the other fields
 of an Agent go in a file for `airo apply -f` too.
 
+### Serve an agent on your machine
+
+`airo agent serve` attaches this machine to an existing remote agent. Run it
+in one terminal, then use `airo chat -a reviewer` in another. The first
+turn starts a container, later turns reuse it, and five idle minutes release
+it. Its named volume keeps the workspace and coding agent's sessions.
+
+```sh
+airo agent serve -a reviewer -- --harness codex --codex-sandbox workspace-write
+```
+
+Install the local `remote-harness` helper and load a matching worker-capable
+runner image into the engine. During local development, build the helper
+and image from the matching `kagent-remote-harness` checkout:
+
+```sh
+go install ./cmd/remote-harness
+docker build --target runner -t local/remote-harness:dev .
+airo agent serve -a reviewer -- --harness codex --codex-sandbox workspace-write --image local/remote-harness:dev
+```
+
+Put the installed helper on `PATH`, or select its path with
+`--runner-command`. Arguments after `--` belong to the helper. Set the
+coding agent's credential in its environment. For a different Engine API
+socket, including Podman's compatibility service, set `DOCKER_HOST`.
+The helper talks to the engine through its Go client.
+
+The project needs an Agent with a remote Harness whose `spec.env` sets
+`REMOTE_HARNESS_URL` to a private Tunnel's `status.callerURL`. The Agent's
+EgressPolicy must inject its Substrate actor JWT into `Authorization` for
+that origin, with the same URL as audience. Grant the actor `call` on that
+Tunnel and the person serving it `connect`. The command reads the Agent,
+Harness and Tunnel and opens the outbound connection. A single machine
+should serve each runner Tunnel. A project-wide actor `call` grant lets
+other authorized sessions in that project run turns here.
+
+Ctrl-C stops serving and cancels an active local turn. Restart with the
+same Tunnel and engine to reuse the workspace. See the
+[remote harness](https://github.com/airohq/kagent-remote-harness) for the
+runner settings and execution boundary.
+
 ## Session
 
 **`airo session` shows your sessions with the agents of your project.** A
