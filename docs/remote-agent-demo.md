@@ -5,6 +5,40 @@ machine and chat from a second terminal. All commands below use the same Airo
 context and the same project namespace. If the project already has a remote
 Harness, its Tunnel and its EgressPolicy, skip to **Create the Agent**.
 
+## Temporary agents
+
+With a relay reserved for temporary agents, the presenter runs:
+
+```sh
+airo agent serve --harness codex --codex-sandbox read-only --image local/remote-harness:codex-auth-fix
+```
+
+With a released worker loaded, use that image tag instead. The server prints
+the generated Agent name and a chat command. Ctrl-C deletes the Agent and its
+private Tunnel. Losing the process or laptop stops the five-minute expiry
+renewals. The cluster janitor removes the Tunnel after its 15-minute expiry,
+and Kubernetes garbage collection removes its Agent. The relay configuration
+and the local workspace survive. One relay supports one server at a time;
+reserve another name for an additional simultaneous server.
+
+**One-time setup for the administrator.** Follow **Prepare the project** below
+with a new, dedicated name (for example, `demo=local-serve`). After creating
+the four resources, run these two commands and skip **Create the Agent**.
+Delete only the new setup Tunnel you just created. This frees the reserved
+name for the CLI. Labelling the EgressPolicy opts the relay into unnamed
+serving. Use a dedicated demo project if its other agent sessions should not
+have access to the local machine.
+
+```sh
+airo -n "$project" tunnel delete "$demo"
+kubectl -n "$project" label \
+  egresspolicy.api.kagent.dev "$demo" airohq.dev/temporary-agent=true
+```
+
+The policy and Harness must share the reserved Tunnel name. The CLI verifies
+the new Tunnel's caller URL against the Harness before serving. An occupied
+name is skipped. A named `--agent` continues to use its existing Tunnel.
+
 ## Prepare the project (once, as a project administrator)
 
 This step requires permission to create Roles, RoleBindings, EgressPolicies,

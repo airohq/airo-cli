@@ -3,13 +3,20 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"strings"
 	"testing"
 
-	"github.com/airohq/airo-cli/internal/tunnel"
+	"github.com/airohq/kagent-remote-harness/runner/supervisor"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -79,8 +86,8 @@ func TestRunnerProxyIdentity(t *testing.T) {
 func TestEmbeddedRunnerStartsColdWithoutHelper(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("DOCKER_HOST", "unix:///dev/null/absent-engine.sock")
-	target := tunnel.RunnerTunnel{Namespace: "team", UID: "test"}
-	err := serveRunner(t.Context(), target, "", []string{"--harness", "codex", "--codex-sandbox", "read-only"}, io.Discard, func(_ context.Context, handler http.Handler) error {
+	opts := supervisor.Options{Backend: "container", WorkerOptions: supervisor.WorkerOptions{Harness: "codex", CodexSandbox: "read-only", IdleTimeout: time.Minute, TurnTimeout: time.Minute}}
+	err := serveRunner(t.Context(), "team", "test", opts, "", nil, io.Discard, func(_ context.Context, handler http.Handler) error {
 		req := httptest.NewRequest(http.MethodGet, "/v1/info", nil)
 		req.Header.Set("Tunnel-Caller", "substrate:actor/team/session")
 		w := httptest.NewRecorder()
@@ -98,6 +105,40 @@ func TestEmbeddedRunnerStartsColdWithoutHelper(t *testing.T) {
 		return nil
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTemporaryAgentOwnsOnlyItsNewResources(t *testing.T) {
+	owner := metav1.OwnerReference{APIVersion: "tunnels.airohq.dev/v1alpha1", Kind: "Tunnel", Name: "relay", UID: "tunnel-uid"}
+	existing := build("team", "reviewer", options{harness: "relay"})
+	c := fake.NewClientBuilder().WithObjects(existing).Build()
+	stopped := errors.New("serve failed")
+	var key client.ObjectKey
+	err := withTemporaryAgent(t.Context(), c, "team", "relay", owner, func(name string) error {
+		key = client.ObjectKey{Namespace: "team", Name: name}
+		got := &unstructured.Unstructured{}
+		got.SetGroupVersionKind(agentGVK)
+		if err := c.Get(t.Context(), key, got); err != nil {
+			t.Fatal(err)
+		}
+		refs := got.GetOwnerReferences()
+		policies, _, _ := unstructured.NestedSlice(got.Object, "spec", "egressPolicyRefs")
+		if !strings.HasPrefix(name, "local-agent-") || len(refs) != 1 || refs[0] != owner ||
+			detailString(got.Object, "spec", "harnessRef", "name") != "relay" ||
+			!reflect.DeepEqual(policies, []any{map[string]any{"name": "relay"}}) {
+			t.Fatalf("unexpected temporary Agent: %+v", got)
+		}
+		return stopped
+	})
+	if !errors.Is(err, stopped) {
+		t.Fatal(err)
+	}
+	check := existing.DeepCopy()
+	if err := c.Get(t.Context(), key, check); !apierrors.IsNotFound(err) {
+		t.Fatalf("temporary agent after cleanup: %v", err)
+	}
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(existing), check); err != nil {
 		t.Fatal(err)
 	}
 }

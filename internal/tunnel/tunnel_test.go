@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -143,7 +144,7 @@ func TestExtendMovesTheExpiryForward(t *testing.T) {
 	old := existing(false, "kubernetes")
 	old.SetAnnotations(map[string]string{expiresAnnotation: time.Now().Add(time.Minute).UTC().Format(time.RFC3339)})
 	c := fake.NewClientBuilder().WithObjects(old).Build()
-	if err := extend(context.Background(), c, "team", "my-app"); err != nil {
+	if err := extend(context.Background(), c, "team", "my-app", old.GetUID()); err != nil {
 		t.Fatal(err)
 	}
 	if in := expiresIn(t, c); in < expiresAfter-time.Minute {
@@ -157,7 +158,9 @@ func TestKeepAliveExtendsUntilStopped(t *testing.T) {
 	c := fake.NewClientBuilder().WithObjects(old).Build()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- keepAlive(ctx, io.Discard, c, "team", "my-app", time.Millisecond, time.Millisecond) }()
+	go func() {
+		done <- keepAlive(ctx, io.Discard, c, "team", "my-app", "", time.Millisecond, time.Millisecond)
+	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for expiresIn(t, c) < expiresAfter-time.Minute {
 		if time.Now().After(deadline) {
@@ -175,7 +178,34 @@ func TestKeepAliveStopsWhenTheTunnelIsGone(t *testing.T) {
 	c := fake.NewClientBuilder().Build()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := keepAlive(ctx, io.Discard, c, "team", "my-app", time.Millisecond, time.Millisecond); err == nil {
+	if err := keepAlive(ctx, io.Discard, c, "team", "my-app", "", time.Millisecond, time.Millisecond); err == nil {
 		t.Error("keepAlive = nil, want an error for a Tunnel that is gone")
+	}
+}
+
+func TestTemporaryRunnerDoesNotAdoptAnExistingTunnel(t *testing.T) {
+	obj := existing(false, "kubernetes")
+	obj.SetUID("another-owner")
+	c := fake.NewClientBuilder().WithObjects(obj).Build()
+	err := WithTemporaryRunnerTunnel(t.Context(), io.Discard, c, obj.GetNamespace(), obj.GetName(), "unused", nil)
+	if !errors.Is(err, ErrTunnelInUse) {
+		t.Fatal(err)
+	}
+	got := obj.DeepCopy()
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(obj), got); err != nil {
+		t.Fatal(err)
+	}
+	if got.GetUID() != obj.GetUID() || len(got.GetAnnotations()) != 0 {
+		t.Fatal("existing Tunnel was changed")
+	}
+}
+
+func TestPortForwardLeavesTemporaryAgentTunnelAlone(t *testing.T) {
+	obj := existing(false, "kubernetes")
+	obj.SetAnnotations(map[string]string{expiresAnnotation: expiry(time.Now())})
+	obj.SetLabels(map[string]string{TemporaryAgentLabel: "true"})
+	c := fake.NewClientBuilder().WithObjects(obj).Build()
+	if _, _, err := ensure(t.Context(), c, obj.GetNamespace(), obj.GetName(), spec{}); err == nil {
+		t.Fatal("port forward adopted a temporary agent Tunnel")
 	}
 }

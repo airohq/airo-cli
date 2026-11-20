@@ -579,10 +579,20 @@ of an Agent go in a file for `airo apply -f` too.
 
 ### Serve an agent on your machine
 
-[Create a demo agent and its private Tunnel](docs/remote-agent-demo.md) for a
-first run in a project.
+Omit `--agent` to create a temporary Agent and private Tunnel in a project
+with a [temporary relay configured](docs/remote-agent-demo.md#temporary-agents).
+Run the printed chat command in another terminal using the same context.
 
-`airo agent serve` attaches this machine to an existing remote agent. Run it
+```sh
+airo agent serve --harness codex --codex-sandbox read-only
+```
+
+Ctrl-C deletes both resources. If the process dies, the Tunnel expires about
+15 minutes after its last renewal. Kubernetes then deletes the Agent owned by
+that Tunnel. Each relay serves one temporary Agent at a time. Its local
+workspace is reused on the same container engine.
+
+Pass `--agent` to attach this machine to an existing remote agent. Run it
 in one terminal, then use `airo chat -a reviewer` in another. The first
 turn starts a container, later turns reuse it, and five idle minutes release
 it. Its named volume keeps the workspace and coding agent's sessions.

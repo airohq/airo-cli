@@ -37,8 +37,8 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	settings := flag.NewFlagSet("runner", flag.ContinueOnError)
 	defaults.BindFlags(settings)
 	cmd := &cobra.Command{
-		Use: "serve --agent NAME [flags]", Short: "Run this agent's turns on this machine, starting its sandbox on demand",
-		Example: "  airo agent serve -a reviewer --sandbox container --harness codex --codex-sandbox workspace-write",
+		Use: "serve [--agent NAME] [flags]", Short: "Run this agent's turns on this machine, starting its sandbox on demand",
+		Example: "  airo agent serve --harness codex --codex-sandbox read-only\n  airo agent serve -a reviewer --sandbox container --harness codex --codex-sandbox workspace-write",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 && cmd.ArgsLenAtDash() != 0 {
 				return errors.New("unexpected positional argument: use --harness and --sandbox, or pass helper flags after --")
@@ -60,10 +60,6 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			t, err := agentTunnel(ctx, c, ns, name)
-			if err != nil {
-				return err
-			}
 			// Keep the previous arguments after --. Explicit airo flags take
 			// precedence and are also forwarded to a custom executable.
 			args = append([]string(nil), args...)
@@ -78,18 +74,42 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 				}
 			})
 			out := cmd.ErrOrStderr()
-			return serveRunner(ctx, t, program, args, out, func(ctx context.Context, h http.Handler) error {
-				fmt.Fprintf(out, "Serving agent %s/%s through tunnel %s. Waiting for turns.\n", ns, name, t.Name)
-				return t.ServeHTTP(ctx, out, cfg, h)
-			})
+			if program == "" {
+				settings.SetOutput(out)
+				if err := settings.Parse(args); err != nil {
+					return err
+				}
+				if settings.NArg() != 0 {
+					return fmt.Errorf("unexpected runner argument %q", settings.Arg(0))
+				}
+				if _, err := defaults.Adapter(); err != nil {
+					return err
+				}
+			}
+			serve := func(ctx context.Context, agentName string, t tunnel.RunnerTunnel, workspace string) error {
+				return serveRunner(ctx, t.Namespace, workspace, defaults, program, args, out, func(ctx context.Context, h http.Handler) error {
+					if name == "" {
+						fmt.Fprintf(out, "Chat with this temporary agent in another terminal:\nairo -n %s chat -a %s\n", ns, agentName)
+					}
+					fmt.Fprintf(out, "Serving agent %s/%s through tunnel %s. Waiting for turns.\n", ns, agentName, t.Name)
+					return t.ServeHTTP(ctx, out, cfg, h)
+				})
+			}
+			if name == "" {
+				return serveTemporary(ctx, c, ns, out, serve)
+			}
+			t, err := agentTunnel(ctx, c, ns, name)
+			if err != nil {
+				return err
+			}
+			return serve(ctx, name, t, t.UID)
 		},
 	}
-	cmd.Flags().StringVarP(&name, "agent", "a", "", "agent whose remote Harness points at the runner Tunnel (required)")
+	cmd.Flags().StringVarP(&name, "agent", "a", "", "existing remote Agent to serve (default: create a temporary Agent)")
 	cmd.Flags().BoolVarP(&defaults.Verbose, "verbose", "v", false, settings.Lookup("verbose").Usage)
 	cmd.Flags().AddGoFlagSet(settings)
 	_ = cmd.Flags().MarkHidden("runner")
 	cmd.Flags().StringVar(&program, "runner-command", "", "use an external supervisor executable (default: embedded runner)")
-	_ = cmd.MarkFlagRequired("agent")
 	return cmd
 }
 
@@ -109,19 +129,27 @@ func agentTunnel(ctx context.Context, c client.Reader, ns, name string) (tunnel.
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: ref}, h); err != nil {
 		return zero, err
 	}
-	env, _, err := unstructured.NestedSlice(h.Object, "spec", "env")
+	origin, err := remoteOrigin(h)
 	if err != nil {
 		return zero, err
+	}
+	return tunnel.FindRunnerTunnel(ctx, c, ns, origin)
+}
+
+func remoteOrigin(h *unstructured.Unstructured) (string, error) {
+	env, _, err := unstructured.NestedSlice(h.Object, "spec", "env")
+	if err != nil {
+		return "", err
 	}
 	for _, entry := range env {
 		item, _ := entry.(map[string]any)
 		if item["name"] == "REMOTE_HARNESS_URL" {
 			if origin := detailString(item, "value"); origin != "" {
-				return tunnel.FindRunnerTunnel(ctx, c, ns, origin)
+				return origin, nil
 			}
 		}
 	}
-	return zero, fmt.Errorf("harness %s needs REMOTE_HARNESS_URL set to its Tunnel's status.callerURL in spec.env", ref)
+	return "", fmt.Errorf("harness %s needs REMOTE_HARNESS_URL set to its Tunnel's status.callerURL in spec.env", h.GetName())
 }
 
 // Remote harness protocol v1. Only requests authenticated by the Tunnel
@@ -147,25 +175,14 @@ func runnerRequests(ns, token string, next http.Handler) http.Handler {
 
 type serveTunnel func(context.Context, http.Handler) error
 
-func serveRunner(ctx context.Context, t tunnel.RunnerTunnel, program string, args []string, out io.Writer, serve serveTunnel) (err error) {
+func serveRunner(ctx context.Context, ns, workspace string, opts supervisor.Options, program string, args []string, out io.Writer, serve serveTunnel) (err error) {
 	var secret [32]byte
 	rand.Read(secret[:])
 	token := hex.EncodeToString(secret[:])
-	identity := sha256.Sum256([]byte(t.UID))
+	identity := sha256.Sum256([]byte(workspace))
 	name := fmt.Sprintf("airo-runner-%x", identity[:12])
 	if program != "" {
-		return withExternalSupervisor(ctx, t.Namespace, name, token, program, args, out, serve)
-	}
-
-	var opts supervisor.Options
-	fs := flag.NewFlagSet("runner", flag.ContinueOnError)
-	fs.SetOutput(out)
-	opts.BindFlags(fs)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return fmt.Errorf("unexpected runner argument %q", fs.Arg(0))
+		return withExternalSupervisor(ctx, ns, name, token, program, args, out, serve)
 	}
 
 	host, err := supervisor.New(name, token, opts, slog.New(slog.NewTextHandler(out, nil)))
@@ -173,7 +190,7 @@ func serveRunner(ctx context.Context, t tunnel.RunnerTunnel, program string, arg
 		return err
 	}
 	defer func() { err = errors.Join(err, host.Close()) }()
-	return serve(ctx, runnerRequests(t.Namespace, token, host))
+	return serve(ctx, runnerRequests(ns, token, host))
 }
 
 func withExternalSupervisor(ctx context.Context, ns, name, token, program string, args []string, out io.Writer, serve serveTunnel) error {

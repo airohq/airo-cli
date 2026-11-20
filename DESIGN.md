@@ -434,6 +434,7 @@ it when the command cannot.**
 
 | Resource | On exit | Backstop in the cluster |
 | --- | --- | --- |
+| Created for unnamed `airo agent serve` | Deletes its temporary Agent and Tunnel | The Tunnel expires and Kubernetes garbage-collects its dependent Agent |
 | Created for the task, such as the Tunnel of `airo tunnel 3000` | The command deletes it | The cluster deletes it soon after the command is gone, also when the process was killed |
 | Outlives the terminal, such as an agent's session | Ctrl-C detaches, the work goes on | Its own system archives it after a longer time |
 | Existed before the command | Left as it is | None |
