@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -19,7 +21,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/airohq/kagent-remote-harness/runner/supervisor"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -28,13 +32,16 @@ import (
 )
 
 func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
-	var name, program, backend string
+	var name, program string
+	var defaults supervisor.Options
+	settings := flag.NewFlagSet("runner", flag.ContinueOnError)
+	defaults.BindFlags(settings)
 	cmd := &cobra.Command{
-		Use: "serve --agent NAME [--runner TYPE] -- [RUNNER FLAGS]", Short: "Run this agent's turns on this machine, starting its runner on demand",
-		Example: "  airo agent serve -a reviewer --runner container -- --harness codex --codex-sandbox workspace-write",
+		Use: "serve --agent NAME [flags]", Short: "Run this agent's turns on this machine, starting its runner on demand",
+		Example: "  airo agent serve -a reviewer --runner container --harness codex --codex-sandbox workspace-write",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 && cmd.ArgsLenAtDash() != 0 {
-				return errors.New("pass runner settings after --, for example -- --harness codex --codex-sandbox workspace-write")
+				return errors.New("unexpected positional argument: use --harness and runner flags, or pass helper flags after --")
 			}
 			return nil
 		},
@@ -57,20 +64,24 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Leave the default to the helper, including older and custom helpers.
-			if cmd.Flags().Changed("runner") {
-				args = append(args, "--runner", backend)
-			}
+			// Keep the previous arguments after --. Explicit airo flags take
+			// precedence and are also forwarded to a custom executable.
+			args = append([]string(nil), args...)
+			cmd.Flags().Visit(func(f *pflag.Flag) {
+				if settings.Lookup(f.Name) != nil {
+					args = append(args, "--"+f.Name+"="+f.Value.String())
+				}
+			})
 			out := cmd.ErrOrStderr()
-			return withSupervisor(ctx, t, program, args, out, func(ctx context.Context, h http.Handler) error {
+			return serveRunner(ctx, t, program, args, out, func(ctx context.Context, h http.Handler) error {
 				fmt.Fprintf(out, "Serving agent %s/%s through tunnel %s. Waiting for turns.\n", ns, name, t.Name)
 				return t.ServeHTTP(ctx, out, cfg, h)
 			})
 		},
 	}
 	cmd.Flags().StringVarP(&name, "agent", "a", "", "agent whose remote Harness points at the runner Tunnel (required)")
-	cmd.Flags().StringVar(&backend, "runner", "container", "execution backend provided by the runner helper")
-	cmd.Flags().StringVar(&program, "runner-command", "remote-harness", "local executable implementing the supervisor protocol")
+	cmd.Flags().AddGoFlagSet(settings)
+	cmd.Flags().StringVar(&program, "runner-command", "", "use an external supervisor executable (default: embedded runner)")
 	_ = cmd.MarkFlagRequired("agent")
 	return cmd
 }
@@ -108,15 +119,7 @@ func agentTunnel(ctx context.Context, c client.Reader, ns, name string) (tunnel.
 
 // Remote harness protocol v1. Only requests authenticated by the Tunnel
 // gateway as project actors can be translated to the local runner identity.
-func runnerProxy(ns, token string, tr http.RoundTripper) http.Handler {
-	proxy := &httputil.ReverseProxy{Transport: tr, FlushInterval: -1, Rewrite: func(p *httputil.ProxyRequest) {
-		p.Out.URL.Scheme = "http"
-		p.Out.URL.Host = "runner"
-		p.Out.Host = "runner"
-		p.Out.Header = make(http.Header)
-		p.Out.Header.Set("Authorization", "Bearer "+token)
-		p.Out.Header.Set("Content-Type", "application/json")
-	}}
+func runnerRequests(ns, token string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, ok := strings.CutPrefix(r.Header.Get("Tunnel-Caller"), "substrate:actor/"+ns+"/")
 		if !ok || session == "" || strings.Contains(session, "/") {
@@ -127,11 +130,46 @@ func runnerProxy(ns, token string, tr http.RoundTripper) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		proxy.ServeHTTP(w, r)
+		out := r.Clone(r.Context())
+		out.Header = make(http.Header)
+		out.Header.Set("Content-Type", "application/json")
+		out.Header.Set("Authorization", "Bearer "+token)
+		next.ServeHTTP(w, out)
 	})
 }
 
-func withSupervisor(ctx context.Context, t tunnel.RunnerTunnel, program string, args []string, out io.Writer, serve func(context.Context, http.Handler) error) error {
+type serveTunnel func(context.Context, http.Handler) error
+
+func serveRunner(ctx context.Context, t tunnel.RunnerTunnel, program string, args []string, out io.Writer, serve serveTunnel) (err error) {
+	var secret [32]byte
+	rand.Read(secret[:])
+	token := hex.EncodeToString(secret[:])
+	identity := sha256.Sum256([]byte(t.UID))
+	name := fmt.Sprintf("airo-runner-%x", identity[:12])
+	if program != "" {
+		return withExternalSupervisor(ctx, t.Namespace, name, token, program, args, out, serve)
+	}
+
+	var opts supervisor.Options
+	fs := flag.NewFlagSet("runner", flag.ContinueOnError)
+	fs.SetOutput(out)
+	opts.BindFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected runner argument %q", fs.Arg(0))
+	}
+
+	host, err := supervisor.New(name, token, opts, slog.New(slog.NewTextHandler(out, nil)))
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, host.Close()) }()
+	return serve(ctx, runnerRequests(t.Namespace, token, host))
+}
+
+func withExternalSupervisor(ctx context.Context, ns, name, token, program string, args []string, out io.Writer, serve serveTunnel) error {
 	path, err := exec.LookPath(program)
 	if err != nil {
 		return fmt.Errorf("find runner helper %q (install a helper with the supervise command): %w", program, err)
@@ -142,11 +180,7 @@ func withSupervisor(ctx context.Context, t tunnel.RunnerTunnel, program string, 
 	}
 	defer os.RemoveAll(dir)
 	socket := filepath.Join(dir, "r")
-	var secret [32]byte
-	rand.Read(secret[:])
-	token := hex.EncodeToString(secret[:])
-	identity := sha256.Sum256([]byte(t.UID))
-	args = append(append([]string{"supervise"}, args...), "--socket", socket, "--name", fmt.Sprintf("airo-runner-%x", identity[:12]))
+	args = append(append([]string{"supervise"}, args...), "--socket", socket, "--name", name)
 	helper := exec.Command(path, args...)
 	helper.Env = append(os.Environ(), "REMOTE_HARNESS_TOKEN="+token, "REMOTE_HARNESS_PARENT_PIPE=1")
 	helper.Stdout = out
@@ -186,7 +220,12 @@ func withSupervisor(ctx context.Context, t tunnel.RunnerTunnel, program string, 
 	if err := waitSupervisor(ctx, tr, token); err != nil {
 		return err
 	}
-	err = serve(ctx, runnerProxy(t.Namespace, token, tr))
+	proxy := &httputil.ReverseProxy{Transport: tr, FlushInterval: -1, Rewrite: func(p *httputil.ProxyRequest) {
+		p.Out.URL.Scheme = "http"
+		p.Out.URL.Host = "runner"
+		p.Out.Host = "runner"
+	}}
+	err = serve(ctx, runnerRequests(ns, token, proxy))
 	if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
 		return cause
 	}

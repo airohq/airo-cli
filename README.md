@@ -585,26 +585,26 @@ turn starts a container, later turns reuse it, and five idle minutes release
 it. Its named volume keeps the workspace and coding agent's sessions.
 
 ```sh
-airo agent serve -a reviewer --runner container -- --harness codex --codex-sandbox workspace-write
+airo agent serve -a reviewer --harness codex --codex-sandbox workspace-write
 ```
 
-Install the local `remote-harness` helper and load a matching worker-capable
-runner image into the engine. During local development, build the helper
-and image from the matching `kagent-remote-harness` checkout:
+The machine running `airo` needs a container engine and a worker-capable
+runner image loaded into it. For local development, build the image from
+the matching `kagent-remote-harness` checkout, then serve the agent:
 
 ```sh
-go install ./cmd/remote-harness
 docker build --target runner -t local/remote-harness:dev .
-airo agent serve -a reviewer -- --harness codex --codex-sandbox workspace-write --image local/remote-harness:dev
+airo agent serve -a reviewer --harness codex --codex-sandbox workspace-write --image local/remote-harness:dev
 ```
 
-`--runner` selects the execution backend. The remote-harness helper currently supports
-`container`, its default. `--harness` selects the coding agent inside it.
-Put the installed helper on `PATH`, or select its path with
-`--runner-command`. Arguments after `--` belong to the helper. Set the
-coding agent's credential in its environment. For a different Engine API
-socket, including Podman's compatibility service, set `DOCKER_HOST`.
-The helper talks to the engine through its Go client.
+`airo` embeds the Go supervisor. `--runner` selects the execution backend
+(default `container`), and `--harness` selects the coding agent in the
+worker. Set the provider credential in the environment of `airo agent
+serve`. To select another Engine API socket, set `DOCKER_HOST`.
+
+To run a separate supervisor, pass `--runner-command /path/to/remote-harness`.
+Flags after `--` are passed through to that program. The embedded runner
+also accepts the previous `-- --harness ...` syntax.
 
 The project needs an Agent with a remote Harness whose `spec.env` sets
 `REMOTE_HARNESS_URL` to a private Tunnel's `status.callerURL`. The Agent's

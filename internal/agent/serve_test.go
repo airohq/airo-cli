@@ -2,11 +2,14 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/airohq/airo-cli/internal/tunnel"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -41,18 +44,14 @@ func TestAgentTunnel(t *testing.T) {
 	}
 }
 
-type runnerTransport func(*http.Request) (*http.Response, error)
-
-func (f runnerTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 func TestRunnerProxyIdentity(t *testing.T) {
 	calls := 0
-	handler := runnerProxy("team", "local-secret", runnerTransport(func(r *http.Request) (*http.Response, error) {
+	handler := runnerRequests("team", "local-secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if r.Header.Get("Authorization") != "Bearer local-secret" || r.Header.Get("Tunnel-Caller") != "" || r.Header.Get("Cookie") != "" {
 			t.Fatal("unexpected headers", r.Header)
 		}
-		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("stream"))}, nil
+		io.WriteString(w, "stream")
 	}))
 	for _, tc := range []struct {
 		caller, path string
@@ -74,5 +73,31 @@ func TestRunnerProxyIdentity(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("forwarded %d requests", calls)
+	}
+}
+
+func TestEmbeddedRunnerStartsColdWithoutHelper(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("DOCKER_HOST", "unix:///dev/null/absent-engine.sock")
+	target := tunnel.RunnerTunnel{Namespace: "team", UID: "test"}
+	err := serveRunner(t.Context(), target, "", []string{"--harness", "codex", "--codex-sandbox", "read-only"}, io.Discard, func(_ context.Context, handler http.Handler) error {
+		req := httptest.NewRequest(http.MethodGet, "/v1/info", nil)
+		req.Header.Set("Tunnel-Caller", "substrate:actor/team/session")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK || w.Header().Get("Remote-Harness-Protocol") != "1" {
+			t.Fatalf("info: %d %s", w.Code, w.Body)
+		}
+		var result struct{ Harnesses []string }
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			return err
+		}
+		if len(result.Harnesses) != 1 || result.Harnesses[0] != "codex" {
+			t.Fatalf("harnesses: %v", result.Harnesses)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
