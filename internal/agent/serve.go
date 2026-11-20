@@ -37,11 +37,11 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	settings := flag.NewFlagSet("runner", flag.ContinueOnError)
 	defaults.BindFlags(settings)
 	cmd := &cobra.Command{
-		Use: "serve --agent NAME [flags]", Short: "Run this agent's turns on this machine, starting its runner on demand",
-		Example: "  airo agent serve -a reviewer --runner container --harness codex --codex-sandbox workspace-write",
+		Use: "serve --agent NAME [flags]", Short: "Run this agent's turns on this machine, starting its sandbox on demand",
+		Example: "  airo agent serve -a reviewer --sandbox container --harness codex --codex-sandbox workspace-write",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 && cmd.ArgsLenAtDash() != 0 {
-				return errors.New("unexpected positional argument: use --harness and runner flags, or pass helper flags after --")
+				return errors.New("unexpected positional argument: use --harness and --sandbox, or pass helper flags after --")
 			}
 			return nil
 		},
@@ -69,7 +69,12 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			args = append([]string(nil), args...)
 			cmd.Flags().Visit(func(f *pflag.Flag) {
 				if settings.Lookup(f.Name) != nil {
-					args = append(args, "--"+f.Name+"="+f.Value.String())
+					name := f.Name
+					if program != "" && name == "sandbox" {
+						// Older standalone supervisors use the original flag name.
+						name = "runner"
+					}
+					args = append(args, "--"+name+"="+f.Value.String())
 				}
 			})
 			out := cmd.ErrOrStderr()
@@ -81,6 +86,7 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&name, "agent", "a", "", "agent whose remote Harness points at the runner Tunnel (required)")
 	cmd.Flags().AddGoFlagSet(settings)
+	_ = cmd.Flags().MarkHidden("runner")
 	cmd.Flags().StringVar(&program, "runner-command", "", "use an external supervisor executable (default: embedded runner)")
 	_ = cmd.MarkFlagRequired("agent")
 	return cmd

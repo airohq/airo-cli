@@ -585,22 +585,29 @@ turn starts a container, later turns reuse it, and five idle minutes release
 it. Its named volume keeps the workspace and coding agent's sessions.
 
 ```sh
-airo agent serve -a reviewer --harness codex --codex-sandbox workspace-write
+airo agent serve -a reviewer --harness codex --sandbox container --codex-sandbox workspace-write
 ```
 
-The machine running `airo` needs a container engine and a worker-capable
-runner image loaded into it. For local development, build the image from
-the matching `kagent-remote-harness` checkout, then serve the agent:
+Choose the coding agent with `--harness claude` or `--harness codex`.
+`--sandbox` selects where it runs. The default and currently supported
+sandbox is `container`. The original `--runner` spelling also works.
+`--codex-sandbox` controls Codex's own filesystem access inside that
+environment.
+
+The `runner` Dockerfile target in `kagent-remote-harness` builds a single
+worker image containing both Claude Code and Codex. That repository's
+GitHub Actions publish it to `ghcr.io/airohq/kagent-remote-harness/runner`.
+The container engine needs a local copy that supports the `worker` command.
+To test a development branch, build from the matching harness checkout:
 
 ```sh
 docker build --target runner -t local/remote-harness:dev .
-airo agent serve -a reviewer --harness codex --codex-sandbox workspace-write --image local/remote-harness:dev
+airo agent serve -a reviewer --harness codex --sandbox container --codex-sandbox workspace-write --image local/remote-harness:dev
 ```
 
-`airo` embeds the Go supervisor. `--runner` selects the execution backend
-(default `container`), and `--harness` selects the coding agent in the
-worker. Set the provider credential in the environment of `airo agent
-serve`. To select another Engine API socket, set `DOCKER_HOST`.
+`airo` embeds the Go supervisor. Set the provider credential in the
+environment of `airo agent serve`. To select another Engine API socket,
+set `DOCKER_HOST`.
 
 To run a separate supervisor, pass `--runner-command /path/to/remote-harness`.
 Flags after `--` are passed through to that program. The embedded runner
