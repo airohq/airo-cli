@@ -28,12 +28,12 @@ import (
 )
 
 func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
-	var name, program string
+	var name, program, backend string
 	cmd := &cobra.Command{
-		Use: "serve --agent NAME -- [RUNNER FLAGS]", Short: "Run this agent's turns on this machine, starting its runner on demand",
-		Example: "  airo agent serve -a reviewer -- --harness codex --codex-sandbox workspace-write",
+		Use: "serve --agent NAME [--runner TYPE] -- [RUNNER FLAGS]", Short: "Run this agent's turns on this machine, starting its runner on demand",
+		Example: "  airo agent serve -a reviewer --runner container -- --harness codex --codex-sandbox workspace-write",
 		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 || cmd.ArgsLenAtDash() != 0 {
+			if len(args) > 0 && cmd.ArgsLenAtDash() != 0 {
 				return errors.New("pass runner settings after --, for example -- --harness codex --codex-sandbox workspace-write")
 			}
 			return nil
@@ -57,6 +57,10 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Leave the default to the helper, including older and custom helpers.
+			if cmd.Flags().Changed("runner") {
+				args = append(args, "--runner", backend)
+			}
 			out := cmd.ErrOrStderr()
 			return withSupervisor(ctx, t, program, args, out, func(ctx context.Context, h http.Handler) error {
 				fmt.Fprintf(out, "Serving agent %s/%s through tunnel %s. Waiting for turns.\n", ns, name, t.Name)
@@ -65,6 +69,7 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&name, "agent", "a", "", "agent whose remote Harness points at the runner Tunnel (required)")
+	cmd.Flags().StringVar(&backend, "runner", "container", "execution backend provided by the runner helper")
 	cmd.Flags().StringVar(&program, "runner-command", "remote-harness", "local executable implementing the supervisor protocol")
 	_ = cmd.MarkFlagRequired("agent")
 	return cmd

@@ -585,7 +585,7 @@ turn starts a container, later turns reuse it, and five idle minutes release
 it. Its named volume keeps the workspace and coding agent's sessions.
 
 ```sh
-airo agent serve -a reviewer -- --harness codex --codex-sandbox workspace-write
+airo agent serve -a reviewer --runner container -- --harness codex --codex-sandbox workspace-write
 ```
 
 Install the local `remote-harness` helper and load a matching worker-capable
@@ -598,6 +598,8 @@ docker build --target runner -t local/remote-harness:dev .
 airo agent serve -a reviewer -- --harness codex --codex-sandbox workspace-write --image local/remote-harness:dev
 ```
 
+`--runner` selects the execution backend. The remote-harness helper currently supports
+`container`, its default. `--harness` selects the coding agent inside it.
 Put the installed helper on `PATH`, or select its path with
 `--runner-command`. Arguments after `--` belong to the helper. Set the
 coding agent's credential in its environment. For a different Engine API
