@@ -90,7 +90,9 @@ tunnel 3000` serves a local port. A bare `airo agent` shows its resource command
   creates refers to the resource by its real name, so a later change of the
   default moves nothing that exists.
 - **Every picker is the same one**, from `internal/picker`. Choices appear inline
-  below the question. Arrow keys move, typing filters, Enter chooses and Esc
+  below the question. Place the keyboard guide below the choices and any
+  result count or empty-state message. Use Muted for this secondary help.
+  Arrow keys move, typing filters, Enter chooses and Esc
   cancels. The selected name stays in the transcript. Plain terminals use
   numbered choices. Redirected commands take explicit arguments and flags.
 
