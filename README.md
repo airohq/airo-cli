@@ -606,7 +606,12 @@ airo agent serve -a reviewer --harness codex --sandbox container --codex-sandbox
 ```
 
 `airo` embeds the Go supervisor. Set the provider credential in the
-environment of `airo agent serve`. To select another Engine API socket,
+environment of `airo agent serve`. For Codex, export `OPENAI_API_KEY` or
+`CODEX_API_KEY`; an explicit `CODEX_API_KEY` takes precedence. The CLI reads
+its process environment. If the key is in a trusted shell-format `.env`,
+run `set -a; source ./.env; set +a` in the serving terminal first.
+Add `-v` or `--verbose` to see the image, credential variable names, turn
+event types and recognized failure reasons on stderr. To select another Engine API socket,
 set `DOCKER_HOST`.
 
 To run a separate supervisor, pass `--runner-command /path/to/remote-harness`.

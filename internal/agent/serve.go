@@ -85,6 +85,7 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&name, "agent", "a", "", "agent whose remote Harness points at the runner Tunnel (required)")
+	cmd.Flags().BoolVarP(&defaults.Verbose, "verbose", "v", false, settings.Lookup("verbose").Usage)
 	cmd.Flags().AddGoFlagSet(settings)
 	_ = cmd.Flags().MarkHidden("runner")
 	cmd.Flags().StringVar(&program, "runner-command", "", "use an external supervisor executable (default: embedded runner)")
