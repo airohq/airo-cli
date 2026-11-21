@@ -266,7 +266,7 @@ makes either command exit nonzero.
 
 `airo tenant` lists your tenant's solutions and capabilities in separate tables.
 The command uses the tenant membership shown by `airo whoami`.
-If you belong to several tenants, choose one with `airo tenant --tenant NAME`.
+If you belong to several tenants, choose one with `airo tenant --name NAME`.
 Platform admins can use the same flag to inspect a tenant by name.
 
 ```console

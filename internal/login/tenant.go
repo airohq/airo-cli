@@ -27,13 +27,13 @@ func NewTenantCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		Use:     "tenant",
 		Aliases: []string{"tenants"},
 		Short:   "Show your tenant and its solutions and capabilities",
-		Example: "  airo tenant\n  airo tenant --tenant acme",
+		Example: "  airo tenant\n  airo tenant --name acme",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return showTenant(cmd.Context(), cmd.OutOrStdout(), flags, name)
 		},
 	}
-	cmd.Flags().StringVar(&name, "tenant", "", "tenant to inspect (defaults to your tenant membership)")
+	cmd.Flags().StringVar(&name, "name", "", "name of the tenant to inspect (defaults to your tenant membership)")
 	verbs := generic.Commands(flags, cmd.Name())
 	for _, verb := range verbs {
 		if verb.Name() == "list" {
@@ -61,11 +61,11 @@ func showTenant(ctx context.Context, out io.Writer, flags *genericclioptions.Con
 		names := tenantsOf(user.Groups)
 		switch len(names) {
 		case 0:
-			return fmt.Errorf("%s has no tenant membership: use 'airo tenant list' to see accessible tenants, then 'airo tenant --tenant NAME'", user.Username)
+			return fmt.Errorf("%s has no tenant membership: use 'airo tenant list' to see accessible tenants, then 'airo tenant --name NAME'", user.Username)
 		case 1:
 			name = names[0]
 		default:
-			return fmt.Errorf("you belong to several tenants (%s): choose one with --tenant NAME", strings.Join(names, ", "))
+			return fmt.Errorf("you belong to several tenants (%s): choose one with --name NAME", strings.Join(names, ", "))
 		}
 	}
 	client, err := dynamic.NewForConfig(cfg)
