@@ -373,6 +373,11 @@ the reason and the time, and Ctrl-C stops the wait. Elsewhere each reason
 is a line on standard error. An agent the cluster has turned down, such as
 for a model its Harness cannot use, stops the command with the reason.
 
+Once connected, chat watches the selected Agent and checks it before each
+prompt. If the Agent is deleted, replaced under the same name, or loses
+readiness, chat closes and reports the reason, including while a turn is
+streaming.
+
 ```text
 Waiting for agent assistant to become ready: waiting for the ActorTemplate golden snapshot
 Agent assistant is ready.
@@ -533,6 +538,7 @@ Created agent my-project/reviewer
 | `--description` | none | What the agent is for, in a line (`spec.template.inline.description`) |
 | `--model` | see below | The ModelConfig to use (`spec.template.inline.modelConfig.name`) |
 | `--harness` | see below | The Harness that runs the agent (`spec.harnessRef.name`) |
+| `--local` | off | Create a durable Agent and its dedicated private relay in the project |
 | `--template` | none | An AgentTemplate to use in place of a prompt, a description and a model (`spec.template.ref.name`) |
 
 **The Harness, the ModelConfig and the AgentTemplate exist in the project
@@ -576,6 +582,101 @@ EOF
 with the cluster's reason, such as a model its Harness cannot use. Delete the
 agent, or change it with `airo apply -f`. Tools, skills and the other fields
 of an Agent go in a file for `airo apply -f` too.
+
+### Serve an agent on your machine
+
+Omit `--agent` to create a temporary Agent and private Tunnel in a project
+with a [temporary relay configured](docs/remote-agent-demo.md#temporary-agents).
+Use `--name` to choose the temporary Agent's name, or omit it to generate one.
+The server prints `Created temporary agent NAME`. Use that name with
+`airo chat -a NAME` in another terminal in the same project. An existing
+Agent with that name causes creation to fail.
+
+```sh
+airo agent serve --name demo --harness codex --codex-sandbox read-only
+```
+
+Ctrl-C deletes the temporary Agent. Kubernetes then deletes its Tunnel.
+Running `airo agent delete NAME` triggers the same cascade. While serving,
+the CLI renews the Agent's `airohq.dev/expires` annotation every five minutes.
+If the process dies, the janitor can delete the Agent 15 minutes after the
+last renewal. Automatic Agent expiry requires the platform janitor to monitor
+`agents.api.kagent.dev`. Each relay serves one temporary Agent at a time. Its local
+workspace is reused on the same container engine.
+
+For a durable Agent, use `--local` in a project with agents and tunnels enabled. The CLI
+creates the Agent first, then its same-name private Tunnel, EgressPolicy and
+Harness, and the Role and RoleBinding for project sessions to call this Tunnel.
+Each child has the Agent as its sole owner. The Role is named after the Agent UID
+so its binding can grant only that Tunnel's `call` permission. The relay uses
+the worker pool and snapshot location of the project's default or only Harness.
+
+```sh
+airo agent create reviewer --local --prompt "You review pull requests."
+airo agent serve -a reviewer
+```
+
+Deleting the Agent with `airo agent delete reviewer` removes its relay
+through Kubernetes garbage collection. If creation fails partway, the CLI
+deletes the Agent it created. After a forced kill during setup, deleting the
+Agent also cleans up its children. For a custom shared relay, use
+an Agent manifest with explicit Harness and EgressPolicy references.
+
+Use `airo chat -a reviewer` in a second terminal. Ctrl-C in the serving
+terminal disconnects the machine. Run the same serve command to reconnect.
+The Agent and Tunnel persist. The embedded server defaults to read-only
+Codex for an existing Agent when you omit the coding-agent settings.
+The first turn starts a container, later turns reuse it, and five idle
+minutes release it. Its named volume keeps the workspace on that engine.
+
+Choose the coding agent with `--harness claude` or `--harness codex`.
+`--sandbox` selects where it runs. The default and currently supported
+sandbox is `container`. The original `--runner` spelling also works.
+`--codex-sandbox` controls Codex's own filesystem access inside that
+environment.
+
+The `runner` Dockerfile target in `kagent-remote-harness` builds a single
+worker image containing both Claude Code and Codex. That repository's
+GitHub Actions publish it to `ghcr.io/airohq/kagent-remote-harness/runner`.
+On the first turn of each `agent serve` invocation, the embedded container
+sandbox pulls the default `ghcr.io/airohq/kagent-remote-harness/runner:latest`,
+even when the tag is cached. It uses the resolved image ID for the rest of
+that invocation, including after idle timeouts. If the pull fails, the turn
+reports the error and the next turn retries. Other `--image` values use a
+worker image already present in the selected engine.
+To test a development branch, build from the matching harness checkout:
+
+```sh
+docker build --target runner -t local/remote-harness:dev .
+airo agent serve -a reviewer --harness codex --sandbox container --codex-sandbox workspace-write --image local/remote-harness:dev
+```
+
+`airo` embeds the Go supervisor. Set the provider credential in the
+environment of `airo agent serve`. For Codex, export `OPENAI_API_KEY` or
+`CODEX_API_KEY`; an explicit `CODEX_API_KEY` takes precedence. The CLI reads
+its process environment. If the key is in a trusted shell-format `.env`,
+run `set -a; source ./.env; set +a` in the serving terminal first.
+Add `-v` or `--verbose` to see the image, credential variable names, turn
+event types and recognized failure reasons on stderr. To select another Engine API socket,
+set `DOCKER_HOST`.
+
+To run a separate supervisor, pass `--runner-command /path/to/remote-harness`.
+Flags after `--` are passed through to that program. The embedded runner
+also accepts the previous `-- --harness ...` syntax.
+
+The project needs an Agent with a remote Harness whose `spec.env` sets
+`REMOTE_HARNESS_URL` to a private Tunnel's `status.callerURL`. The Agent's
+EgressPolicy must inject its Substrate actor JWT into `Authorization` for
+that origin, with the same URL as audience. Grant the actor `call` on that
+Tunnel and the person serving it `connect`. The command reads the Agent,
+Harness and Tunnel and opens the outbound connection. A single machine
+should serve each runner Tunnel. A project-wide actor `call` grant lets
+other authorized sessions in that project run turns here.
+
+Ctrl-C stops serving and cancels an active local turn. Restart with the
+same Tunnel and engine to reuse the workspace. See the
+[remote harness](https://github.com/airohq/kagent-remote-harness) for the
+runner settings and execution boundary.
 
 ## Session
 

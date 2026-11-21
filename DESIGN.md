@@ -437,6 +437,8 @@ it when the command cannot.**
 
 | Resource | On exit | Backstop in the cluster |
 | --- | --- | --- |
+| Durable Agent created by `airo agent create --local` | Disconnecting leaves the Agent available for reconnection | Deleting the Agent garbage-collects its dedicated relay resources |
+| Temporary Agent created by `airo agent serve`, including with `--name` | The command deletes the Agent | The janitor deletes the expired Agent. Kubernetes garbage-collects its Tunnel whenever the Agent is deleted |
 | Created for the task, such as the Tunnel of `airo tunnel 3000` | The command deletes it | The cluster deletes it soon after the command is gone, also when the process was killed |
 | Outlives the terminal, such as an agent's session | Ctrl-C detaches, the work goes on | Its own system archives it after a longer time |
 | Existed before the command | Left as it is | None |

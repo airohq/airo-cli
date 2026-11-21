@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -84,7 +85,7 @@ annotation ` + defaultAnnotation + `: "true", then asks.`,
 
 // runChat is airo chat [PROMPT]: one prompt, or a conversation on a
 // terminal.
-func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.ConfigFlags, o chatOptions, prompt string) error {
+func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.ConfigFlags, o chatOptions, prompt string) (err error) {
 	cfg, err := flags.ToRESTConfig()
 	if err != nil {
 		return err
@@ -127,13 +128,29 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 	if err != nil {
 		return err
 	}
-	if err := awaitAgent(ctx, c, ns, agent, cmd.InOrStdin(), errOut); err != nil {
+	selected, err := awaitAgent(ctx, c, ns, agent, cmd.InOrStdin(), errOut)
+	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(errOut, "\nStopped waiting.")
 			return nil
 		}
 		return err
 	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := watchChatAgent(ctx, c, selected); err != nil {
+			cancel(err)
+		}
+	}()
+	defer func() {
+		cancel(nil)
+		<-done
+		if cause := context.Cause(ctx); isAgentChange(cause) {
+			err = cause
+		}
+	}()
 	if marker := config.Data["readinessConfigMap"]; marker != "" {
 		if err := waitProjectCredentials(ctx, c, ns, marker, errOut); err != nil {
 			return err
@@ -163,6 +180,13 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 		out:    cmd.OutOrStdout(),
 		errOut: errOut,
 	}
+	s.beforeTurn = func(ctx context.Context) error {
+		_, err := refreshChatAgent(ctx, c, selected)
+		if isAgentChange(err) {
+			cancel(err)
+		}
+		return err
+	}
 	s.remember = func(id string) {
 		if err := store.put(key, id); err != nil {
 			fmt.Fprintf(s.errOut, "Could not remember the session for --continue: %v\n", err)
@@ -180,7 +204,7 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 		return errors.New("no prompt: pass one as the argument or on standard input")
 	}
 	// Input that is no terminal, such as a pipe, is one prompt.
-	data, err := io.ReadAll(in.r)
+	data, err := readPipedPrompt(ctx, in.r)
 	if err != nil {
 		return err
 	}
@@ -188,6 +212,26 @@ func runChat(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.C
 		return errors.New("no prompt: pass one as the argument or on standard input")
 	}
 	return s.once(ctx, string(data))
+}
+
+// A pipe can stay open after the Agent disappears. Let the command exit
+// while its input is still waiting for EOF, as it does at a terminal prompt.
+func readPipedPrompt(ctx context.Context, in io.Reader) ([]byte, error) {
+	type result struct {
+		data []byte
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		data, err := io.ReadAll(in)
+		done <- result{data, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	case r := <-done:
+		return r.data, r.err
+	}
 }
 
 // pick returns the name of the Agent to talk to: the one named, the
@@ -265,6 +309,8 @@ type session struct {
 	// The agent's text goes to out. Everything about the session goes to
 	// errOut, so out can be piped.
 	out, errOut io.Writer
+	// Check the selected Agent before sending, including across watch reconnects.
+	beforeTurn func(context.Context) error
 	// remember is called once with the ID of the session, when the agents'
 	// API has answered for it: it is then the last session with the agent.
 	remember   func(id string)
@@ -300,6 +346,14 @@ func (e *taskError) Error() string {
 
 // turn sends one prompt and prints the answer as it arrives.
 func (s *session) turn(ctx context.Context, prompt string) error {
+	if s.beforeTurn != nil {
+		if err := s.beforeTurn(ctx); err != nil {
+			if ctx.Err() != nil && !isAgentChange(err) {
+				return errDetached
+			}
+			return err
+		}
+	}
 	var (
 		p       = s.printer
 		state   string
@@ -381,6 +435,9 @@ func ended(state string) bool {
 // once sends one prompt and says how to go on.
 func (s *session) once(ctx context.Context, prompt string) error {
 	err := s.turn(ctx, prompt)
+	if cause := context.Cause(ctx); isAgentChange(cause) {
+		return cause
+	}
 	if errors.Is(err, errDetached) {
 		s.detached()
 		return nil
@@ -410,6 +467,9 @@ func (s *session) converse(ctx context.Context, in *lines) error {
 		if err != nil {
 			// Ctrl-D, or Ctrl-C while no turn runs.
 			fmt.Fprintln(s.errOut)
+			if cause := context.Cause(ctx); isAgentChange(cause) {
+				return cause
+			}
 			s.left()
 			if errors.Is(err, io.EOF) || ctx.Err() != nil {
 				return nil
@@ -420,6 +480,9 @@ func (s *session) converse(ctx context.Context, in *lines) error {
 			continue
 		}
 		err = s.turn(ctx, line)
+		if cause := context.Cause(ctx); isAgentChange(cause) {
+			return cause
+		}
 		var failed *taskError
 		switch {
 		case errors.Is(err, errDetached):
@@ -500,17 +563,16 @@ var readyPoll = 2 * time.Second
 // is an error when the cluster has turned the Agent down, because waiting
 // does not change that. A new Agent has no conditions until kagent has read
 // it, and takes no session before.
-func readiness(ctx context.Context, c client.Client, ns, name string) (ready bool, why string, err error) {
-	a, err := choose(ctx, c, ns, agents, name, nil)
-	if err != nil {
-		return false, "", err
+func readiness(a *unstructured.Unstructured) (ready bool, why string, err error) {
+	if a.GetDeletionTimestamp() != nil {
+		return false, "", deletedAgent(a)
 	}
 	s := stateOf(a)
 	switch {
 	case s.ready:
 		return true, "", nil
 	case s.refused:
-		return false, "", fmt.Errorf("agent %s cannot run: %s", name, s.reason)
+		return false, "", agentChange(fmt.Sprintf("agent %s cannot run: %s", a.GetName(), s.reason))
 	case !s.seen:
 		return false, "the cluster has not reported on it yet", nil
 	case strings.TrimSpace(s.reason) == "":
@@ -522,10 +584,10 @@ func readiness(ctx context.Context, c client.Client, ns, name string) (ready boo
 // waitForSessions returns when the Agent takes sessions. It calls report
 // each time what it waits for changes, and looks again every poll, until
 // ctx ends.
-func waitForSessions(ctx context.Context, c client.Client, ns, name string, report func(why string), poll time.Duration) error {
+func waitForSessions(ctx context.Context, check func(context.Context) (bool, string, error), report func(why string), poll time.Duration) error {
 	said := ""
 	for {
-		ready, why, err := readiness(ctx, c, ns, name)
+		ready, why, err := check(ctx)
 		if err != nil || ready {
 			return err
 		}
@@ -545,23 +607,39 @@ func waitForSessions(ctx context.Context, c client.Client, ns, name string, repo
 // spinner says why and for how long, and leaves no trace. Elsewhere each
 // reason is a line on errOut. The spinner reads Ctrl-C from in, so it needs
 // in to be a terminal: a pipe holds the prompt.
-func awaitAgent(ctx context.Context, c client.Client, ns, name string, in io.Reader, errOut io.Writer) error {
-	ready, _, err := readiness(ctx, c, ns, name)
+func awaitAgent(ctx context.Context, c client.Reader, ns, name string, in io.Reader, errOut io.Writer) (*unstructured.Unstructured, error) {
+	a := &unstructured.Unstructured{}
+	a.SetGroupVersionKind(agentGVK)
+	a.SetNamespace(ns)
+	a.SetName(name)
+	check := func(ctx context.Context) (bool, string, error) {
+		next, err := getChatAgent(ctx, c, a)
+		if err != nil {
+			return false, "", err
+		}
+		a = next
+		return readiness(a)
+	}
+	ready, _, err := check(ctx)
 	if err != nil || ready {
-		return err
+		return a, err
 	}
 	if ui.Styled(errOut) && ui.IsTerminal(in) {
-		return spinUntilReady(ctx, in, errOut, name, func(ctx context.Context, report func(string)) error {
-			return waitForSessions(ctx, c, ns, name, report, readyPoll)
+		err = spinUntilReady(ctx, in, errOut, name, func(ctx context.Context, report func(string)) error {
+			return waitForSessions(ctx, check, report, readyPoll)
 		})
+	} else {
+		err = waitForSessions(ctx, check, func(why string) {
+			fmt.Fprintf(errOut, "Waiting for agent %s to become ready: %s\n", name, why)
+		}, readyPoll)
+		if err == nil {
+			fmt.Fprintf(errOut, "Agent %s is ready.\n", name)
+		}
 	}
-	err = waitForSessions(ctx, c, ns, name, func(why string) {
-		fmt.Fprintf(errOut, "Waiting for agent %s to become ready: %s\n", name, why)
-	}, readyPoll)
-	if err == nil {
-		fmt.Fprintf(errOut, "Agent %s is ready.\n", name)
+	if err != nil {
+		return nil, err
 	}
-	return err
+	return a, nil
 }
 
 // lines reads the person's input a line at a time.

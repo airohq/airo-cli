@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -62,7 +65,7 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			return fmt.Errorf("unknown agent verb %q: see airo agent --help for verbs, or use airo chat to send a prompt", args[0])
 		},
 	}
-	cmd.AddCommand(newCreateCommand(flags))
+	cmd.AddCommand(newCreateCommand(flags), newServeCommand(flags))
 	cmd.AddCommand(generic.Commands(flags, cmd.Name())...)
 	return cmd
 }
@@ -74,6 +77,7 @@ type options struct {
 	description string
 	model       string
 	harness     string
+	local       bool
 	template    string
 }
 
@@ -84,15 +88,18 @@ func newCreateCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		Short: "Create an agent from a prompt, or from an AgentTemplate",
 		Long: `Create makes an Agent in the project and waits until it is ready.
 
-The agent runs on a Harness and, with a prompt, uses a ModelConfig. Both
-exist in the project already. The wizard lets you choose each and highlights
-the project default. Use --harness or --model to supply the choice directly.
+By default the agent uses an existing project Harness. The wizard offers
+the project's Harness and model choices and highlights the defaults. Use
+--harness or --model to supply a choice directly.
+Use --local for a durable Agent served from your machine. The CLI creates
+its private relay in the same project. Connect or reconnect with airo agent serve -a NAME.
 In scripts, give NAME and one of --prompt, --prompt-file or --template.
 A script uses the project's only choice or its default when a flag is omitted.
 
 Tools, skills and the other fields of an Agent go in a file, for
 airo apply -f.`,
 		Example: `  airo agent create reviewer --prompt "You review pull requests."
+  airo agent create laptop --local --prompt "You are a coding assistant."
   airo agent create reviewer --prompt-file prompt.md --model sonnet-5.5 --harness claude
   airo agent create reviewer --template reviewer`,
 		Args: cobra.MaximumNArgs(1),
@@ -125,7 +132,9 @@ airo apply -f.`,
 					return err
 				}
 			}
-			return create(cmd.Context(), cmd.OutOrStdout(), c, ns, name, o, w, readyTimeout)
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return create(ctx, cmd.OutOrStdout(), c, ns, name, o, w, readyTimeout)
 		},
 	}
 	cmd.Flags().StringVar(&o.prompt, "prompt", "", "the agent's system prompt")
@@ -133,6 +142,8 @@ airo apply -f.`,
 	cmd.Flags().StringVar(&o.description, "description", "", "what the agent is for, in a line")
 	cmd.Flags().StringVar(&o.model, "model", "", "name of the ModelConfig to use (default: the project's only one, or its default)")
 	cmd.Flags().StringVar(&o.harness, "harness", "", "name of the Harness to run on (default: the project's only one, or its default)")
+	cmd.Flags().BoolVar(&o.local, "local", false, "create a durable Agent with a dedicated relay for airo agent serve")
+	cmd.MarkFlagsMutuallyExclusive("local", "harness")
 	cmd.Flags().StringVar(&o.template, "template", "", "name of an AgentTemplate to use in place of a prompt")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file", "template")
 	cmd.MarkFlagsMutuallyExclusive("description", "template")
@@ -184,11 +195,25 @@ func create(ctx context.Context, out io.Writer, c client.Client, ns, name string
 	if w != nil {
 		pick = w.Pick
 	}
-	harness, err := choose(ctx, c, ns, harnesses, o.harness, pick)
-	if err != nil {
-		return err
+	var err error
+	var substrate map[string]any
+	harnessRuntime := runtimeBYO
+	if o.local {
+		if problems := validation.IsDNS1123Label(name); len(problems) != 0 {
+			return fmt.Errorf("a local Agent shares its Tunnel name, which must be a DNS label: %s", strings.Join(problems, ", "))
+		}
+		substrate, err = localSubstrate(ctx, c, ns)
+		if err != nil {
+			return err
+		}
+		o.harness = name
+	} else {
+		h, err := choose(ctx, c, ns, harnesses, o.harness, pick)
+		if err != nil {
+			return err
+		}
+		o.harness, harnessRuntime = h.GetName(), runtime(h)
 	}
-	o.harness = harness.GetName()
 	if fromTemplate {
 		// A name the project lacks would leave an Agent that never gets ready.
 		template, err := choose(ctx, c, ns, templates, o.template, pick)
@@ -198,8 +223,8 @@ func create(ctx context.Context, out io.Writer, c client.Client, ns, name string
 		o.template = template.GetName()
 	}
 	// A Harness with its own image may need no model. The others do.
-	useModel := o.template == "" && (o.model != "" || runtime(harness) != runtimeBYO)
-	if w != nil && o.template == "" && !useModel {
+	useModel := o.template == "" && (o.model != "" || harnessRuntime != runtimeBYO)
+	if w != nil && !o.local && o.template == "" && !useModel {
 		useModel, err = w.Confirm("Choose a project model for this harness?", false)
 		if err != nil {
 			return err
@@ -220,8 +245,13 @@ func create(ctx context.Context, out io.Writer, c client.Client, ns, name string
 		}
 		return fmt.Errorf("create agent %s/%s: %w", ns, name, err)
 	}
+	if o.local {
+		if err := provisionLocalRelay(ctx, c, a, substrate); err != nil {
+			return err
+		}
+	}
 	fmt.Fprintf(out, "Created agent %s/%s\n", ns, name)
-	if r := runtime(harness); r != "" {
+	if r := harnessRuntime; r != "" {
 		fmt.Fprintf(out, "  harness:  %s (%s)\n", o.harness, r)
 	} else {
 		fmt.Fprintf(out, "  harness:  %s\n", o.harness)
@@ -262,11 +292,22 @@ func build(ns, name string, o options) *unstructured.Unstructured {
 		}
 		template["inline"] = inline
 	}
-	a.Object["spec"] = map[string]any{
+	spec := map[string]any{
 		"harnessRef": map[string]any{"name": o.harness},
 		"template":   template,
 	}
+	if o.local {
+		a.SetLabels(map[string]string{localAgentLabel: "true"})
+		spec["egressPolicyRefs"] = relayPolicies(o.harness)
+	}
+	a.Object["spec"] = spec
 	return a
+}
+
+const localAgentLabel = "airohq.dev/local"
+
+func relayPolicies(name string) []any {
+	return []any{map[string]any{"name": name}}
 }
 
 // choice is a kind an Agent refers to, as a person reads and names it.
@@ -404,6 +445,7 @@ func waitReady(ctx context.Context, c client.Client, a *unstructured.Unstructure
 		ready   bool
 		refused bool
 	)
+	local := a.GetLabels()[localAgentLabel] == "true"
 	waiting, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	err := wait.PollUntilContextCancel(waiting, time.Second, true, func(ctx context.Context) (bool, error) {
@@ -412,6 +454,16 @@ func waitReady(ctx context.Context, c client.Client, a *unstructured.Unstructure
 		}
 		s := stateOf(a)
 		ready, refused, seen, reason = s.ready, s.refused, s.seen, s.reason
+		if local {
+			// Kagent may still report missing dependencies from before the
+			// CLI finished creating them. Wait for its next reconciliation.
+			if ready {
+				if _, err := resolveAgentTunnel(ctx, c, a); err != nil {
+					ready, reason = false, err.Error()
+				}
+			}
+			return ready, nil
+		}
 		return ready || refused, nil
 	})
 	name := a.GetNamespace() + "/" + a.GetName()
@@ -422,6 +474,11 @@ func waitReady(ctx context.Context, c client.Client, a *unstructured.Unstructure
 	case ctx.Err() != nil:
 		// Interrupted. The Agent stays, as any created resource does.
 		return ctx.Err()
+	case local && waiting.Err() != nil:
+		if reason == "" {
+			reason = "waiting for the dedicated relay"
+		}
+		return fmt.Errorf("local agent %s is not ready after %s: %s. Check the Agent and its relay resources in the project. %s", name, timeout, reason, stays)
 	case refused:
 		return fmt.Errorf("agent %s cannot run: %s. %s", name, reason, stays)
 	case waiting.Err() == nil:
