@@ -309,7 +309,7 @@ func TestAwaitAgent(t *testing.T) {
 		}
 	}()
 	var errOut bytes.Buffer
-	if err := awaitAgent(ctx, c, "team", "reviewer", in, &errOut); err != nil {
+	if _, err := awaitAgent(ctx, c, "team", "reviewer", in, &errOut); err != nil {
 		t.Fatal(err)
 	}
 	// Said once, however often it looked.
@@ -327,7 +327,7 @@ func TestAwaitAgent(t *testing.T) {
 	} {
 		var errOut bytes.Buffer
 		c := fake.NewClientBuilder().WithObjects(tt.agent).Build()
-		err := awaitAgent(ctx, c, "team", "reviewer", in, &errOut)
+		_, err := awaitAgent(ctx, c, "team", "reviewer", in, &errOut)
 		switch {
 		case tt.want == "" && (err != nil || errOut.Len() != 0):
 			t.Errorf("%s: %v, said %q; want no wait", name, err, errOut.String())
@@ -343,7 +343,7 @@ func TestAwaitAgent(t *testing.T) {
 	var said []string
 	done := make(chan error, 1)
 	go func() {
-		done <- waitForSessions(cancelled, c, "team", "reviewer", func(why string) { said = append(said, why) }, time.Hour)
+		done <- waitForSessions(cancelled, func(context.Context) (bool, string, error) { return readiness(reviewerWith()) }, func(why string) { said = append(said, why) }, time.Hour)
 	}()
 	time.Sleep(20 * time.Millisecond)
 	cancel()

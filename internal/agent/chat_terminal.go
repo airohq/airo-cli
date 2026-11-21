@@ -89,6 +89,9 @@ func (s *session) chat(ctx context.Context, in io.Reader, prompt string) error {
 	// Keep the resolved theme for the closing hint after the renderer stops.
 	s.styles = &m.styles
 	defer func() { s.styles = nil }()
+	if cause := context.Cause(ctx); isAgentChange(cause) {
+		return cause
+	}
 	// A failed or interrupted history load says nothing about whether a
 	// remote turn is still running, and has no closing hint.
 	if !m.loading {

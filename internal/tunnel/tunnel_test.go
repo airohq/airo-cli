@@ -3,13 +3,15 @@ package tunnel
 import (
 	"context"
 	"errors"
-	"io"
 	"testing"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	"github.com/airohq/airo-cli/internal/expiry"
 )
 
 func TestTarget(t *testing.T) {
@@ -112,7 +114,7 @@ func expiresIn(t *testing.T, c client.Client) time.Duration {
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(got), got); err != nil {
 		t.Fatal(err)
 	}
-	at, err := time.Parse(time.RFC3339, got.GetAnnotations()[expiresAnnotation])
+	at, err := time.Parse(time.RFC3339, got.GetAnnotations()[expiry.Annotation])
 	if err != nil {
 		t.Fatalf("annotations = %v: %v", got.GetAnnotations(), err)
 	}
@@ -124,8 +126,8 @@ func TestEnsureGivesANewTunnelAnExpiry(t *testing.T) {
 	if _, _, err := ensure(context.Background(), c, "team", "my-app", spec{}); err != nil {
 		t.Fatal(err)
 	}
-	if in := expiresIn(t, c); in < expiresAfter-time.Minute || in > expiresAfter {
-		t.Errorf("expires in %s, want about %s", in, expiresAfter)
+	if in := expiresIn(t, c); in < 15*time.Minute-time.Minute || in > 15*time.Minute {
+		t.Errorf("expires in %s, want about %s", in, 15*time.Minute)
 	}
 }
 
@@ -142,44 +144,13 @@ func TestEnsureGivesAnExistingTunnelNoExpiry(t *testing.T) {
 
 func TestExtendMovesTheExpiryForward(t *testing.T) {
 	old := existing(false, "kubernetes")
-	old.SetAnnotations(map[string]string{expiresAnnotation: time.Now().Add(time.Minute).UTC().Format(time.RFC3339)})
+	old.SetAnnotations(map[string]string{expiry.Annotation: time.Now().Add(time.Minute).UTC().Format(time.RFC3339)})
 	c := fake.NewClientBuilder().WithObjects(old).Build()
-	if err := extend(context.Background(), c, "team", "my-app", old.GetUID()); err != nil {
+	if err := expiry.Extend(context.Background(), c, old); err != nil {
 		t.Fatal(err)
 	}
-	if in := expiresIn(t, c); in < expiresAfter-time.Minute {
-		t.Errorf("expires in %s, want about %s", in, expiresAfter)
-	}
-}
-
-func TestKeepAliveExtendsUntilStopped(t *testing.T) {
-	old := existing(false, "kubernetes")
-	old.SetAnnotations(map[string]string{expiresAnnotation: time.Now().Add(time.Minute).UTC().Format(time.RFC3339)})
-	c := fake.NewClientBuilder().WithObjects(old).Build()
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		done <- keepAlive(ctx, io.Discard, c, "team", "my-app", "", time.Millisecond, time.Millisecond)
-	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for expiresIn(t, c) < expiresAfter-time.Minute {
-		if time.Now().After(deadline) {
-			t.Fatal("the expiry did not move forward")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	cancel()
-	if err := <-done; err != nil {
-		t.Errorf("keepAlive after cancel = %v, want nil", err)
-	}
-}
-
-func TestKeepAliveStopsWhenTheTunnelIsGone(t *testing.T) {
-	c := fake.NewClientBuilder().Build()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := keepAlive(ctx, io.Discard, c, "team", "my-app", "", time.Millisecond, time.Millisecond); err == nil {
-		t.Error("keepAlive = nil, want an error for a Tunnel that is gone")
+	if in := expiresIn(t, c); in < 15*time.Minute-time.Minute {
+		t.Errorf("expires in %s, want about %s", in, 15*time.Minute)
 	}
 }
 
@@ -187,7 +158,7 @@ func TestTemporaryRunnerDoesNotAdoptAnExistingTunnel(t *testing.T) {
 	obj := existing(false, "kubernetes")
 	obj.SetUID("another-owner")
 	c := fake.NewClientBuilder().WithObjects(obj).Build()
-	err := WithTemporaryRunnerTunnel(t.Context(), io.Discard, c, obj.GetNamespace(), obj.GetName(), "unused", nil)
+	_, err := CreateTemporaryRunnerTunnel(t.Context(), c, obj.GetName(), "unused", obj)
 	if !errors.Is(err, ErrTunnelInUse) {
 		t.Fatal(err)
 	}
@@ -200,9 +171,36 @@ func TestTemporaryRunnerDoesNotAdoptAnExistingTunnel(t *testing.T) {
 	}
 }
 
+func TestTemporaryRunnerTunnelCreatedWithAgentOwner(t *testing.T) {
+	agent := &unstructured.Unstructured{}
+	agent.SetAPIVersion("api.kagent.dev/v1alpha3")
+	agent.SetKind("Agent")
+	agent.SetNamespace("team")
+	agent.SetName("reviewer")
+	agent.SetUID("agent-uid")
+	// Inspect the initial create request. A later patch would leave a
+	// crash window in which deleting the Agent could orphan its Tunnel.
+	stop := errors.New("inspected create")
+	c := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
+			refs := obj.GetOwnerReferences()
+			_, hasExpiry := obj.GetAnnotations()[expiry.Annotation]
+			if obj.GetNamespace() != agent.GetNamespace() || len(refs) != 1 || refs[0].UID != agent.GetUID() ||
+				refs[0].Name != agent.GetName() || refs[0].Kind != agent.GetKind() || refs[0].APIVersion != agent.GetAPIVersion() ||
+				hasExpiry {
+				t.Fatalf("unexpected initial Tunnel metadata: %+v", obj)
+			}
+			return stop
+		},
+	}).Build()
+	_, err := CreateTemporaryRunnerTunnel(t.Context(), c, "relay", "unused", agent)
+	if !errors.Is(err, stop) {
+		t.Fatal(err)
+	}
+}
+
 func TestPortForwardLeavesTemporaryAgentTunnelAlone(t *testing.T) {
 	obj := existing(false, "kubernetes")
-	obj.SetAnnotations(map[string]string{expiresAnnotation: expiry(time.Now())})
 	obj.SetLabels(map[string]string{TemporaryAgentLabel: "true"})
 	c := fake.NewClientBuilder().WithObjects(obj).Build()
 	if _, _, err := ensure(t.Context(), c, obj.GetNamespace(), obj.GetName(), spec{}); err == nil {

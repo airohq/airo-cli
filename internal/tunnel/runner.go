@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/andydunstall/piko/client"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -21,6 +22,11 @@ import (
 
 // TemporaryAgentLabel marks a reserved relay policy and its short-lived Tunnel.
 const TemporaryAgentLabel = "airohq.dev/temporary-agent"
+
+// CallRule grants access to the caller endpoint of one project Tunnel.
+func CallRule(name string) rbacv1.PolicyRule {
+	return rbacv1.PolicyRule{APIGroups: []string{tunnelGVK.Group}, Resources: []string{"tunnels"}, ResourceNames: []string{name}, Verbs: []string{"call"}}
+}
 
 // RunnerTunnel is the existing private, authenticated Tunnel named by a
 // remote Harness's URL. Serving it makes no resource changes.
@@ -59,6 +65,18 @@ func FindRunnerTunnel(ctx context.Context, c kube.Reader, ns, origin string) (Ru
 	return result, nil
 }
 
+// OwnedRunnerTunnel resolves the dedicated, durable Tunnel for a local Agent.
+func OwnedRunnerTunnel(ctx context.Context, c kube.Reader, name, origin string, a *unstructured.Unstructured) (RunnerTunnel, error) {
+	t := build(a.GetNamespace(), name, spec{})
+	if err := c.Get(ctx, kube.ObjectKeyFromObject(t), t); err != nil {
+		return RunnerTunnel{}, err
+	}
+	if !metav1.IsControlledBy(t, a) || str(t, "status", "callerURL") != origin {
+		return RunnerTunnel{}, fmt.Errorf("tunnel %s is not the Agent's dedicated relay", kube.ObjectKeyFromObject(t))
+	}
+	return readRunnerTunnel(t)
+}
+
 func readRunnerTunnel(t *unstructured.Unstructured) (RunnerTunnel, error) {
 	ns := t.GetNamespace()
 	public, _, err := unstructured.NestedBool(t.Object, "spec", "public")
@@ -77,51 +95,71 @@ func readRunnerTunnel(t *unstructured.Unstructured) (RunnerTunnel, error) {
 // ErrTunnelInUse means another invocation or a persistent Tunnel owns this name.
 var ErrTunnelInUse = errors.New("tunnel already exists")
 
-// WithTemporaryRunnerTunnel creates a private expiring Tunnel. Dependents
-// created by run must carry owner as a Kubernetes owner reference.
-func WithTemporaryRunnerTunnel(ctx context.Context, out io.Writer, c kube.Client, ns, name, origin string, run func(context.Context, RunnerTunnel, metav1.OwnerReference) error) (err error) {
+// RunnerTunnelAvailable skips occupied relays before publishing a temporary
+// Agent. The subsequent Tunnel create arbitrates concurrent claims.
+func RunnerTunnelAvailable(ctx context.Context, c kube.Reader, ns, name string) (bool, error) {
 	t := build(ns, name, spec{})
-	t.SetLabels(map[string]string{TemporaryAgentLabel: "true"})
-	t.SetAnnotations(map[string]string{expiresAnnotation: expiry(time.Now())})
+	err := c.Get(ctx, kube.ObjectKeyFromObject(t), t)
+	if apierrors.IsNotFound(err) {
+		return true, nil
+	}
+	return false, err
+}
+
+// CreateTemporaryRunnerTunnel creates the Agent's dependent Tunnel and waits for its URLs.
+func CreateTemporaryRunnerTunnel(ctx context.Context, c kube.Client, name, origin string, agent *unstructured.Unstructured) (RunnerTunnel, error) {
+	t, err := createAgentTunnel(ctx, c, agent, name, true)
+	if apierrors.IsAlreadyExists(err) {
+		return RunnerTunnel{}, ErrTunnelInUse
+	}
+	if err != nil {
+		return RunnerTunnel{}, err
+	}
+	if str(t, "status", "callerURL") != origin {
+		return RunnerTunnel{}, fmt.Errorf("temporary tunnel %s does not match its reserved Harness URL %s", kube.ObjectKeyFromObject(t), origin)
+	}
+	return readRunnerTunnel(t)
+}
+
+// CreateLocalAgentTunnel returns the private origin for the Agent's relay policy.
+func CreateLocalAgentTunnel(ctx context.Context, c kube.Client, agent *unstructured.Unstructured) (string, error) {
+	t, err := createAgentTunnel(ctx, c, agent, agent.GetName(), false)
+	if err != nil {
+		return "", err
+	}
+	if _, err := readRunnerTunnel(t); err != nil {
+		return "", err
+	}
+	origin := str(t, "status", "callerURL")
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("tunnel %s needs a valid status.callerURL origin", kube.ObjectKeyFromObject(t))
+	}
+	return origin, nil
+}
+
+func createAgentTunnel(ctx context.Context, c kube.Client, agent *unstructured.Unstructured, name string, temporary bool) (*unstructured.Unstructured, error) {
+	t := build(agent.GetNamespace(), name, spec{})
+	if temporary {
+		t.SetLabels(map[string]string{TemporaryAgentLabel: "true"})
+	}
+	owner := metav1.NewControllerRef(agent, agent.GroupVersionKind())
+	owner.BlockOwnerDeletion = nil
+	t.SetOwnerReferences([]metav1.OwnerReference{*owner})
 	if err := c.Create(ctx, t); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			return ErrTunnelInUse
-		}
-		return fmt.Errorf("create temporary tunnel %s/%s: %w", ns, name, err)
+		return nil, fmt.Errorf("create tunnel %s: %w", kube.ObjectKeyFromObject(t), err)
 	}
 	uid := t.GetUID()
-	defer func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if e := c.Delete(cleanup, t, kube.Preconditions{UID: &uid}); e != nil && !apierrors.IsNotFound(e) {
-			err = errors.Join(err, fmt.Errorf("delete temporary tunnel %s/%s: %w", ns, name, e))
-		}
-	}()
 	if err := waitReady(ctx, c, t); err != nil {
-		return err
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
-	if t.GetUID() != uid || str(t, "status", "callerURL") != origin {
-		return fmt.Errorf("temporary tunnel %s/%s no longer matches its reserved Harness URL %s", ns, name, origin)
+	if t.GetUID() != uid || !metav1.IsControlledBy(t, agent) {
+		return nil, fmt.Errorf("tunnel %s was replaced", kube.ObjectKeyFromObject(t))
 	}
-	target, err := readRunnerTunnel(t)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithCancelCause(ctx)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		cancel(keepAlive(ctx, out, c, ns, name, uid, refreshCheck, refreshEvery))
-	}()
-	defer func() { cancel(nil); <-done }()
-	err = run(ctx, target, metav1.OwnerReference{APIVersion: tunnelGVK.GroupVersion().String(), Kind: tunnelGVK.Kind, Name: name, UID: uid})
-	if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
-		return errors.Join(err, cause)
-	}
-	return err
+	return t, nil
 }
 
 type httpConnection struct {

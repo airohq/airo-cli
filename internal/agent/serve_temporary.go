@@ -9,10 +9,10 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/expiry"
 	"github.com/airohq/airo-cli/internal/tunnel"
 )
 
@@ -20,7 +20,7 @@ var egressPolicyGVK = agentGVK.GroupVersion().WithKind("EgressPolicy")
 
 type serveAgent func(context.Context, string, tunnel.RunnerTunnel, string) error
 
-func serveTemporary(ctx context.Context, c client.Client, ns string, out io.Writer, serve serveAgent) error {
+func serveTemporary(ctx context.Context, c client.Client, ns, name string, out io.Writer, serve serveAgent) error {
 	policies := &unstructured.UnstructuredList{}
 	policies.SetGroupVersionKind(egressPolicyGVK.GroupVersion().WithKind("EgressPolicyList"))
 	if err := c.List(ctx, policies, client.InNamespace(ns), client.MatchingLabels{tunnel.TemporaryAgentLabel: "true"}); err != nil {
@@ -32,6 +32,13 @@ func serveTemporary(ctx context.Context, c client.Client, ns string, out io.Writ
 	sort.Slice(policies.Items, func(i, j int) bool { return policies.Items[i].GetName() < policies.Items[j].GetName() })
 	for _, policy := range policies.Items {
 		relay := policy.GetName()
+		available, err := tunnel.RunnerTunnelAvailable(ctx, c, ns, relay)
+		if err != nil {
+			return err
+		}
+		if !available {
+			continue
+		}
 		h := &unstructured.Unstructured{}
 		h.SetGroupVersionKind(harnessGVK)
 		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: relay}, h); err != nil {
@@ -41,27 +48,30 @@ func serveTemporary(ctx context.Context, c client.Client, ns string, out io.Writ
 		if err != nil {
 			return err
 		}
-		err = tunnel.WithTemporaryRunnerTunnel(ctx, out, c, ns, relay, origin, func(ctx context.Context, t tunnel.RunnerTunnel, owner metav1.OwnerReference) error {
-			return withTemporaryAgent(ctx, c, ns, relay, owner, func(name string) error {
-				// A stable per-relay workspace can resume across cold starts and
-				// avoids leaving a new named volume after each invocation.
-				return serve(ctx, name, t, string(h.GetUID()))
-			})
+		err = withTemporaryAgent(ctx, c, ns, name, relay, out, func(ctx context.Context, a *unstructured.Unstructured) error {
+			t, err := tunnel.CreateTemporaryRunnerTunnel(ctx, c, relay, origin, a)
+			if err != nil {
+				return err
+			}
+			// The workspace survives across invocations using this relay.
+			return serve(ctx, a.GetName(), t, string(h.GetUID()))
 		})
-		if !errors.Is(err, tunnel.ErrTunnelInUse) {
+		// Retry only a clean reservation conflict. A joined cleanup error
+		// means this attempt may have left an Agent behind.
+		if err != tunnel.ErrTunnelInUse {
 			return err
 		}
 	}
-	return fmt.Errorf("all temporary agent tunnels in project %s are in use; stop the other server or wait for its tunnel to expire", ns)
+	return fmt.Errorf("all temporary agent tunnels in project %s are in use; stop the other server or wait for a relay to become available", ns)
 }
 
-func withTemporaryAgent(ctx context.Context, c client.Client, ns, relay string, owner metav1.OwnerReference, serve func(string) error) (err error) {
-	a := build(ns, "", options{harness: relay, prompt: "You are a helpful coding assistant."})
-	a.SetGenerateName("local-agent-")
-	a.SetOwnerReferences([]metav1.OwnerReference{owner})
-	if err := unstructured.SetNestedSlice(a.Object, []any{map[string]any{"name": relay}}, "spec", "egressPolicyRefs"); err != nil {
-		return err
+func withTemporaryAgent(ctx context.Context, c client.Client, ns, name, relay string, out io.Writer, serve func(context.Context, *unstructured.Unstructured) error) (err error) {
+	a := build(ns, name, options{harness: relay, prompt: "You are a helpful coding assistant."})
+	a.Object["spec"].(map[string]any)["egressPolicyRefs"] = relayPolicies(relay)
+	if name == "" {
+		a.SetGenerateName("local-agent-")
 	}
+	a.SetAnnotations(map[string]string{expiry.Annotation: expiry.Deadline()})
 	if err := c.Create(ctx, a); err != nil {
 		return fmt.Errorf("create temporary agent in project %s: %w", ns, err)
 	}
@@ -73,5 +83,16 @@ func withTemporaryAgent(ctx context.Context, c client.Client, ns, relay string, 
 			err = errors.Join(err, fmt.Errorf("delete temporary agent %s/%s: %w", ns, a.GetName(), e))
 		}
 	}()
-	return serve(a.GetName())
+	ctx, cancel := context.WithCancelCause(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cancel(expiry.KeepAlive(ctx, out, c, a))
+	}()
+	defer func() { cancel(nil); <-done }()
+	err = serve(ctx, a)
+	if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
+		return errors.Join(err, cause)
+	}
+	return err
 }

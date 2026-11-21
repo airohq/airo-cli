@@ -24,6 +24,7 @@ import (
 	"github.com/airohq/kagent-remote-harness/runner/supervisor"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,14 +33,17 @@ import (
 )
 
 func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
-	var name, program string
+	var name, temporaryName, program string
 	var defaults supervisor.Options
 	settings := flag.NewFlagSet("runner", flag.ContinueOnError)
 	defaults.BindFlags(settings)
 	cmd := &cobra.Command{
-		Use: "serve [--agent NAME] [flags]", Short: "Run this agent's turns on this machine, starting its sandbox on demand",
-		Example: "  airo agent serve --harness codex --codex-sandbox read-only\n  airo agent serve -a reviewer --sandbox container --harness codex --codex-sandbox workspace-write",
+		Use: "serve [--name NAME | --agent NAME] [flags]", Short: "Run this agent's turns on this machine, starting its sandbox on demand",
+		Example: "  airo agent serve --name demo --harness codex --codex-sandbox read-only\n  airo agent serve -a reviewer",
 		Args: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("name") && temporaryName == "" {
+				return errors.New("--name needs a temporary Agent name")
+			}
 			if len(args) > 0 && cmd.ArgsLenAtDash() != 0 {
 				return errors.New("unexpected positional argument: use --harness and --sandbox, or pass helper flags after --")
 			}
@@ -82,6 +86,9 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 				if settings.NArg() != 0 {
 					return fmt.Errorf("unexpected runner argument %q", settings.Arg(0))
 				}
+				if name != "" && defaults.Harness == "" && defaults.ClaudePermissionMode == "" && defaults.CodexSandbox == "" {
+					defaults.Harness, defaults.CodexSandbox = "codex", "read-only"
+				}
 				if _, err := defaults.Adapter(); err != nil {
 					return err
 				}
@@ -89,14 +96,15 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			serve := func(ctx context.Context, agentName string, t tunnel.RunnerTunnel, workspace string) error {
 				return serveRunner(ctx, t.Namespace, workspace, defaults, program, args, out, func(ctx context.Context, h http.Handler) error {
 					if name == "" {
-						fmt.Fprintf(out, "Chat with this temporary agent in another terminal:\nairo -n %s chat -a %s\n", ns, agentName)
+						fmt.Fprintf(out, "Created temporary agent %s\n", agentName)
+					} else {
+						fmt.Fprintf(out, "Serving agent %s/%s through tunnel %s. Waiting for turns.\n", ns, agentName, t.Name)
 					}
-					fmt.Fprintf(out, "Serving agent %s/%s through tunnel %s. Waiting for turns.\n", ns, agentName, t.Name)
 					return t.ServeHTTP(ctx, out, cfg, h)
 				})
 			}
 			if name == "" {
-				return serveTemporary(ctx, c, ns, out, serve)
+				return serveTemporary(ctx, c, ns, temporaryName, out, serve)
 			}
 			t, err := agentTunnel(ctx, c, ns, name)
 			if err != nil {
@@ -106,8 +114,11 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&name, "agent", "a", "", "existing remote Agent to serve (default: create a temporary Agent)")
+	cmd.Flags().StringVar(&temporaryName, "name", "", "create a temporary Agent with this name (default: generate a name)")
+	cmd.MarkFlagsMutuallyExclusive("name", "agent")
 	cmd.Flags().BoolVarP(&defaults.Verbose, "verbose", "v", false, settings.Lookup("verbose").Usage)
 	cmd.Flags().AddGoFlagSet(settings)
+	cmd.Flags().Lookup("harness").Usage = "coding agent: claude or codex (serving an existing Agent defaults to read-only Codex)"
 	_ = cmd.Flags().MarkHidden("runner")
 	cmd.Flags().StringVar(&program, "runner-command", "", "use an external supervisor executable (default: embedded runner)")
 	return cmd
@@ -120,6 +131,12 @@ func agentTunnel(ctx context.Context, c client.Reader, ns, name string) (tunnel.
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, a); err != nil {
 		return zero, err
 	}
+	return resolveAgentTunnel(ctx, c, a)
+}
+
+func resolveAgentTunnel(ctx context.Context, c client.Reader, a *unstructured.Unstructured) (tunnel.RunnerTunnel, error) {
+	var zero tunnel.RunnerTunnel
+	name, ns := a.GetName(), a.GetNamespace()
 	ref := detailString(a.Object, "spec", "harnessRef", "name")
 	if ref == "" {
 		return zero, fmt.Errorf("agent %s has no spec.harnessRef.name", name)
@@ -129,9 +146,26 @@ func agentTunnel(ctx context.Context, c client.Reader, ns, name string) (tunnel.
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: ref}, h); err != nil {
 		return zero, err
 	}
+	local := a.GetLabels()[localAgentLabel] == "true"
+	if local {
+		if ref != name || !metav1.IsControlledBy(h, a) {
+			return zero, fmt.Errorf("Harness %s/%s is not the relay owned by Agent %s", ns, ref, name)
+		}
+		policy := &unstructured.Unstructured{}
+		policy.SetGroupVersionKind(egressPolicyGVK)
+		if err := c.Get(ctx, client.ObjectKeyFromObject(h), policy); err != nil {
+			return zero, err
+		}
+		if !metav1.IsControlledBy(policy, a) {
+			return zero, fmt.Errorf("EgressPolicy %s/%s is not owned by Agent %s", ns, ref, name)
+		}
+	}
 	origin, err := remoteOrigin(h)
 	if err != nil {
 		return zero, err
+	}
+	if local {
+		return tunnel.OwnedRunnerTunnel(ctx, c, ref, origin, a)
 	}
 	return tunnel.FindRunnerTunnel(ctx, c, ns, origin)
 }

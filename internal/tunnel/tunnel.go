@@ -20,11 +20,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/expiry"
 	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/wizard"
 )
@@ -35,22 +35,6 @@ import (
 var tunnelGVK = schema.GroupVersionKind{Group: "tunnels.airohq.dev", Version: "v1alpha1", Kind: "Tunnel"}
 
 const callerAuthNone = "none"
-
-// The cluster deletes a resource after the time in this annotation. It is the
-// backstop for a command that was killed before it could delete its Tunnel.
-// The name is the platform's, not a component's.
-const expiresAnnotation = "airohq.dev/expires"
-
-const (
-	// How far ahead the command sets the expiry of the Tunnel it serves.
-	expiresAfter = 15 * time.Minute
-	// How often it moves the expiry forward. Two refreshes can fail before
-	// the Tunnel expires.
-	refreshEvery = 5 * time.Minute
-	// How often it checks whether a refresh is due. Shorter than
-	// refreshEvery, because a timer does not count the time a laptop sleeps.
-	refreshCheck = 30 * time.Second
-)
 
 // NewCommand returns the tunnel command.
 func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
@@ -223,9 +207,9 @@ func run(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlag
 	// behind. This command serves it as its own: without a refresh the
 	// cluster would delete it while it is in use.
 	uid := t.GetUID()
-	temporary := created || t.GetAnnotations()[expiresAnnotation] != ""
+	temporary := created || t.GetAnnotations()[expiry.Annotation] != ""
 	if temporary && !created {
-		if err := extend(ctx, c, ns, name, uid); err != nil {
+		if err := expiry.Extend(ctx, c, t); err != nil {
 			return fmt.Errorf("extend tunnel %s/%s: %w", ns, name, err)
 		}
 	}
@@ -257,7 +241,7 @@ func run(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlag
 		var cancel context.CancelCauseFunc
 		ctx, cancel = context.WithCancelCause(ctx)
 		defer cancel(nil)
-		go func() { cancel(keepAlive(ctx, out, c, ns, name, uid, refreshCheck, refreshEvery)) }()
+		go func() { cancel(expiry.KeepAlive(ctx, out, c, t)) }()
 	}
 	if err := connect(ctx, out, cfg, ns, name, str(t, "status", "clientURL"), to); err != nil {
 		return err
@@ -266,53 +250,6 @@ func run(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlag
 		return cause
 	}
 	return nil
-}
-
-// keepAlive moves the Tunnel's expiry forward every interval until ctx is
-// done. It returns an error when the Tunnel is gone, and tries again at the
-// next check after any other failure.
-func keepAlive(ctx context.Context, out io.Writer, c client.Client, ns, name string, uid types.UID, check, interval time.Duration) error {
-	tick := time.NewTicker(check)
-	defer tick.Stop()
-	// Round(0) drops the monotonic reading, which stands still while a
-	// laptop sleeps, so the comparison uses the wall clock.
-	last := time.Now().Round(0)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-tick.C:
-		}
-		if time.Now().Round(0).Sub(last) < interval {
-			continue
-		}
-		err := extend(ctx, c, ns, name, uid)
-		switch {
-		case ctx.Err() != nil:
-			return nil
-		case apierrors.IsNotFound(err), apierrors.IsConflict(err), apierrors.IsInvalid(err):
-			return fmt.Errorf("tunnel %s/%s is gone: it expired while this machine was away, or someone deleted it. Run the command again", ns, name)
-		case err != nil:
-			fmt.Fprintf(out, "Could not extend tunnel %s/%s: %v. Trying again.\n", ns, name, err)
-		default:
-			last = time.Now().Round(0)
-		}
-	}
-}
-
-// extend sets the Tunnel's expiry to expiresAfter from now.
-func extend(ctx context.Context, c client.Client, ns, name string, uid types.UID) error {
-	t := &unstructured.Unstructured{}
-	t.SetGroupVersionKind(tunnelGVK)
-	t.SetNamespace(ns)
-	t.SetName(name)
-	patch := fmt.Sprintf(`{"metadata":{"uid":%q,"annotations":{%q:%q}}}`, uid, expiresAnnotation, expiry(time.Now()))
-	return c.Patch(ctx, t, client.RawPatch(types.MergePatchType, []byte(patch)))
-}
-
-// expiry is the annotation's value: a time in RFC 3339.
-func expiry(now time.Time) string {
-	return now.Add(expiresAfter).UTC().Format(time.RFC3339)
 }
 
 // ensure returns the Tunnel to serve and whether it created it. It never
@@ -326,7 +263,7 @@ func ensure(ctx context.Context, c client.Client, ns, name string, want spec) (*
 		t = build(ns, name, want)
 		// From the moment it exists, so a command killed right after this
 		// call leaves nothing behind for long.
-		t.SetAnnotations(map[string]string{expiresAnnotation: expiry(time.Now())})
+		t.SetAnnotations(map[string]string{expiry.Annotation: expiry.Deadline()})
 		if err := c.Create(ctx, t); err != nil {
 			return nil, false, fmt.Errorf("create tunnel %s/%s: %w", ns, name, err)
 		}
