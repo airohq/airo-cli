@@ -26,6 +26,42 @@ import (
 	"github.com/airohq/airo-cli/internal/tunnel"
 )
 
+func TestLocalAgentCommandArguments(t *testing.T) {
+	for _, tc := range []struct {
+		verb  string
+		args  []string
+		valid bool
+	}{
+		{"serve", nil, true},
+		{"serve", []string{"--name", "demo", "--", "--idle-timeout=10s"}, true},
+		{"serve", []string{"--name="}, false},
+		{"serve", []string{"reviewer"}, false},
+		{"serve", []string{"-a", "reviewer"}, false},
+		{"serve", []string{"--agent", "reviewer"}, false},
+		{"connect", []string{"reviewer"}, true},
+		{"connect", []string{"-v", "reviewer", "--", "--idle-timeout=10s"}, true},
+		{"connect", nil, false},
+		{"connect", []string{""}, false},
+		{"connect", []string{"one", "two"}, false},
+		{"connect", []string{"--", "reviewer"}, false},
+		{"connect", []string{"--name", "reviewer"}, false},
+	} {
+		t.Run(tc.verb+" "+strings.Join(tc.args, " "), func(t *testing.T) {
+			cmd, _, err := NewCommand(nil).Find([]string{tc.verb})
+			if err != nil || cmd.Name() != tc.verb {
+				t.Fatalf("find %s: %v", tc.verb, err)
+			}
+			err = cmd.ParseFlags(tc.args)
+			if err == nil {
+				err = cmd.ValidateArgs(cmd.Flags().Args())
+			}
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v: %v", tc.valid, err)
+			}
+		})
+	}
+}
+
 func TestAgentTunnel(t *testing.T) {
 	const origin = "http://work.team.svc.cluster.local"
 	a := resource(agentGVK, "reviewer", map[string]any{"harnessRef": map[string]any{"name": "work"}})

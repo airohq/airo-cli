@@ -33,92 +33,119 @@ import (
 )
 
 func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
-	var name, temporaryName, program string
-	var defaults supervisor.Options
-	settings := flag.NewFlagSet("runner", flag.ContinueOnError)
-	defaults.BindFlags(settings)
+	var name string
 	cmd := &cobra.Command{
-		Use: "serve [--name NAME | --agent NAME] [flags]", Short: "Run this agent's turns on this machine, starting its sandbox on demand",
-		Example: "  airo agent serve --name demo --harness codex --codex-sandbox read-only\n  airo agent serve -a reviewer",
+		Use:     "serve [--name NAME]",
+		Short:   "Run a temporary local Agent and delete it on exit",
+		Example: "  airo agent serve\n  airo agent serve --name demo",
 		Args: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("name") && temporaryName == "" {
+			if cmd.Flags().Changed("name") && name == "" {
 				return errors.New("--name needs a temporary Agent name")
 			}
-			if len(args) > 0 && cmd.ArgsLenAtDash() != 0 {
-				return errors.New("unexpected positional argument: use --harness and --sandbox, or pass helper flags after --")
+			return cobra.NoArgs(cmd, args)
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "temporary Agent name (default: generate a name)")
+	return localRunnerCommand(cmd, flags, func(ctx context.Context, c client.Client, ns string, args []string, serve serveAgent) error {
+		return serveTemporary(ctx, c, ns, name, cmd.ErrOrStderr(), serve)
+	})
+}
+
+func newConnectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "connect NAME",
+		Short:   "Connect this machine to an existing Agent to run its turns",
+		Long:    "Connect this machine to an Agent with a private relay, such as one created with airo agent create --local. Ctrl-C disconnects this machine. Run the command again to reconnect.",
+		Example: "  airo agent connect reviewer",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 1 || args[0] == "" {
+				return errors.New("connect requires one existing Agent name")
 			}
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer cancel()
-			cfg, err := flags.ToRESTConfig()
-			if err != nil {
-				return err
-			}
-			ns, _, err := flags.ToRawKubeConfigLoader().Namespace()
-			if err != nil {
-				return err
-			}
-			c, err := client.New(cfg, client.Options{})
-			if err != nil {
-				return err
-			}
-			// Keep the previous arguments after --. Explicit airo flags take
-			// precedence and are also forwarded to a custom executable.
-			args = append([]string(nil), args...)
-			cmd.Flags().Visit(func(f *pflag.Flag) {
-				if settings.Lookup(f.Name) != nil {
-					name := f.Name
-					if program != "" && name == "sandbox" {
-						// Older standalone supervisors use the original flag name.
-						name = "runner"
-					}
-					args = append(args, "--"+name+"="+f.Value.String())
-				}
-			})
-			out := cmd.ErrOrStderr()
-			if program == "" {
-				settings.SetOutput(out)
-				if err := settings.Parse(args); err != nil {
-					return err
-				}
-				if settings.NArg() != 0 {
-					return fmt.Errorf("unexpected runner argument %q", settings.Arg(0))
-				}
-				if name != "" && defaults.Harness == "" && defaults.ClaudePermissionMode == "" && defaults.CodexSandbox == "" {
-					defaults.Harness, defaults.CodexSandbox = "codex", "read-only"
-				}
-				if _, err := defaults.Adapter(); err != nil {
-					return err
-				}
-			}
-			serve := func(ctx context.Context, agentName string, t tunnel.RunnerTunnel, workspace string) error {
-				return serveRunner(ctx, t.Namespace, workspace, defaults, program, args, out, func(ctx context.Context, h http.Handler) error {
-					if name == "" {
-						fmt.Fprintf(out, "Created temporary agent %s\n", agentName)
-					} else {
-						fmt.Fprintf(out, "Serving agent %s/%s through tunnel %s. Waiting for turns.\n", ns, agentName, t.Name)
-					}
-					return t.ServeHTTP(ctx, out, cfg, h)
-				})
-			}
-			if name == "" {
-				return serveTemporary(ctx, c, ns, temporaryName, out, serve)
-			}
-			t, err := agentTunnel(ctx, c, ns, name)
-			if err != nil {
-				return err
-			}
-			return serve(ctx, name, t, t.UID)
-		},
 	}
-	cmd.Flags().StringVarP(&name, "agent", "a", "", "existing remote Agent to serve (default: create a temporary Agent)")
-	cmd.Flags().StringVar(&temporaryName, "name", "", "create a temporary Agent with this name (default: generate a name)")
-	cmd.MarkFlagsMutuallyExclusive("name", "agent")
+	return localRunnerCommand(cmd, flags, func(ctx context.Context, c client.Client, ns string, names []string, serve serveAgent) error {
+		name := names[0]
+		t, err := agentTunnel(ctx, c, ns, name)
+		if err != nil {
+			return err
+		}
+		return serve(ctx, fmt.Sprintf("Serving agent %s/%s through tunnel %s. Waiting for turns.", ns, name, t.Name), t, t.UID)
+	})
+}
+
+type serveAgent func(ctx context.Context, message string, target tunnel.RunnerTunnel, workspace string) error
+
+func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, start func(context.Context, client.Client, string, []string, serveAgent) error) *cobra.Command {
+	var program string
+	var defaults supervisor.Options
+	settings := flag.NewFlagSet("runner", flag.ContinueOnError)
+	defaults.BindFlags(settings)
+	validate := cmd.Args
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if dash := cmd.ArgsLenAtDash(); dash >= 0 {
+			args = args[:dash]
+		}
+		return validate(cmd, args)
+	}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		var helperArgs []string
+		if dash := cmd.ArgsLenAtDash(); dash >= 0 {
+			helperArgs = append(helperArgs, args[dash:]...)
+			args = args[:dash]
+		}
+		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		cfg, err := flags.ToRESTConfig()
+		if err != nil {
+			return err
+		}
+		ns, _, err := flags.ToRawKubeConfigLoader().Namespace()
+		if err != nil {
+			return err
+		}
+		c, err := client.New(cfg, client.Options{})
+		if err != nil {
+			return err
+		}
+		// Keep the previous arguments after --. Explicit airo flags take
+		// precedence and are also forwarded to a custom executable.
+		cmd.Flags().Visit(func(f *pflag.Flag) {
+			if settings.Lookup(f.Name) != nil {
+				name := f.Name
+				if program != "" && name == "sandbox" {
+					// Older standalone supervisors use the original flag name.
+					name = "runner"
+				}
+				helperArgs = append(helperArgs, "--"+name+"="+f.Value.String())
+			}
+		})
+		out := cmd.ErrOrStderr()
+		if program == "" {
+			settings.SetOutput(out)
+			if err := settings.Parse(helperArgs); err != nil {
+				return err
+			}
+			if settings.NArg() != 0 {
+				return fmt.Errorf("unexpected runner argument %q", settings.Arg(0))
+			}
+			if defaults.Harness == "" && defaults.ClaudePermissionMode == "" && defaults.CodexSandbox == "" {
+				defaults.Harness, defaults.CodexSandbox = "codex", "read-only"
+			}
+			if _, err := defaults.Adapter(); err != nil {
+				return err
+			}
+		}
+		return start(ctx, c, ns, args, func(ctx context.Context, message string, t tunnel.RunnerTunnel, workspace string) error {
+			return serveRunner(ctx, t.Namespace, workspace, defaults, program, helperArgs, out, func(ctx context.Context, h http.Handler) error {
+				fmt.Fprintln(out, message)
+				return t.ServeHTTP(ctx, out, cfg, h)
+			})
+		})
+	}
 	cmd.Flags().BoolVarP(&defaults.Verbose, "verbose", "v", false, settings.Lookup("verbose").Usage)
 	cmd.Flags().AddGoFlagSet(settings)
-	cmd.Flags().Lookup("harness").Usage = "coding agent: claude or codex (serving an existing Agent defaults to read-only Codex)"
+	cmd.Flags().Lookup("harness").Usage = "coding agent: claude or codex (default with no coding-agent settings: read-only Codex)"
 	_ = cmd.Flags().MarkHidden("runner")
 	cmd.Flags().StringVar(&program, "runner-command", "", "use an external supervisor executable (default: embedded runner)")
 	return cmd

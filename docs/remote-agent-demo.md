@@ -21,7 +21,7 @@ After disconnecting, you can serve the same Agent again. To retire it, run
 With a relay reserved for temporary agents, the presenter runs:
 
 ```sh
-airo agent serve --name demo --harness codex --codex-sandbox read-only
+airo agent serve --name demo
 ```
 
 Omit `--name` for a generated name. The server prints
@@ -48,7 +48,7 @@ kubectl -n "$project" label \
 
 The policy and Harness must share the reserved Tunnel name. The CLI verifies
 the new Tunnel's caller URL against the Harness before serving. An occupied
-name is skipped. Serving with `--agent` uses the existing Agent and its Tunnel.
+name is skipped. Use `airo agent connect NAME` for an existing Agent and its Tunnel.
 
 ## Prepare the project for temporary Agents (once, as a project administrator)
 
@@ -136,7 +136,7 @@ credential on this machine. On the first turn, the CLI pulls the released
 worker image from GHCR and uses its image ID until the server exits.
 
 ```sh
-airo -n "$project" agent serve -a "$agent" --harness codex --sandbox container \
+airo -n "$project" agent connect "$agent" --harness codex --sandbox container \
   --codex-sandbox read-only -v
 ```
 
@@ -147,6 +147,6 @@ airo -n airohq-default chat -a laptop-demo 'What is 17 times 23?'
 ```
 
 The first turn starts the local container. Ctrl-C in the serving terminal
-disconnects the machine. Reconnect later with the same serve command. The
+disconnects the machine. Reconnect later with the same connect command. The
 Agent and Tunnel keep their identities. To continue the conversation, run
 `airo -n airohq-default chat -a laptop-demo -c` from the same client.

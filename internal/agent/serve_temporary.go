@@ -18,8 +18,6 @@ import (
 
 var egressPolicyGVK = agentGVK.GroupVersion().WithKind("EgressPolicy")
 
-type serveAgent func(context.Context, string, tunnel.RunnerTunnel, string) error
-
 func serveTemporary(ctx context.Context, c client.Client, ns, name string, out io.Writer, serve serveAgent) error {
 	policies := &unstructured.UnstructuredList{}
 	policies.SetGroupVersionKind(egressPolicyGVK.GroupVersion().WithKind("EgressPolicyList"))
@@ -27,7 +25,7 @@ func serveTemporary(ctx context.Context, c client.Client, ns, name string, out i
 		return err
 	}
 	if len(policies.Items) == 0 {
-		return fmt.Errorf("project %s has no relay for temporary agents: ask a project administrator to configure a remote Harness and its EgressPolicy labelled %s=true, or serve an existing agent with --agent", ns, tunnel.TemporaryAgentLabel)
+		return fmt.Errorf("project %s has no relay for temporary agents: ask a project administrator to configure a remote Harness and its EgressPolicy labelled %s=true, or connect to an existing Agent with airo agent connect NAME", ns, tunnel.TemporaryAgentLabel)
 	}
 	sort.Slice(policies.Items, func(i, j int) bool { return policies.Items[i].GetName() < policies.Items[j].GetName() })
 	for _, policy := range policies.Items {
@@ -54,7 +52,7 @@ func serveTemporary(ctx context.Context, c client.Client, ns, name string, out i
 				return err
 			}
 			// The workspace survives across invocations using this relay.
-			return serve(ctx, a.GetName(), t, string(h.GetUID()))
+			return serve(ctx, "Created temporary agent "+a.GetName(), t, string(h.GetUID()))
 		})
 		// Retry only a clean reservation conflict. A joined cleanup error
 		// means this attempt may have left an Agent behind.
