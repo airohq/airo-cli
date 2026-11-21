@@ -65,7 +65,7 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			return fmt.Errorf("unknown agent verb %q: see airo agent --help for verbs, or use airo chat to send a prompt", args[0])
 		},
 	}
-	cmd.AddCommand(newCreateCommand(flags), newServeCommand(flags))
+	cmd.AddCommand(newCreateCommand(flags), newServeCommand(flags), newConnectCommand(flags))
 	cmd.AddCommand(generic.Commands(flags, cmd.Name())...)
 	return cmd
 }
@@ -92,7 +92,7 @@ By default the agent uses an existing project Harness. The wizard offers
 the project's Harness and model choices and highlights the defaults. Use
 --harness or --model to supply a choice directly.
 Use --local for a durable Agent served from your machine. The CLI creates
-its private relay in the same project. Connect or reconnect with airo agent serve -a NAME.
+its private relay in the same project. Connect or reconnect with airo agent connect NAME.
 In scripts, give NAME and one of --prompt, --prompt-file or --template.
 A script uses the project's only choice or its default when a flag is omitted.
 
@@ -142,7 +142,7 @@ airo apply -f.`,
 	cmd.Flags().StringVar(&o.description, "description", "", "what the agent is for, in a line")
 	cmd.Flags().StringVar(&o.model, "model", "", "name of the ModelConfig to use (default: the project's only one, or its default)")
 	cmd.Flags().StringVar(&o.harness, "harness", "", "name of the Harness to run on (default: the project's only one, or its default)")
-	cmd.Flags().BoolVar(&o.local, "local", false, "create a durable Agent with a dedicated relay for airo agent serve")
+	cmd.Flags().BoolVar(&o.local, "local", false, "create a durable Agent with a dedicated relay for airo agent connect")
 	cmd.MarkFlagsMutuallyExclusive("local", "harness")
 	cmd.Flags().StringVar(&o.template, "template", "", "name of an AgentTemplate to use in place of a prompt")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file", "template")

@@ -585,7 +585,7 @@ of an Agent go in a file for `airo apply -f` too.
 
 ### Serve an agent on your machine
 
-Omit `--agent` to create a temporary Agent and private Tunnel in a project
+Run `airo agent serve` to create a temporary Agent and private Tunnel in a project
 with a [temporary relay configured](docs/remote-agent-demo.md#temporary-agents).
 Use `--name` to choose the temporary Agent's name, or omit it to generate one.
 The server prints `Created temporary agent NAME`. Use that name with
@@ -593,7 +593,7 @@ The server prints `Created temporary agent NAME`. Use that name with
 Agent with that name causes creation to fail.
 
 ```sh
-airo agent serve --name demo --harness codex --codex-sandbox read-only
+airo agent serve --name demo
 ```
 
 Ctrl-C deletes the temporary Agent. Kubernetes then deletes its Tunnel.
@@ -604,6 +604,8 @@ last renewal. Automatic Agent expiry requires the platform janitor to monitor
 `agents.api.kagent.dev`. Each relay serves one temporary Agent at a time. Its local
 workspace is reused on the same container engine.
 
+### Connect this machine to a durable Agent
+
 For a durable Agent, use `--local` in a project with agents and tunnels enabled. The CLI
 creates the Agent first, then its same-name private Tunnel, EgressPolicy and
 Harness, and the Role and RoleBinding for project sessions to call this Tunnel.
@@ -613,7 +615,7 @@ the worker pool and snapshot location of the project's default or only Harness.
 
 ```sh
 airo agent create reviewer --local --prompt "You review pull requests."
-airo agent serve -a reviewer
+airo agent connect reviewer
 ```
 
 Deleting the Agent with `airo agent delete reviewer` removes its relay
@@ -623,9 +625,12 @@ Agent also cleans up its children. For a custom shared relay, use
 an Agent manifest with explicit Harness and EgressPolicy references.
 
 Use `airo chat -a reviewer` in a second terminal. Ctrl-C in the serving
-terminal disconnects the machine. Run the same serve command to reconnect.
-The Agent and Tunnel persist. The embedded server defaults to read-only
-Codex for an existing Agent when you omit the coding-agent settings.
+terminal disconnects the machine. Run `airo agent connect reviewer` again to reconnect.
+The Agent and Tunnel persist.
+
+### Local sandbox settings
+
+Both `serve` and `connect` default to read-only Codex when you omit the coding-agent settings.
 The first turn starts a container, later turns reuse it, and five idle
 minutes release it. Its named volume keeps the workspace on that engine.
 
@@ -638,7 +643,7 @@ environment.
 The `runner` Dockerfile target in `kagent-remote-harness` builds a single
 worker image containing both Claude Code and Codex. That repository's
 GitHub Actions publish it to `ghcr.io/airohq/kagent-remote-harness/runner`.
-On the first turn of each `agent serve` invocation, the embedded container
+On the first turn of each `serve` or `connect` invocation, the embedded container
 sandbox pulls the default `ghcr.io/airohq/kagent-remote-harness/runner:latest`,
 even when the tag is cached. It uses the resolved image ID for the rest of
 that invocation, including after idle timeouts. If the pull fails, the turn
@@ -648,11 +653,11 @@ To test a development branch, build from the matching harness checkout:
 
 ```sh
 docker build --target runner -t local/remote-harness:dev .
-airo agent serve -a reviewer --harness codex --sandbox container --codex-sandbox workspace-write --image local/remote-harness:dev
+airo agent connect reviewer --harness codex --sandbox container --codex-sandbox workspace-write --image local/remote-harness:dev
 ```
 
 `airo` embeds the Go supervisor. Set the provider credential in the
-environment of `airo agent serve`. For Codex, export `OPENAI_API_KEY` or
+environment of the `serve` or `connect` process. For Codex, export `OPENAI_API_KEY` or
 `CODEX_API_KEY`; an explicit `CODEX_API_KEY` takes precedence. The CLI reads
 its process environment. If the key is in a trusted shell-format `.env`,
 run `set -a; source ./.env; set +a` in the serving terminal first.
