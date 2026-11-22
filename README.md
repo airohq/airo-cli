@@ -650,7 +650,7 @@ Running `airo agent delete NAME` triggers the same cascade. While serving,
 the CLI renews the Agent's `airohq.dev/expires` annotation every five minutes.
 If the process dies, the janitor can delete the Agent 15 minutes after the
 last renewal. Automatic Agent expiry requires the platform janitor to monitor
-`agents.api.kagent.dev`. Each relay serves one temporary Agent at a time. Each `serve` invocation
+`agents.api.kagent.dev`. Each relay serves one temporary Agent at a time. By default each `serve` invocation
 gets a fresh local workspace on its first turn, even when you use the same
 `--name`. Files and coding-agent history survive idle worker restarts during
 that invocation. Stopping `serve` removes its workspace volume. After a hard
@@ -689,6 +689,22 @@ Flags**, `--sandbox` selects the execution environment. The default is
 agent. The default is `codex`. The **Codex Harness Args** or **Claude Harness Args** section
 shows the default and an example override.
 
+Use `--workspace PATH` to share an existing directory as the harness's working
+copy. Both commands accept relative paths. With `--workspace .`, files the
+harness edits are visible in your current directory and survive shutdown.
+Harness state stays in the engine volume. When reconnecting to a durable
+Agent, pass the directory again to use the same checkout.
+
+```sh
+airo agent serve --workspace . -- --sandbox workspace-write
+airo agent connect reviewer --workspace ../backend
+```
+
+The container sandbox mounts the directory at `/work/workspace`. The engine
+must have access to the same resolved host path. On native Linux, grant the
+worker (UID/GID 10001) the filesystem access it needs. The harness's own
+permission mode also applies.
+
 Place native coding-agent arguments after `--`. They apply to each fresh
 and resumed turn during this invocation. Put Airo settings such as `--image`
 and `--idle-timeout` before `--`. The container worker must support native
@@ -713,7 +729,7 @@ Both `serve` and `connect` default to read-only Codex when you omit the coding-a
 The first turn starts a worker container. After a turn finishes, the worker
 stays available for `--idle-timeout` (default `5m`). When that time elapses, the
 server removes the container. The next turn starts a new one with the same
-workspace. Temporary Agents keep their files until `serve` exits.
+workspace. Temporary Agents keep files in their engine volume until `serve` exits.
 Durable Agents keep theirs across `connect` invocations on the same engine.
 
 Choose the coding agent with `--harness claude` or `--harness codex`.
