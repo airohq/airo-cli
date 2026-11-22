@@ -127,7 +127,7 @@ func TestEmbeddedRunnerStartsColdWithoutHelper(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("DOCKER_HOST", "unix:///dev/null/absent-engine.sock")
 	opts := supervisor.Options{Backend: "container", WorkerOptions: supervisor.WorkerOptions{Harness: "codex", CodexSandbox: "read-only", IdleTimeout: time.Minute, TurnTimeout: time.Minute}}
-	err := serveRunner(t.Context(), "team", "test", opts, "", nil, io.Discard, func(_ context.Context, handler http.Handler) error {
+	err := serveRunner(t.Context(), "team", "test", nil, opts, "", nil, io.Discard, func(_ context.Context, handler http.Handler) error {
 		req := httptest.NewRequest(http.MethodGet, "/v1/info", nil)
 		req.Header.Set("Tunnel-Caller", "substrate:actor/team/session")
 		w := httptest.NewRecorder()

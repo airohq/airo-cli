@@ -29,7 +29,7 @@ Omit `--name` for a generated name. The server prints
 Ctrl-C or `airo agent delete NAME` deletes the temporary Agent. Kubernetes
 then removes its private Tunnel. If the laptop goes offline, the janitor
 deletes the Agent after its 15-minute deadline and the same cascade applies.
-The relay configuration and the local workspace survive. One relay supports one server at a time;
+The relay configuration survives. Each new temporary Agent gets a fresh local workspace. One relay supports one server at a time;
 reserve another name for an additional simultaneous server.
 
 **One-time setup for the administrator.** Follow **Prepare the project** below
@@ -131,8 +131,9 @@ YAML
 
 ## Run the demo
 
-In the serving terminal, export `OPENAI_API_KEY` or `CODEX_API_KEY`. Keep the
-credential on this machine. On the first turn, the CLI pulls the released
+For a ChatGPT subscription, run `airo agent login codex` on the serving machine
+and complete the browser sign-in once. Unset `OPENAI_API_KEY` and `CODEX_API_KEY`
+in that terminal. To use an API key, export either variable instead. On the first turn, the CLI pulls the released
 worker image from GHCR and uses its image ID until the server exits.
 
 ```sh

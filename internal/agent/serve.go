@@ -37,6 +37,7 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "serve [--name NAME]",
 		Short:   "Run a temporary local Agent and delete it on exit",
+		Long:    "Run a temporary Agent with a fresh local workspace. Ctrl-C deletes the Agent and its workspace. To use a ChatGPT subscription with the default worker, sign in once with airo agent login codex.",
 		Example: "  airo agent serve\n  airo agent serve --name demo",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("name") && name == "" {
@@ -55,7 +56,7 @@ func newConnectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "connect NAME",
 		Short:   "Connect this machine to an existing Agent to run its turns",
-		Long:    "Connect this machine to an Agent with a private relay, such as one created with airo agent create --local. Ctrl-C disconnects this machine. Run the command again to reconnect.",
+		Long:    "Connect this machine to an Agent with a private relay, such as one created with airo agent create --local. Ctrl-C disconnects this machine. Run the command again to reconnect with the same workspace on this engine. To use a ChatGPT subscription, sign in once with airo agent login codex.",
 		Example: "  airo agent connect reviewer",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 || args[0] == "" {
@@ -70,11 +71,11 @@ func newConnectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return serve(ctx, fmt.Sprintf("Serving agent %s/%s through tunnel %s. Waiting for turns.", ns, name, t.Name), t, t.UID)
+		return serve(ctx, fmt.Sprintf("Serving agent %s/%s through tunnel %s. Waiting for turns.", ns, name, t.Name), t, nil)
 	})
 }
 
-type serveAgent func(ctx context.Context, message string, target tunnel.RunnerTunnel, workspace string) error
+type serveAgent func(ctx context.Context, message string, target tunnel.RunnerTunnel, workspace *temporaryWorkspace) error
 
 func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, start func(context.Context, client.Client, string, []string, serveAgent) error) *cobra.Command {
 	var program string
@@ -132,12 +133,16 @@ func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 			if defaults.Harness == "" && defaults.ClaudePermissionMode == "" && defaults.CodexSandbox == "" {
 				defaults.Harness, defaults.CodexSandbox = "codex", "read-only"
 			}
+			defaults.CodexLoginVolume, err = workerCodexLogin(defaults)
+			if err != nil {
+				return fmt.Errorf("select local Codex sign-in: %w", err)
+			}
 			if _, err := defaults.Adapter(); err != nil {
 				return err
 			}
 		}
-		return start(ctx, c, ns, args, func(ctx context.Context, message string, t tunnel.RunnerTunnel, workspace string) error {
-			return serveRunner(ctx, t.Namespace, workspace, defaults, program, helperArgs, out, func(ctx context.Context, h http.Handler) error {
+		return start(ctx, c, ns, args, func(ctx context.Context, message string, t tunnel.RunnerTunnel, workspace *temporaryWorkspace) error {
+			return serveRunner(ctx, t.Namespace, t.UID, workspace, defaults, program, helperArgs, out, func(ctx context.Context, h http.Handler) error {
 				fmt.Fprintln(out, message)
 				return t.ServeHTTP(ctx, out, cfg, h)
 			})
@@ -236,14 +241,24 @@ func runnerRequests(ns, token string, next http.Handler) http.Handler {
 
 type serveTunnel func(context.Context, http.Handler) error
 
-func serveRunner(ctx context.Context, ns, workspace string, opts supervisor.Options, program string, args []string, out io.Writer, serve serveTunnel) (err error) {
+func serveRunner(ctx context.Context, ns, tunnelUID string, workspace *temporaryWorkspace, opts supervisor.Options, program string, args []string, out io.Writer, serve serveTunnel) (err error) {
 	var secret [32]byte
 	rand.Read(secret[:])
 	token := hex.EncodeToString(secret[:])
-	identity := sha256.Sum256([]byte(workspace))
+	identity := sha256.Sum256([]byte(tunnelUID))
 	name := fmt.Sprintf("airo-runner-%x", identity[:12])
+	wrap := func(handler http.Handler) http.Handler {
+		if workspace != nil {
+			handler = workspace.onTurn(handler)
+		}
+		return runnerRequests(ns, token, handler)
+	}
+	if workspace != nil {
+		name = workspace.name
+		defer func() { err = errors.Join(err, workspace.close()) }()
+	}
 	if program != "" {
-		return withExternalSupervisor(ctx, ns, name, token, program, args, out, serve)
+		return withExternalSupervisor(ctx, name, token, program, args, out, wrap, serve)
 	}
 
 	host, err := supervisor.New(name, token, opts, slog.New(slog.NewTextHandler(out, nil)))
@@ -251,10 +266,10 @@ func serveRunner(ctx context.Context, ns, workspace string, opts supervisor.Opti
 		return err
 	}
 	defer func() { err = errors.Join(err, host.Close()) }()
-	return serve(ctx, runnerRequests(ns, token, host))
+	return serve(ctx, wrap(host))
 }
 
-func withExternalSupervisor(ctx context.Context, ns, name, token, program string, args []string, out io.Writer, serve serveTunnel) error {
+func withExternalSupervisor(ctx context.Context, name, token, program string, args []string, out io.Writer, wrap func(http.Handler) http.Handler, serve serveTunnel) error {
 	path, err := exec.LookPath(program)
 	if err != nil {
 		return fmt.Errorf("find runner helper %q (install a helper with the supervise command): %w", program, err)
@@ -310,7 +325,7 @@ func withExternalSupervisor(ctx context.Context, ns, name, token, program string
 		p.Out.URL.Host = "runner"
 		p.Out.Host = "runner"
 	}}
-	err = serve(ctx, runnerRequests(ns, token, proxy))
+	err = serve(ctx, wrap(proxy))
 	if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
 		return cause
 	}
