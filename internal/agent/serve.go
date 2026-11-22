@@ -29,7 +29,7 @@ import (
 func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	var name string
 	cmd := &cobra.Command{
-		Use:     "serve [--name NAME]",
+		Use:     "serve [--name NAME] [flags] [-- HARNESS_ARGS...]",
 		Short:   "Run a temporary local Agent and delete it on exit",
 		Long:    "Run a temporary Agent with a fresh local workspace. Ctrl-C deletes the Agent and its workspace. The container sandbox prompts for subscription sign-in on the first run.",
 		Example: "  airo agent serve\n  airo agent serve --name demo",
@@ -48,7 +48,7 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 
 func newConnectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "connect NAME",
+		Use:     "connect NAME [flags] [-- HARNESS_ARGS...]",
 		Short:   "Connect this machine to an existing Agent to run its turns",
 		Long:    "Connect this machine to an Agent with a private relay, such as one created with airo agent create --local. Ctrl-C disconnects this machine. Run the command again to reconnect with the same workspace on this engine. The container sandbox prompts for subscription sign-in when needed.",
 		Example: "  airo agent connect reviewer",
@@ -74,14 +74,14 @@ type serveAgent func(ctx context.Context, message string, target tunnel.RunnerTu
 func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, start func(context.Context, client.Client, string, []string, serveAgent) error) *cobra.Command {
 	var defaults supervisor.Options
 	validate := cmd.Args
-	settings := bindLocalFlags(cmd, &defaults)
+	bindLocalFlags(cmd, &defaults)
 	// Cobra normally handles --help before argument validation. Parse here so
 	// help and execution both use the final sandbox and harness selection.
 	cmd.DisableFlagParsing = true
 	var positionals []string
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		var err error
-		positionals, err = parseLocalFlags(cmd, args, settings, &defaults)
+		positionals, err = parseLocalFlags(cmd, args, &defaults)
 		if err != nil {
 			return err
 		}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/airohq/kagent-remote-harness/runner/supervisor"
+	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -33,9 +34,9 @@ func TestLocalAgentCommandArguments(t *testing.T) {
 		valid bool
 	}{
 		{"serve", nil, true},
-		{"serve", []string{"--claude-permission-mode=plan", "--harness", "claude"}, true},
-		{"serve", []string{"--codex-sandbox=workspace-write"}, true},
-		{"serve", []string{"--harness=claude", "--", "--harness=codex", "--claude-permission-mode=plan"}, true},
+		{"serve", []string{"--harness", "claude", "--", "--permission-mode=plan"}, true},
+		{"serve", []string{"--", "--sandbox=workspace-write"}, true},
+		{"serve", []string{"--harness=claude", "--", "--settings", "two words"}, true},
 		{"serve", []string{"--runner-command", "remote-harness"}, false},
 		{"serve", []string{"--name", "demo", "--", "--idle-timeout=10s"}, true},
 		{"serve", []string{"--name="}, false},
@@ -43,7 +44,7 @@ func TestLocalAgentCommandArguments(t *testing.T) {
 		{"serve", []string{"-a", "reviewer"}, false},
 		{"serve", []string{"--agent", "reviewer"}, false},
 		{"connect", []string{"reviewer"}, true},
-		{"connect", []string{"reviewer", "--", "--harness=claude", "--claude-permission-mode=plan"}, true},
+		{"connect", []string{"reviewer", "--harness=claude", "--", "--permission-mode=plan"}, true},
 		{"connect", []string{"reviewer", "--runner-command", "remote-harness"}, false},
 		{"connect", []string{"-v", "reviewer", "--", "--idle-timeout=10s"}, true},
 		{"connect", nil, false},
@@ -62,6 +63,21 @@ func TestLocalAgentCommandArguments(t *testing.T) {
 				t.Fatalf("valid=%v: %v", tc.valid, err)
 			}
 		})
+	}
+}
+
+func TestSeparatorPreservesNativeArguments(t *testing.T) {
+	cmd := &cobra.Command{Use: "connect"}
+	var opts supervisor.Options
+	bindLocalFlags(cmd, &opts)
+	native := []string{"--idle-timeout=1s", "-c", "value with spaces", "--model=", "", "--image"}
+	args := append([]string{"reviewer", "--idle-timeout=10s", "--"}, native...)
+	names, err := parseLocalFlags(cmd, args, &opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(names, []string{"reviewer"}) || opts.IdleTimeout != 10*time.Second || !reflect.DeepEqual(opts.HarnessArgs, native) {
+		t.Fatalf("names=%q idle=%v native=%q", names, opts.IdleTimeout, opts.HarnessArgs)
 	}
 }
 

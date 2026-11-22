@@ -686,16 +686,28 @@ The Agent and Tunnel persist.
 Both commands show help for the selected sandbox and harness. Under **Basic
 Flags**, `--sandbox` selects the execution environment. The default is
 `container`. Under **Container Sandbox Flags**, `--harness` selects the coding
-agent. The default is `codex`, so plain `--help` shows **Codex Harness Flags**,
-including `--codex-sandbox`. Selecting Claude shows **Claude Harness Flags**,
-including `--claude-permission-mode`. Each command accepts only the flags for
-the selected combination.
+agent. The default is `codex`. The **Codex Harness Args** or **Claude Harness Args** section
+shows the default and an example override.
+
+Place native coding-agent arguments after `--`. They apply to each fresh
+and resumed turn during this invocation. Put Airo settings such as `--image`
+and `--idle-timeout` before `--`. The container worker must support native
+arguments (see the development image example below).
 
 ```sh
 airo agent serve --help
-airo agent serve --sandbox container --harness claude --help
-airo agent connect --harness claude --help
+airo agent serve --harness claude --help
+airo agent serve --idle-timeout 10s -- --sandbox workspace-write
+airo agent connect reviewer --harness claude -- --permission-mode acceptEdits --disallowedTools=Bash
 ```
+
+Airo starts Codex with `codex exec --json --skip-git-repo-check -C <workspace>`
+and defaults to `--sandbox read-only`. On resume it supplies the session ID
+and passes the selected sandbox mode through Codex configuration. Airo starts
+Claude with `claude -p --output-format stream-json --verbose` and defaults to
+`--permission-mode plan`. On resume it adds `--resume <session>`. Both harnesses
+receive the prompt on stdin. An explicit native model
+option overrides a model supplied by the Agent for this invocation.
 
 Both `serve` and `connect` default to read-only Codex when you omit the coding-agent settings.
 The first turn starts a worker container. After a turn finishes, the worker
@@ -707,8 +719,8 @@ Durable Agents keep theirs across `connect` invocations on the same engine.
 Choose the coding agent with `--harness claude` or `--harness codex`.
 `--sandbox` selects where it runs. The default and currently supported
 sandbox is `container`. The original `--runner` spelling also works.
-`--codex-sandbox` controls Codex's own filesystem access inside that
-environment.
+The native Codex `--sandbox` after the separator controls its filesystem
+access inside that environment.
 
 The `runner` Dockerfile target in `kagent-remote-harness` builds a single
 worker image containing both Claude Code and Codex. That repository's
@@ -723,7 +735,7 @@ To test a development branch, build from the matching harness checkout:
 
 ```sh
 docker build --target runner -t local/remote-harness:dev .
-airo agent connect reviewer --harness codex --sandbox container --codex-sandbox workspace-write --image local/remote-harness:dev
+airo agent connect reviewer --harness codex --sandbox container --image local/remote-harness:dev -- --sandbox workspace-write
 ```
 
 With the default worker, both commands prepare credentials before serving turns.
