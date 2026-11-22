@@ -683,16 +683,44 @@ The Agent and Tunnel persist.
 
 ### Local sandbox settings
 
+Both commands show help for the selected sandbox and harness. Under **Basic
+Flags**, `--sandbox` selects the execution environment. The default is
+`container`. Under **Container Sandbox Flags**, `--harness` selects the coding
+agent. The default is `codex`. The **Codex Harness Args** or **Claude Harness Args** section
+shows the default and an example override.
+
+Place native coding-agent arguments after `--`. They apply to each fresh
+and resumed turn during this invocation. Put Airo settings such as `--image`
+and `--idle-timeout` before `--`. The container worker must support native
+arguments (see the development image example below).
+
+```sh
+airo agent serve --help
+airo agent serve --harness claude --help
+airo agent serve --idle-timeout 10s -- --sandbox workspace-write
+airo agent connect reviewer --harness claude -- --permission-mode acceptEdits --disallowedTools=Bash
+```
+
+Airo starts Codex with `codex exec --json --skip-git-repo-check -C <workspace>`
+and defaults to `--sandbox read-only`. On resume it supplies the session ID
+and passes the selected sandbox mode through Codex configuration. Airo starts
+Claude with `claude -p --output-format stream-json --verbose` and defaults to
+`--permission-mode plan`. On resume it adds `--resume <session>`. Both harnesses
+receive the prompt on stdin. An explicit native model
+option overrides a model supplied by the Agent for this invocation.
+
 Both `serve` and `connect` default to read-only Codex when you omit the coding-agent settings.
-The first turn starts a container, later turns reuse it, and five idle
-minutes release it. Temporary Agents keep their files until `serve` exits.
+The first turn starts a worker container. After a turn finishes, the worker
+stays available for `--idle-timeout` (default `5m`). When that time elapses, the
+server removes the container. The next turn starts a new one with the same
+workspace. Temporary Agents keep their files until `serve` exits.
 Durable Agents keep theirs across `connect` invocations on the same engine.
 
 Choose the coding agent with `--harness claude` or `--harness codex`.
 `--sandbox` selects where it runs. The default and currently supported
 sandbox is `container`. The original `--runner` spelling also works.
-`--codex-sandbox` controls Codex's own filesystem access inside that
-environment.
+The native Codex `--sandbox` after the separator controls its filesystem
+access inside that environment.
 
 The `runner` Dockerfile target in `kagent-remote-harness` builds a single
 worker image containing both Claude Code and Codex. That repository's
@@ -707,7 +735,7 @@ To test a development branch, build from the matching harness checkout:
 
 ```sh
 docker build --target runner -t local/remote-harness:dev .
-airo agent connect reviewer --harness codex --sandbox container --codex-sandbox workspace-write --image local/remote-harness:dev
+airo agent connect reviewer --harness codex --sandbox container --image local/remote-harness:dev -- --sandbox workspace-write
 ```
 
 With the default worker, both commands prepare credentials before serving turns.
@@ -728,15 +756,14 @@ workers and run `docker volume rm VOLUME` with the name printed at sign-in.
 For unattended use, sign in once interactively or export a credential in
 the serving shell. Codex accepts `CODEX_API_KEY` or `OPENAI_API_KEY`.
 Claude Code accepts `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`.
-An exported credential takes precedence over a saved login. Custom images and
-external supervisors handle their own sign-in.
+An exported credential takes precedence over a saved login. Custom images
+handle their own sign-in.
 Add `-v` or `--verbose` to see the image, credential variable names, turn
 event types and recognized failure reasons on stderr. To select another Engine API socket,
 set `DOCKER_HOST`.
 
-To run a separate supervisor, pass `--runner-command /path/to/remote-harness`.
-Flags after `--` are passed through to that program. The embedded runner
-also accepts the previous `-- --harness ...` syntax.
+The CLI embeds the supervisor from the `kagent-remote-harness/runner` Go
+module. To test a supervisor change, update the dependency and rebuild the CLI.
 
 The project needs an Agent with a remote Harness whose `spec.env` sets
 `REMOTE_HARNESS_URL` to a private Tunnel's `status.callerURL`. The Agent's

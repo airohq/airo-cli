@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/airohq/kagent-remote-harness/runner/supervisor"
+	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -33,12 +34,18 @@ func TestLocalAgentCommandArguments(t *testing.T) {
 		valid bool
 	}{
 		{"serve", nil, true},
+		{"serve", []string{"--harness", "claude", "--", "--permission-mode=plan"}, true},
+		{"serve", []string{"--", "--sandbox=workspace-write"}, true},
+		{"serve", []string{"--harness=claude", "--", "--settings", "two words"}, true},
+		{"serve", []string{"--runner-command", "remote-harness"}, false},
 		{"serve", []string{"--name", "demo", "--", "--idle-timeout=10s"}, true},
 		{"serve", []string{"--name="}, false},
 		{"serve", []string{"reviewer"}, false},
 		{"serve", []string{"-a", "reviewer"}, false},
 		{"serve", []string{"--agent", "reviewer"}, false},
 		{"connect", []string{"reviewer"}, true},
+		{"connect", []string{"reviewer", "--harness=claude", "--", "--permission-mode=plan"}, true},
+		{"connect", []string{"reviewer", "--runner-command", "remote-harness"}, false},
 		{"connect", []string{"-v", "reviewer", "--", "--idle-timeout=10s"}, true},
 		{"connect", nil, false},
 		{"connect", []string{""}, false},
@@ -51,14 +58,26 @@ func TestLocalAgentCommandArguments(t *testing.T) {
 			if err != nil || cmd.Name() != tc.verb {
 				t.Fatalf("find %s: %v", tc.verb, err)
 			}
-			err = cmd.ParseFlags(tc.args)
-			if err == nil {
-				err = cmd.ValidateArgs(cmd.Flags().Args())
-			}
+			err = cmd.ValidateArgs(tc.args)
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%v: %v", tc.valid, err)
 			}
 		})
+	}
+}
+
+func TestSeparatorPreservesNativeArguments(t *testing.T) {
+	cmd := &cobra.Command{Use: "connect"}
+	var opts supervisor.Options
+	bindLocalFlags(cmd, &opts)
+	native := []string{"--idle-timeout=1s", "-c", "value with spaces", "--model=", "", "--image"}
+	args := append([]string{"reviewer", "--idle-timeout=10s", "--"}, native...)
+	names, err := parseLocalFlags(cmd, args, &opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(names, []string{"reviewer"}) || opts.IdleTimeout != 10*time.Second || !reflect.DeepEqual(opts.HarnessArgs, native) {
+		t.Fatalf("names=%q idle=%v native=%q", names, opts.IdleTimeout, opts.HarnessArgs)
 	}
 }
 
@@ -170,7 +189,7 @@ func TestEmbeddedRunnerStartsColdWithoutHelper(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("DOCKER_HOST", "unix:///dev/null/absent-engine.sock")
 	opts := supervisor.Options{Backend: "container", WorkerOptions: supervisor.WorkerOptions{Harness: "codex", CodexSandbox: "read-only", IdleTimeout: time.Minute, TurnTimeout: time.Minute}}
-	err := serveRunner(t.Context(), "team", "test", nil, opts, "", nil, io.Discard, func(_ context.Context, handler http.Handler) error {
+	err := serveRunner(t.Context(), "team", "test", nil, opts, io.Discard, func(_ context.Context, handler http.Handler) error {
 		req := httptest.NewRequest(http.MethodGet, "/v1/info", nil)
 		req.Header.Set("Tunnel-Caller", "substrate:actor/team/session")
 		w := httptest.NewRecorder()

@@ -26,7 +26,7 @@ const (
 )
 
 // A serving process owns one volume across all its turns and idle worker restarts.
-// The Engine is contacted only on a turn, including when a custom supervisor is used.
+// It allocates the volume on the first turn.
 type temporaryWorkspace struct {
 	name, relay, namespace, agent, uid string
 	cluster                            kube.Reader

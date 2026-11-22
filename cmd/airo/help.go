@@ -1,6 +1,14 @@
 package main
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/airohq/airo-cli/internal/ui"
+)
+
+func init() {
+	cobra.AddTemplateFunc("flagSections", ui.FlagSections)
+}
 
 // The root groups commands and shows the resource grammar. Subcommands keep
 // their own usage, aliases and flags. Global flags live under airo options.
@@ -19,13 +27,19 @@ Examples:
   {{rpad .Name .NamePadding}} {{.Short}}{{end}}{{end}}{{end}}{{else}}
 
 Available Commands:{{range .Commands}}{{if .IsAvailableCommand}}
-  {{rpad .Name .NamePadding}} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{$flags := .LocalFlags}}{{if not .HasParent}}{{$flags = .LocalNonPersistentFlags}}{{end}}{{if $flags.HasAvailableFlags}}
+  {{rpad .Name .NamePadding}} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{$flags := .LocalFlags}}{{if not .HasParent}}{{$flags = .LocalNonPersistentFlags}}{{end}}{{if $flags.HasAvailableFlags}}{{range flagSections . $flags}}
+
+{{.Name}}:
+{{.FlagUsagesWrapped 80 | trimTrailingWhitespaces}}{{else}}
 
 Flags:
-{{$flags.FlagUsages | trimTrailingWhitespaces}}{{end}}
+{{$flags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{end}}{{with index .Annotations "harnessHelp"}}
+
+{{.}}{{end}}
 
 {{if .HasAvailableSubCommands}}Use "{{.CommandPath}} [command] --help" for more information about a command.
-{{end}}Use "airo options" to see global command-line options.
+{{end}}Use "airo options" to see global command-line options.{{with index .Annotations "helpHint"}}
+{{.}}{{end}}
 `
 
 func newOptionsCommand() *cobra.Command {
