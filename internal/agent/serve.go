@@ -147,6 +147,8 @@ func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 	cmd.Flags().AddGoFlagSet(settings)
 	cmd.Flags().Lookup("harness").Usage = "coding agent: codex (default, read-only) or claude (plan mode by default)"
 	_ = cmd.Flags().MarkHidden("runner")
+	ui.GroupFlags(cmd, "Sandbox Flags", "sandbox", "image", "idle-timeout")
+	ui.GroupFlags(cmd, "Harness Flags", "harness", "claude-permission-mode", "codex-sandbox")
 	return cmd
 }
 

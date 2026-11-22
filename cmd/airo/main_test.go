@@ -30,6 +30,19 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 			[]string{"--kubeconfig"},
 		},
 		{
+			[]string{"agent", "serve", "-h"},
+			[]string{"Basic Flags:", "--help", "--name", "--turn-timeout", "-v, --verbose",
+				"Sandbox Flags:", "--idle-timeout", "--image", "--sandbox",
+				"Harness Flags:", "--claude-permission-mode", "--codex-sandbox", "--harness", "airo options"},
+			[]string{"\nFlags:\n", "--runner", "--kubeconfig"},
+		},
+		{
+			[]string{"agent", "connect", "-h"},
+			[]string{"Basic Flags:", "--verbose", "Sandbox Flags:", "--sandbox",
+				"Harness Flags:", "--harness", "airo options"},
+			[]string{"\nFlags:\n", "--name", "--runner", "--kubeconfig"},
+		},
+		{
 			[]string{"options"},
 			[]string{"--context", "--kubeconfig", "--namespace"},
 			[]string{"--output", "--all-namespaces"},

@@ -683,6 +683,12 @@ The Agent and Tunnel persist.
 
 ### Local sandbox settings
 
+Run `airo agent serve --help` or `airo agent connect --help` to see flags
+grouped by purpose. Basic Flags cover command options such as `--verbose`
+and the temporary Agent's `--name`. Sandbox Flags control the execution
+environment, worker image and idle timeout. Harness Flags select and
+configure Codex or Claude inside that sandbox.
+
 Both `serve` and `connect` default to read-only Codex when you omit the coding-agent settings.
 The first turn starts a worker container. After a turn finishes, the worker
 stays available for `--idle-timeout` (default `5m`). When that time elapses, the
