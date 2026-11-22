@@ -62,6 +62,49 @@ func TestLocalAgentCommandArguments(t *testing.T) {
 	}
 }
 
+func TestLocalCommandsRequireCredentialsBeforeClusterAccess(t *testing.T) {
+	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"} {
+		t.Setenv(key, "")
+	}
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/_ping" {
+			w.Header().Set("API-Version", "1.54")
+			return
+		}
+		if r.Method != "GET" || !strings.Contains(r.URL.Path, "/volumes/airo-") {
+			t.Errorf("unexpected Engine call: %s %s", r.Method, r.URL.Path)
+		}
+		http.NotFound(w, r)
+	}))
+	defer engine.Close()
+	t.Setenv("DOCKER_HOST", "tcp://"+engine.Listener.Addr().String())
+	t.Setenv("DOCKER_API_VERSION", "1.54")
+	t.Setenv("DOCKER_TLS_VERIFY", "")
+	t.Setenv("DOCKER_CERT_PATH", "")
+	kube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("reached cluster before login: %s", r.URL)
+		http.NotFound(w, r)
+	}))
+	defer kube.Close()
+	for _, tc := range []struct {
+		args []string
+		key  string
+	}{
+		{[]string{"serve"}, "CODEX_API_KEY"},
+		{[]string{"connect", "reviewer", "--harness", "claude"}, "CLAUDE_CODE_OAUTH_TOKEN"},
+	} {
+		cmd := root()
+		cmd.SetIn(strings.NewReader(""))
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs(append([]string{"--server", kube.URL, "-n", "test", "agent"}, tc.args...))
+		err := cmd.Execute()
+		if err == nil || !strings.Contains(err.Error(), tc.key) || !strings.Contains(err.Error(), "terminal") {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+	}
+}
+
 func TestAgentTunnel(t *testing.T) {
 	const origin = "http://work.team.svc.cluster.local"
 	a := resource(agentGVK, "reviewer", map[string]any{"harnessRef": map[string]any{"name": "work"}})
@@ -127,7 +170,7 @@ func TestEmbeddedRunnerStartsColdWithoutHelper(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("DOCKER_HOST", "unix:///dev/null/absent-engine.sock")
 	opts := supervisor.Options{Backend: "container", WorkerOptions: supervisor.WorkerOptions{Harness: "codex", CodexSandbox: "read-only", IdleTimeout: time.Minute, TurnTimeout: time.Minute}}
-	err := serveRunner(t.Context(), "team", "test", opts, "", nil, io.Discard, func(_ context.Context, handler http.Handler) error {
+	err := serveRunner(t.Context(), "team", "test", nil, opts, "", nil, io.Discard, func(_ context.Context, handler http.Handler) error {
 		req := httptest.NewRequest(http.MethodGet, "/v1/info", nil)
 		req.Header.Set("Tunnel-Caller", "substrate:actor/team/session")
 		w := httptest.NewRecorder()

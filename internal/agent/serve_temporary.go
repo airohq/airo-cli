@@ -51,8 +51,8 @@ func serveTemporary(ctx context.Context, c client.Client, ns, name string, out i
 			if err != nil {
 				return err
 			}
-			// The workspace survives across invocations using this relay.
-			return serve(ctx, "Created temporary agent "+a.GetName(), t, string(h.GetUID()))
+			workspace := newTemporaryWorkspace(a, h.GetUID(), c, out)
+			return serve(ctx, "Created temporary agent "+a.GetName(), t, workspace)
 		})
 		// Retry only a clean reservation conflict. A joined cleanup error
 		// means this attempt may have left an Agent behind.

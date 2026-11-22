@@ -601,8 +601,12 @@ Running `airo agent delete NAME` triggers the same cascade. While serving,
 the CLI renews the Agent's `airohq.dev/expires` annotation every five minutes.
 If the process dies, the janitor can delete the Agent 15 minutes after the
 last renewal. Automatic Agent expiry requires the platform janitor to monitor
-`agents.api.kagent.dev`. Each relay serves one temporary Agent at a time. Its local
-workspace is reused on the same container engine.
+`agents.api.kagent.dev`. Each relay serves one temporary Agent at a time. Each `serve` invocation
+gets a fresh local workspace on its first turn, even when you use the same
+`--name`. Files and coding-agent history survive idle worker restarts during
+that invocation. Stopping `serve` removes its workspace volume. After a hard
+kill, a later first turn on the same relay and engine can reclaim the volume
+once its Agent is gone. Provider credentials can be reused across invocations.
 
 ### Connect this machine to a durable Agent
 
@@ -632,7 +636,8 @@ The Agent and Tunnel persist.
 
 Both `serve` and `connect` default to read-only Codex when you omit the coding-agent settings.
 The first turn starts a container, later turns reuse it, and five idle
-minutes release it. Its named volume keeps the workspace on that engine.
+minutes release it. Temporary Agents keep their files until `serve` exits.
+Durable Agents keep theirs across `connect` invocations on the same engine.
 
 Choose the coding agent with `--harness claude` or `--harness codex`.
 `--sandbox` selects where it runs. The default and currently supported
@@ -656,11 +661,26 @@ docker build --target runner -t local/remote-harness:dev .
 airo agent connect reviewer --harness codex --sandbox container --codex-sandbox workspace-write --image local/remote-harness:dev
 ```
 
-`airo` embeds the Go supervisor. Set the provider credential in the
-environment of the `serve` or `connect` process. For Codex, export `OPENAI_API_KEY` or
-`CODEX_API_KEY`; an explicit `CODEX_API_KEY` takes precedence. The CLI reads
-its process environment. If the key is in a trusted shell-format `.env`,
-run `set -a; source ./.env; set +a` in the serving terminal first.
+With the default worker, both commands prepare credentials before serving turns.
+On the first interactive run, Codex prints a ChatGPT device code. For a Claude
+subscription, select Claude Code. Its default permission mode is `plan`.
+
+```sh
+airo agent serve --harness claude
+```
+
+Open the link from Claude Code in your browser and paste its authorization
+code in the serving terminal when prompted. The sandbox keeps the selected
+provider's credentials in a separate volume on the container engine. Later
+runs on the same machine and engine reuse the login, including after a
+temporary Agent's workspace is removed. To forget it locally, stop the
+workers and run `docker volume rm VOLUME` with the name printed at sign-in.
+
+For unattended use, sign in once interactively or export a credential in
+the serving shell. Codex accepts `CODEX_API_KEY` or `OPENAI_API_KEY`.
+Claude Code accepts `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`.
+An exported credential takes precedence over a saved login. Custom images and
+external supervisors handle their own sign-in.
 Add `-v` or `--verbose` to see the image, credential variable names, turn
 event types and recognized failure reasons on stderr. To select another Engine API socket,
 set `DOCKER_HOST`.
@@ -678,7 +698,7 @@ Harness and Tunnel and opens the outbound connection. A single machine
 should serve each runner Tunnel. A project-wide actor `call` grant lets
 other authorized sessions in that project run turns here.
 
-Ctrl-C stops serving and cancels an active local turn. Restart with the
+Ctrl-C stops serving and cancels an active local turn. For a durable Agent, reconnect with the
 same Tunnel and engine to reuse the workspace. See the
 [remote harness](https://github.com/airohq/kagent-remote-harness) for the
 runner settings and execution boundary.
