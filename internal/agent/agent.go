@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/airohq/airo-cli/internal/generic"
+	"github.com/airohq/airo-cli/internal/skill"
 	"github.com/airohq/airo-cli/internal/wizard"
 )
 
@@ -65,7 +66,7 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			return fmt.Errorf("unknown agent verb %q: see airo agent --help for verbs, or use airo chat to send a prompt", args[0])
 		},
 	}
-	cmd.AddCommand(newCreateCommand(flags), newServeCommand(flags), newConnectCommand(flags))
+	cmd.AddCommand(newCreateCommand(flags), newServeCommand(flags), newConnectCommand(flags), newSkillCommand(flags))
 	cmd.AddCommand(generic.Commands(flags, cmd.Name())...)
 	return cmd
 }
@@ -78,14 +79,14 @@ type options struct {
 	model       string
 	harness     string
 	local       bool
-	template    string
+	skills      []string
 }
 
 func newCreateCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	var o options
 	cmd := &cobra.Command{
 		Use:   "create [NAME]",
-		Short: "Create an agent from a prompt, or from an AgentTemplate",
+		Short: "Create an agent from a prompt",
 		Long: `Create makes an Agent in the project and waits until it is ready.
 
 By default the agent uses an existing project Harness. The wizard offers
@@ -93,15 +94,19 @@ the project's Harness and model choices and highlights the defaults. Use
 --harness or --model to supply a choice directly.
 Use --local for a durable Agent served from your machine. The CLI creates
 its private relay in the same project. Connect or reconnect with airo agent connect NAME.
-In scripts, give NAME and one of --prompt, --prompt-file or --template.
+In scripts, give NAME and --prompt or --prompt-file.
 A script uses the project's only choice or its default when a flag is omitted.
 
-Tools, skills and the other fields of an Agent go in a file, for
-airo apply -f.`,
+--skill adds a skill, and may be repeated. airo pins a branch or a tag to
+its commit, and an image tag to its digest, because the Agent holds only
+immutable versions. Change the skills later with airo agent skill.
+
+Tools and the other fields of an Agent go in a file, for airo apply -f.`,
 		Example: `  airo agent create reviewer --prompt "You review pull requests."
   airo agent create laptop --local --prompt "You are a coding assistant."
   airo agent create reviewer --prompt-file prompt.md --model sonnet-5.5 --harness claude
-  airo agent create reviewer --template reviewer`,
+  airo agent create reviewer --prompt-file prompt.md \
+    --skill https://github.com/anthropics/skills/tree/main/skills/pdf`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ns, _, err := flags.ToRawKubeConfigLoader().Namespace()
@@ -116,8 +121,14 @@ airo apply -f.`,
 			if err != nil {
 				return err
 			}
-			if w == nil && o.promptFile == "" && strings.TrimSpace(o.prompt) == "" && o.template == "" {
-				return fmt.Errorf("provide instructions with --prompt or --prompt-file, or select an AgentTemplate with --template")
+			if w == nil && o.promptFile == "" && strings.TrimSpace(o.prompt) == "" {
+				return fmt.Errorf("provide instructions with --prompt or --prompt-file")
+			}
+			// A source airo cannot read fails before anything is asked or sent.
+			for _, arg := range o.skills {
+				if _, err := skill.Parse(arg); err != nil {
+					return err
+				}
 			}
 			cfg, err := flags.ToRESTConfig()
 			if err != nil {
@@ -144,10 +155,8 @@ airo apply -f.`,
 	cmd.Flags().StringVar(&o.harness, "harness", "", "name of the Harness to run on (default: the project's only one, or its default)")
 	cmd.Flags().BoolVar(&o.local, "local", false, "create a durable Agent with a dedicated relay for airo agent connect")
 	cmd.MarkFlagsMutuallyExclusive("local", "harness")
-	cmd.Flags().StringVar(&o.template, "template", "", "name of an AgentTemplate to use in place of a prompt")
-	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file", "template")
-	cmd.MarkFlagsMutuallyExclusive("description", "template")
-	cmd.MarkFlagsMutuallyExclusive("model", "template")
+	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
+	cmd.Flags().StringArrayVar(&o.skills, "skill", nil, "a skill's source, such as https://github.com/OWNER/REPO/tree/main/PATH; repeat for more")
 	return cmd
 }
 
@@ -174,20 +183,19 @@ func readPrompt(in io.Reader, path string) (string, error) {
 // create resolves the flags against the project, creates the Agent and waits
 // until it is ready.
 func create(ctx context.Context, out io.Writer, c client.Client, ns, name string, o options, w *wizard.Wizard, timeout time.Duration) error {
-	fromTemplate := o.template != ""
-	if w != nil && !fromTemplate && strings.TrimSpace(o.prompt) == "" {
+	if w != nil && strings.TrimSpace(o.prompt) == "" {
 		var err error
-		if o.model == "" && o.description == "" {
-			fromTemplate, err = w.Confirm("Use a project template?", false)
-			if err != nil {
-				return err
-			}
+		if o.prompt, err = w.Required("Instructions"); err != nil {
+			return err
 		}
-		if !fromTemplate {
-			o.prompt, err = w.Required("Instructions")
-			if err != nil {
-				return err
-			}
+	}
+	skills, err := pinSkills(ctx, o.skills)
+	if err != nil {
+		return err
+	}
+	if w != nil && len(o.skills) == 0 {
+		if skills, err = askSkills(ctx, w); err != nil {
+			return err
 		}
 	}
 
@@ -195,7 +203,6 @@ func create(ctx context.Context, out io.Writer, c client.Client, ns, name string
 	if w != nil {
 		pick = w.Pick
 	}
-	var err error
 	var substrate map[string]any
 	harnessRuntime := runtimeBYO
 	if o.local {
@@ -214,17 +221,9 @@ func create(ctx context.Context, out io.Writer, c client.Client, ns, name string
 		}
 		o.harness, harnessRuntime = h.GetName(), runtime(h)
 	}
-	if fromTemplate {
-		// A name the project lacks would leave an Agent that never gets ready.
-		template, err := choose(ctx, c, ns, templates, o.template, pick)
-		if err != nil {
-			return err
-		}
-		o.template = template.GetName()
-	}
 	// A Harness with its own image may need no model. The others do.
-	useModel := o.template == "" && (o.model != "" || harnessRuntime != runtimeBYO)
-	if w != nil && !o.local && o.template == "" && !useModel {
+	useModel := o.model != "" || harnessRuntime != runtimeBYO
+	if w != nil && !o.local && !useModel {
 		useModel, err = w.Confirm("Choose a project model for this harness?", false)
 		if err != nil {
 			return err
@@ -239,6 +238,9 @@ func create(ctx context.Context, out io.Writer, c client.Client, ns, name string
 	}
 
 	a := build(ns, name, o)
+	if err := setSkills(a, skills); err != nil {
+		return err
+	}
 	if err := c.Create(ctx, a); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("agent %s/%s exists: pick another name, or delete it with airo agent delete %s", ns, name, name)
@@ -256,13 +258,14 @@ func create(ctx context.Context, out io.Writer, c client.Client, ns, name string
 	} else {
 		fmt.Fprintf(out, "  harness:  %s\n", o.harness)
 	}
-	if o.template != "" {
-		fmt.Fprintf(out, "  template: %s\n", o.template)
-	}
 	if o.model != "" {
 		fmt.Fprintf(out, "  model:    %s\n", o.model)
 	}
-	if err := waitReady(ctx, c, a, timeout); err != nil {
+	for _, p := range skills {
+		fmt.Fprintf(out, "  skill:    %s  %s\n", p.Name, p)
+	}
+	stays := fmt.Sprintf("It stays in the project: delete it with airo agent delete %s, or change it with airo apply -f", a.GetName())
+	if err := waitReady(ctx, c, a, timeout, stays); err != nil {
 		return err
 	}
 	fmt.Fprintln(out, "  ready")
@@ -276,25 +279,19 @@ func build(ns, name string, o options) *unstructured.Unstructured {
 	a.SetGroupVersionKind(agentGVK)
 	a.SetNamespace(ns)
 	a.SetName(name)
-	template := map[string]any{}
-	if o.template != "" {
-		template["ref"] = map[string]any{"name": o.template}
-	} else {
-		inline := map[string]any{}
-		if o.prompt != "" {
-			inline["systemPrompt"] = o.prompt
-		}
-		if o.description != "" {
-			inline["description"] = o.description
-		}
-		if o.model != "" {
-			inline["modelConfig"] = map[string]any{"name": o.model}
-		}
-		template["inline"] = inline
+	inline := map[string]any{}
+	if o.prompt != "" {
+		inline["systemPrompt"] = o.prompt
+	}
+	if o.description != "" {
+		inline["description"] = o.description
+	}
+	if o.model != "" {
+		inline["modelConfig"] = map[string]any{"name": o.model}
 	}
 	spec := map[string]any{
 		"harnessRef": map[string]any{"name": o.harness},
-		"template":   template,
+		"template":   map[string]any{"inline": inline},
 	}
 	if o.local {
 		a.SetLabels(map[string]string{localAgentLabel: "true"})
@@ -327,7 +324,6 @@ var (
 	agents    = choice{gvk: agentGVK, noun: "agent", plural: "agents", flag: "--agent"}
 	harnesses = choice{gvk: harnessGVK, noun: "harness", plural: "harnesses", flag: "--harness", marker: "airohq.dev/default-harness", note: runtime}
 	models    = choice{gvk: modelConfigGVK, noun: "model", plural: "models", flag: "--model", marker: "airohq.dev/default-model"}
-	templates = choice{gvk: templateGVK, noun: "template", plural: "templates", flag: "--template"}
 )
 
 // newestDefault returns the item marked as the default with the annotation
@@ -392,11 +388,9 @@ func choose(ctx context.Context, c client.Client, ns string, k choice, name stri
 		return nil, fmt.Errorf("project %s has no %s named %s, and no other", ns, k.noun, name)
 	case name != "":
 		return nil, fmt.Errorf("project %s has no %s named %s: it has %s", ns, k.noun, name, strings.Join(names, ", "))
-	case len(names) == 0 && k.gvk == templateGVK:
-		return nil, fmt.Errorf("project %s has no templates. Create the agent with --prompt or --prompt-file", ns)
 	case len(names) == 0:
 		return nil, fmt.Errorf("project %s has no %s, and an agent needs one: ask who runs the platform, or add one with airo apply -f", ns, k.noun)
-	case len(names) == 1 && (pick == nil || k.gvk == templateGVK):
+	case len(names) == 1 && pick == nil:
 		return &items[0], nil
 	}
 	if pick != nil {
@@ -438,7 +432,9 @@ func runtime(h *unstructured.Unstructured) string {
 }
 
 // waitReady reads the Agent into a until the cluster has made it ready.
-func waitReady(ctx context.Context, c client.Client, a *unstructured.Unstructured, timeout time.Duration) error {
+// stays tells the person what became of the change when the Agent is not
+// ready.
+func waitReady(ctx context.Context, c client.Client, a *unstructured.Unstructured, timeout time.Duration, stays string) error {
 	var (
 		reason  string
 		seen    bool
@@ -467,7 +463,6 @@ func waitReady(ctx context.Context, c client.Client, a *unstructured.Unstructure
 		return ready || refused, nil
 	})
 	name := a.GetNamespace() + "/" + a.GetName()
-	stays := fmt.Sprintf("It stays in the project: delete it with airo agent delete %s, or change it with airo apply -f", a.GetName())
 	switch {
 	case ready:
 		return nil

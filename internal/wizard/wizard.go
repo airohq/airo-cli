@@ -70,6 +70,22 @@ func (w *Wizard) Required(label string) (string, error) {
 	}
 }
 
+// Optional asks a question that an empty answer skips.
+func (w *Wizard) Optional(label string) (string, error) {
+	return w.ask(label + " (Enter to skip)")
+}
+
+// Problem says why an answer did not work, before the question is asked
+// again.
+func (w *Wizard) Problem(err error) {
+	fmt.Fprintln(w.out, err)
+}
+
+// Note shows a result of an answer, such as the version it resolved to.
+func (w *Wizard) Note(text string) {
+	fmt.Fprintln(w.out, w.palette.Styles().Muted.Render(text))
+}
+
 func (w *Wizard) Confirm(label string, def bool) (bool, error) {
 	hint := " (y/N)"
 	if def {

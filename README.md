@@ -516,9 +516,11 @@ agent, use `airo agent get NAME`. To talk to it, use `airo chat -a NAME`.
 ready.**
 
 ```sh
-airo agent create                  # choose a name and instructions or template
+airo agent create                  # choose a name, instructions and skills
 airo agent create reviewer --prompt "You review pull requests."
 airo agent create reviewer --prompt-file prompt.md --model opus-5.5 --harness claude
+airo agent create reviewer --prompt-file prompt.md \
+  --skill https://github.com/anthropics/skills/tree/main/skills/pdf
 airo agent list
 airo agent delete reviewer
 ```
@@ -527,6 +529,7 @@ airo agent delete reviewer
 Created agent my-project/reviewer
   harness:  claude (claude)
   model:    sonnet-5.5
+  skill:    pdf  https://github.com/anthropics/skills//skills/pdf@e4bb5d960d87126ff3b3a8af1a104b7db67560ba
   ready
 ```
 
@@ -539,22 +542,21 @@ Created agent my-project/reviewer
 | `--model` | see below | The ModelConfig to use (`spec.template.inline.modelConfig.name`) |
 | `--harness` | see below | The Harness that runs the agent (`spec.harnessRef.name`) |
 | `--local` | off | Create a durable Agent and its dedicated private relay in the project |
-| `--template` | none | An AgentTemplate to use in place of a prompt, a description and a model (`spec.template.ref.name`) |
+| `--skill` | none | A skill's source, pinned to an immutable version (`spec.template.inline.skills`). Repeat for more. See [Skills](#skills) |
 
-**The Harness, the ModelConfig and the AgentTemplate exist in the project
-already.** The platform puts Harnesses and ModelConfigs there, and `airo`
-creates neither. The wizard lists harnesses, models and templates directly
-below their questions. A muted keyboard guide appears beneath the choices.
+**The Harness and the ModelConfig exist in the project already.** The
+platform puts them there, and `airo` creates neither. The wizard lists
+harnesses and models directly below their questions. A muted keyboard guide appears beneath the choices.
 Use ↑/↓ or type to filter, then press Enter. The
 selected name stays beside the question as the wizard continues. Plain
 terminals show numbered choices. A project default appears first and is marked `(default)`.
 Passing `--harness` or `--model` supplies that choice directly.
 
-A template supplies the agent's model configuration. A harness that runs
-its own image (`byo`) lets you skip the model or choose one.
+A harness that runs its own image (`byo`) lets you skip the model or choose
+one. The wizard then asks for skill sources, one at a time, until an empty
+answer.
 
-In scripts, supply a name and one of `--prompt`, `--prompt-file` or
-`--template`. An omitted harness or required model uses the project's only
+In scripts, supply a name and `--prompt` or `--prompt-file`. An omitted harness or required model uses the project's only
 choice or its annotated default (`airohq.dev/default-harness: "true"` or
 `airohq.dev/default-model: "true"`). The newest default wins. If the choice
 is ambiguous, the command lists the names and the flag to pass.
@@ -580,8 +582,55 @@ EOF
 
 **An agent the cluster turns down stays in the project.** The command stops
 with the cluster's reason, such as a model its Harness cannot use. Delete the
-agent, or change it with `airo apply -f`. Tools, skills and the other fields
-of an Agent go in a file for `airo apply -f` too.
+agent, or change it with `airo apply -f`. Tools, an AgentTemplate
+(`spec.template.ref`) and the other fields of an Agent go in a file for
+`airo apply -f` too.
+
+### Skills
+
+**`airo agent skill` lists, adds, upgrades and removes an agent's skills.**
+Without `--agent` (`-a`), it takes the project's only agent, then the one
+marked as default, then asks, as `airo chat` does.
+
+```sh
+airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf -a reviewer
+airo agent skill add docs=https://git.example.com/team/skills//docs@v1.2 -a reviewer
+airo agent skill list -a reviewer
+airo agent skill upgrade pdf -a reviewer
+airo agent skill upgrade docs --version v1.3 -a reviewer
+airo agent skill remove pdf -a reviewer
+```
+
+```text
+NAME   VERSION   SOURCE
+pdf    default   https://github.com/anthropics/skills//skills/pdf@e4bb5d960d87126ff3b3a8af1a104b7db67560ba
+docs   v1.2      https://git.example.com/team/skills//docs@0c5b6f0d2e8a4b7c9d1e3f5a7b9c0d2e4f6a8b0c
+```
+
+A source is a Git repository or an OCI image, the same for `--skill`:
+
+| Source | Example |
+| --- | --- |
+| A GitHub page | `https://github.com/OWNER/REPO/tree/REF/PATH`, or a `SKILL.md`'s `blob` page |
+| Any Git host | `https://HOST/REPO[//PATH][@VERSION]` |
+| An OCI image | `oci://IMAGE[:TAG\|@sha256:DIGEST][//PATH]` |
+
+`NAME=SOURCE` names the skill. Otherwise the name is the path's last
+directory, or the repository's name. A skill's directory has a `SKILL.md`.
+
+**The Agent holds only immutable versions**, so `airo` pins a branch or a
+tag to its commit, and an image tag to its digest, before it writes the
+Agent. Without a version, a skill follows the default branch, or the image
+tag `latest`. The version asked for is kept in the annotation
+`airohq.dev/skill-versions`, and `upgrade` resolves it again: a branch moves
+to its newest commit, while a tag or a commit stays. `--version` picks
+another branch, tag, commit, image tag or digest, and later upgrades follow
+it. Each change waits until the agent is ready again.
+
+**The cluster fetches skills without credentials.** A Git repository must be
+public. A private image works by its digest, `IMAGE@sha256:...`, if the
+cluster can pull it. An agent that takes its behaviour from an AgentTemplate
+gets its skills there: change the template with `airo apply -f`.
 
 ### Serve an agent on your machine
 

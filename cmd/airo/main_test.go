@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestHelpAndGlobalOptions(t *testing.T) {
@@ -90,28 +92,34 @@ func TestAgentRejectsUnknownVerbs(t *testing.T) {
 	}
 }
 
-// Every noun takes its plural (DESIGN.md). A noun is a command with verbs
-// below it.
+// Every noun takes its plural (DESIGN.md), also a noun inside another, such
+// as airo agent skill. A noun is a command with verbs below it.
 func TestNounsTakeThePlural(t *testing.T) {
 	root := newRoot()
 	nouns := 0
-	for _, c := range root.Commands() {
-		if !c.HasSubCommands() {
-			continue
-		}
-		nouns++
-		plural := c.Name() + "s"
-		if !c.HasAlias(plural) {
-			t.Errorf("airo %s has no alias %s", c.Name(), plural)
-			continue
-		}
-		got, _, err := root.Find([]string{plural, "list"})
-		if err != nil {
-			t.Errorf("airo %s list: %v", plural, err)
-		} else if got.Parent() != c || got.Name() != "list" {
-			t.Errorf("airo %s list ran %q, want the list of %s", plural, got.CommandPath(), c.Name())
+	var check func(parent *cobra.Command, path []string)
+	check = func(parent *cobra.Command, path []string) {
+		for _, c := range parent.Commands() {
+			if !c.HasSubCommands() {
+				continue
+			}
+			nouns++
+			plural := c.Name() + "s"
+			if !c.HasAlias(plural) {
+				t.Errorf("%s %s has no alias %s", parent.CommandPath(), c.Name(), plural)
+				continue
+			}
+			args := append(append([]string{}, path...), plural)
+			got, _, err := root.Find(append(args, "list"))
+			if err != nil {
+				t.Errorf("airo %v list: %v", args, err)
+			} else if got.Parent() != c || got.Name() != "list" {
+				t.Errorf("airo %v list ran %q, want the list of %s", args, got.CommandPath(), c.Name())
+			}
+			check(c, append(append([]string{}, path...), c.Name()))
 		}
 	}
+	check(root, nil)
 	if nouns == 0 {
 		t.Fatal("found no noun to check")
 	}

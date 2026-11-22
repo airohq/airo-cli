@@ -24,6 +24,7 @@ airo chat "fix the build"    # a prompt for the default agent
 | `list`, `get`, `describe`, `delete` | Work for every kind the cluster serves, also kinds this binary does not know |
 | `create` | Resource-specific flags. Agent and tunnel also prompt for missing input on a terminal |
 | Other verbs | Actions of one noun, such as `airo agent logs` |
+| Inner noun | A part of a resource, such as `airo agent skill add SOURCE --agent NAME`. See below |
 | No noun | Standalone actions such as `airo chat [PROMPT]`, `airo login`, `airo status`, `airo whoami`, `airo create -f`, `airo apply -f`, `airo version` |
 
 **Every noun takes its plural.** `airo sessions list` is `airo session
@@ -40,6 +41,22 @@ the help. `airo context` is another: a context lives in the kubeconfig.
 **A noun that is the platform's word for a kind has its own verbs too.**
 `airo project` is one: a project is a Namespace, and `airo namespace list`
 still works for the kind. Its `list` and `get` use the same Namespace table.
+
+**A part of a resource that people change by itself is a noun inside the
+resource's noun**: `airo agent skill add SOURCE`. Such a part, like a skill
+in an Agent, is not a kind in the cluster.
+
+- **The resource is a flag named for the outer noun**, with its short form:
+  `--agent` or `-a`. It is resolved as any missing choice is ([Default
+  task](#default-task)). It is never a second argument, because everything
+  but the one argument is a flag.
+- **Its verbs are `list`, `add` and `remove`**, not `create` and `delete`,
+  because they change the outer resource and make or delete none. A verb of
+  its own may follow, such as `upgrade`, which moves a pinned version to a
+  newer one, as `gh extension upgrade` and `brew upgrade` do.
+- **It takes its plural** like any noun: `airo agent skills list`.
+- **It changes only the part it names.** The resource's other fields stay,
+  also those this airo does not know.
 
 **A noun gets a short form when people already know one**, such as `airo
 ctx` for `airo context`. Add it as an alias when you add the noun.

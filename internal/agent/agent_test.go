@@ -202,22 +202,6 @@ func TestCreateNeedsAHarness(t *testing.T) {
 	}
 }
 
-func TestCreateFromATemplateSetsNoModel(t *testing.T) {
-	c := fake.NewClientBuilder().WithObjects(
-		harness("main", "claude"), model("sonnet"), model("haiku"), resource(templateGVK, "reviewer", nil),
-	).Build()
-	if _, err := run(t, c, options{template: "missing"}); err == nil || !strings.Contains(err.Error(), "it has reviewer") {
-		t.Errorf("create = %v, want an error for a template the project lacks", err)
-	}
-	if _, err := run(t, c, options{template: "reviewer"}); err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]any{"ref": map[string]any{"name": "reviewer"}}
-	if got, _, _ := unstructured.NestedMap(created(t, c).Object, "spec", "template"); !equal(got, want) {
-		t.Errorf("template = %v, want %v", got, want)
-	}
-}
-
 func TestCreateLeavesTheModelOutForAHarnessWithItsOwnImage(t *testing.T) {
 	c := fake.NewClientBuilder().WithObjects(harness("own", "byo"), model("sonnet"), model("haiku")).Build()
 	if _, err := run(t, c, options{prompt: "You review."}); err != nil {
@@ -272,7 +256,7 @@ func TestWaitReady(t *testing.T) {
 		"no Ready, no gap": {withConditions(condition("Accepted", "True", "")), "has no Ready condition"},
 	} {
 		c := fake.NewClientBuilder().WithObjects(tc.agent).Build()
-		err := waitReady(context.Background(), c, resource(agentGVK, "my-agent", nil), 10*time.Millisecond)
+		err := waitReady(context.Background(), c, resource(agentGVK, "my-agent", nil), 10*time.Millisecond, "It stays.")
 		switch {
 		case tc.want == "" && err != nil:
 			t.Errorf("%s: waitReady = %v, want nil", name, err)

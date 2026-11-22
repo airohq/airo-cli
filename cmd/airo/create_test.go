@@ -72,7 +72,8 @@ func TestCreateMissingInputInScript(t *testing.T) {
 		want string
 	}{
 		{[]string{"tunnel", "create"}, "provide NAME"},
-		{[]string{"agent", "create", "--template", "sample"}, "provide NAME"},
+		{[]string{"agent", "create", "--prompt", "You review."}, "provide NAME"},
+		{[]string{"agent", "create", "reviewer", "--prompt", "x", "--skill", "git@github.com:org/repo.git"}, "cannot read the skill source"},
 		{[]string{"agent", "create", "reviewer"}, "--prompt-file"},
 		{[]string{"create"}, "-f"},
 	} {
