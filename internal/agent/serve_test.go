@@ -33,12 +33,14 @@ func TestLocalAgentCommandArguments(t *testing.T) {
 		valid bool
 	}{
 		{"serve", nil, true},
+		{"serve", []string{"--runner-command", "remote-harness"}, false},
 		{"serve", []string{"--name", "demo", "--", "--idle-timeout=10s"}, true},
 		{"serve", []string{"--name="}, false},
 		{"serve", []string{"reviewer"}, false},
 		{"serve", []string{"-a", "reviewer"}, false},
 		{"serve", []string{"--agent", "reviewer"}, false},
 		{"connect", []string{"reviewer"}, true},
+		{"connect", []string{"reviewer", "--runner-command", "remote-harness"}, false},
 		{"connect", []string{"-v", "reviewer", "--", "--idle-timeout=10s"}, true},
 		{"connect", nil, false},
 		{"connect", []string{""}, false},
@@ -170,7 +172,7 @@ func TestEmbeddedRunnerStartsColdWithoutHelper(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("DOCKER_HOST", "unix:///dev/null/absent-engine.sock")
 	opts := supervisor.Options{Backend: "container", WorkerOptions: supervisor.WorkerOptions{Harness: "codex", CodexSandbox: "read-only", IdleTimeout: time.Minute, TurnTimeout: time.Minute}}
-	err := serveRunner(t.Context(), "team", "test", nil, opts, "", nil, io.Discard, func(_ context.Context, handler http.Handler) error {
+	err := serveRunner(t.Context(), "team", "test", nil, opts, io.Discard, func(_ context.Context, handler http.Handler) error {
 		req := httptest.NewRequest(http.MethodGet, "/v1/info", nil)
 		req.Header.Set("Tunnel-Caller", "substrate:actor/team/session")
 		w := httptest.NewRecorder()

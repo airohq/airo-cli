@@ -684,8 +684,10 @@ The Agent and Tunnel persist.
 ### Local sandbox settings
 
 Both `serve` and `connect` default to read-only Codex when you omit the coding-agent settings.
-The first turn starts a container, later turns reuse it, and five idle
-minutes release it. Temporary Agents keep their files until `serve` exits.
+The first turn starts a worker container. After a turn finishes, the worker
+stays available for `--idle-timeout` (default `5m`). When that time elapses, the
+server removes the container. The next turn starts a new one with the same
+workspace. Temporary Agents keep their files until `serve` exits.
 Durable Agents keep theirs across `connect` invocations on the same engine.
 
 Choose the coding agent with `--harness claude` or `--harness codex`.
@@ -728,15 +730,14 @@ workers and run `docker volume rm VOLUME` with the name printed at sign-in.
 For unattended use, sign in once interactively or export a credential in
 the serving shell. Codex accepts `CODEX_API_KEY` or `OPENAI_API_KEY`.
 Claude Code accepts `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`.
-An exported credential takes precedence over a saved login. Custom images and
-external supervisors handle their own sign-in.
+An exported credential takes precedence over a saved login. Custom images
+handle their own sign-in.
 Add `-v` or `--verbose` to see the image, credential variable names, turn
 event types and recognized failure reasons on stderr. To select another Engine API socket,
 set `DOCKER_HOST`.
 
-To run a separate supervisor, pass `--runner-command /path/to/remote-harness`.
-Flags after `--` are passed through to that program. The embedded runner
-also accepts the previous `-- --harness ...` syntax.
+The CLI embeds the supervisor from the `kagent-remote-harness/runner` Go
+module. To test a supervisor change, update the dependency and rebuild the CLI.
 
 The project needs an Agent with a remote Harness whose `spec.env` sets
 `REMOTE_HARNESS_URL` to a private Tunnel's `status.callerURL`. The Agent's
