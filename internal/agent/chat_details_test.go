@@ -17,16 +17,23 @@ func TestChatDetailsResolveConfiguredModel(t *testing.T) {
 	template := resource(templateGVK, "review-template", map[string]any{
 		"modelConfig": map[string]any{"name": "default-model", "namespace": "shared"},
 	})
+	// An Agent made with airo apply -f may take its behaviour from a template.
+	fromTemplate := func(template string) *unstructured.Unstructured {
+		return resource(agentGVK, "reviewer", map[string]any{
+			"harnessRef": map[string]any{"name": "claude"},
+			"template":   map[string]any{"ref": map[string]any{"name": template}},
+		})
+	}
 	for _, tc := range []struct {
 		name    string
 		objects []client.Object
 		want    chatDetails
 	}{
 		{"inline", []client.Object{build("team", "reviewer", options{harness: "claude", model: "default-model"}), actual}, chatDetails{"reviewer", "claude", "claude-sonnet-4-5"}},
-		{"template and namespace", []client.Object{build("team", "reviewer", options{harness: "claude", template: "review-template"}), template, shared}, chatDetails{"reviewer", "claude", "claude-sonnet-4-5"}},
+		{"template and namespace", []client.Object{fromTemplate("review-template"), template, shared}, chatDetails{"reviewer", "claude", "claude-sonnet-4-5"}},
 		{"no configured model", []client.Object{build("team", "reviewer", options{harness: "custom"})}, chatDetails{"reviewer", "custom", "not configured"}},
 		{"missing model", []client.Object{build("team", "reviewer", options{harness: "claude", model: "default-model"})}, chatDetails{"reviewer", "claude", "unknown (default-model)"}},
-		{"missing template", []client.Object{build("team", "reviewer", options{harness: "claude", template: "missing"})}, chatDetails{"reviewer", "claude", "unknown"}},
+		{"missing template", []client.Object{fromTemplate("missing")}, chatDetails{"reviewer", "claude", "unknown"}},
 		{"missing agent", nil, chatDetails{"reviewer", "unknown", "unknown"}},
 		{"unknown schema", []client.Object{agentNamed("reviewer", false)}, chatDetails{"reviewer", "unknown", "unknown"}},
 		{"malformed reference", []client.Object{resource(agentGVK, "reviewer", map[string]any{
