@@ -32,13 +32,13 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 		{
 			[]string{"agent", "serve", "-h"},
 			[]string{"Basic Flags:", "--help", "--name", "--sandbox", "--turn-timeout", "-v, --verbose",
-				"Container Sandbox Flags:", "--harness", "--idle-timeout", "--image",
+				"Container Sandbox Flags:", "--harness", "--idle-timeout", "--image", "--workspace",
 				"Codex Harness Args:", "Default: --sandbox read-only", "-- --sandbox workspace-write", "airo options", "Pass --sandbox and/or --harness with --help"},
 			[]string{"\nFlags:\n", "--runner", "--kubeconfig", "Claude Harness Args:", "--permission-mode plan"},
 		},
 		{
 			[]string{"agent", "connect", "-h", "--harness=claude", "--sandbox", "container"},
-			[]string{"Basic Flags:", "--sandbox", "--verbose", "Container Sandbox Flags:", "--harness",
+			[]string{"Basic Flags:", "--sandbox", "--verbose", "Container Sandbox Flags:", "--harness", "--workspace",
 				"Claude Harness Args:", "Default: --permission-mode plan", "-- --permission-mode acceptEdits", "airo options", "Pass --sandbox and/or --harness with --help"},
 			[]string{"--name", "--runner", "--kubeconfig", "Codex Harness Args:", "--sandbox read-only"},
 		},

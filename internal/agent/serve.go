@@ -31,8 +31,8 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "serve [--name NAME] [flags] [-- HARNESS_ARGS...]",
 		Short:   "Run a temporary local Agent and delete it on exit",
-		Long:    "Run a temporary Agent with a fresh local workspace. Ctrl-C deletes the Agent and its workspace. The container sandbox prompts for subscription sign-in on the first run.",
-		Example: "  airo agent serve\n  airo agent serve --name demo",
+		Long:    "Run a temporary Agent with a fresh workspace or share a host directory with --workspace. Ctrl-C deletes the Agent and its temporary volume. Files in a shared directory stay on the host. The container sandbox prompts for subscription sign-in on the first run.",
+		Example: "  airo agent serve\n  airo agent serve --name demo\n  airo agent serve --workspace .",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("name") && name == "" {
 				return errors.New("--name needs a temporary Agent name")
@@ -50,7 +50,7 @@ func newConnectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "connect NAME [flags] [-- HARNESS_ARGS...]",
 		Short:   "Connect this machine to an existing Agent to run its turns",
-		Long:    "Connect this machine to an Agent with a private relay, such as one created with airo agent create --local. Ctrl-C disconnects this machine. Run the command again to reconnect with the same workspace on this engine. The container sandbox prompts for subscription sign-in when needed.",
+		Long:    "Connect this machine to an Agent with a private relay, such as one created with airo agent create --local. Ctrl-C disconnects this machine. Run the command again to reconnect with the same state on this engine. To share a host directory, pass --workspace on each connection. The container sandbox prompts for subscription sign-in when needed.",
 		Example: "  airo agent connect reviewer",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 || args[0] == "" {

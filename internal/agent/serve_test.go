@@ -34,6 +34,8 @@ func TestLocalAgentCommandArguments(t *testing.T) {
 		valid bool
 	}{
 		{"serve", nil, true},
+		{"serve", []string{"--workspace", "."}, true},
+		{"serve", []string{"--workspace="}, false},
 		{"serve", []string{"--harness", "claude", "--", "--permission-mode=plan"}, true},
 		{"serve", []string{"--", "--sandbox=workspace-write"}, true},
 		{"serve", []string{"--harness=claude", "--", "--settings", "two words"}, true},
@@ -44,6 +46,8 @@ func TestLocalAgentCommandArguments(t *testing.T) {
 		{"serve", []string{"-a", "reviewer"}, false},
 		{"serve", []string{"--agent", "reviewer"}, false},
 		{"connect", []string{"reviewer"}, true},
+		{"connect", []string{"reviewer", "--workspace", "."}, true},
+		{"connect", []string{"reviewer", "--workspace", "serve_test.go"}, false},
 		{"connect", []string{"reviewer", "--harness=claude", "--", "--permission-mode=plan"}, true},
 		{"connect", []string{"reviewer", "--runner-command", "remote-harness"}, false},
 		{"connect", []string{"-v", "reviewer", "--", "--idle-timeout=10s"}, true},

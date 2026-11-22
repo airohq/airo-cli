@@ -457,7 +457,8 @@ it when the command cannot.**
 | Durable Agent created by `airo agent create --local` | Ctrl-C in `airo agent connect NAME` disconnects the machine. The Agent stays available for reconnection | Deleting the Agent garbage-collects its dedicated relay resources |
 | Temporary Agent created by `airo agent serve`, including with `--name` | The command deletes the Agent | The janitor deletes the expired Agent. Kubernetes garbage-collects its Tunnel whenever the Agent is deleted |
 | Codex or Claude subscription login | The container sandbox prepares credentials before `serve` creates an Agent or `connect` starts serving. The engine keeps them for later workers. | The user can remove the provider’s credential volume printed at sign-in |
-| Local workspace of `airo agent serve` | Remove the volume after the supervisor stops | The next serving process using the same relay and engine can reclaim an abandoned volume after its Agent disappears |
+| Host directory shared with `--workspace` | Edits remain on the host | Owned by the user |
+| Temporary volume of `airo agent serve` | Remove the volume after the supervisor stops | The next serving process using the same relay and engine can reclaim an abandoned volume after its Agent disappears |
 | Created for the task, such as the Tunnel of `airo tunnel 3000` | The command deletes it | The cluster deletes it soon after the command is gone, also when the process was killed |
 | Outlives the terminal, such as an agent's session | Ctrl-C detaches, the work goes on | Its own system archives it after a longer time |
 | Existed before the command | Left as it is | None |

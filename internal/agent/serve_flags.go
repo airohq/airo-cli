@@ -27,7 +27,7 @@ const (
 
 var localSandboxes = map[string]localSandbox{
 	"container": {
-		group:          ui.FlagGroup{Heading: "Container Sandbox Flags", Names: []string{"harness", "idle-timeout", "image"}},
+		group:          ui.FlagGroup{Heading: "Container Sandbox Flags", Names: []string{"harness", "idle-timeout", "image", "workspace"}},
 		defaultHarness: "codex",
 		harnesses: map[string]string{
 			"codex": `Codex Harness Args:
