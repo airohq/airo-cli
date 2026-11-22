@@ -360,9 +360,11 @@ func (s *session) turn(ctx context.Context, prompt string) error {
 		reason  string
 		replied bool
 		printed bool
+		// The text of each block printed so far.
+		blocks = map[string]string{}
 	)
 	if p == nil {
-		p = &plainPrinter{out: s.out}
+		p = &plainPrinter{out: s.out, errOut: s.errOut}
 	}
 	unread, err := s.api.send(ctx, s.ns, s.agent, s.id, prompt, func(e event) bool {
 		if s.observe != nil {
@@ -380,6 +382,8 @@ func (s *session) turn(ctx context.Context, prompt string) error {
 			state = e.state
 		}
 		switch {
+		case e.tool != nil:
+			p.tool(e.tool)
 		case e.text == "":
 		case e.state == stateFailed || e.state == stateRejected || e.state == stateCanceled:
 			// The text says why. It goes into the error.
@@ -387,8 +391,15 @@ func (s *session) turn(ctx context.Context, prompt string) error {
 		case e.snapshot && printed:
 			// The stream carried this text already.
 		default:
-			p.write(e.block, e.text)
-			printed = true
+			text := e.text
+			if e.block != "" {
+				text = newText(blocks[e.block], e.text, e.whole)
+				blocks[e.block] += text
+			}
+			if text != "" {
+				p.write(e.block, text)
+				printed = true
+			}
 		}
 		return !ended(state)
 	})
@@ -421,6 +432,18 @@ func (s *session) turn(ctx context.Context, prompt string) error {
 		return errors.New("the agents' API sent no answer")
 	}
 	return errors.New("the connection ended before the agent finished: the turn goes on in the cluster")
+}
+
+// newText is what a block's update adds to the text printed for it. An update
+// that is the whole text so far, such as the ADK's last chunk, adds only what
+// is beyond the printed text. One that does not start with the printed text
+// is added as it is: what is printed stays, and some servers leave out append
+// on every piece.
+func newText(printed, text string, whole bool) string {
+	if whole && printed != "" && strings.HasPrefix(text, printed) {
+		return text[len(printed):]
+	}
+	return text
 }
 
 // ended reports whether a task in the state takes no more work in this turn.
@@ -531,14 +554,17 @@ func (s *session) resumeHint() {
 // same for a terminal conversation and for a plain answer in a pipe.
 type printer interface {
 	write(block, text string)
+	// tool shows the agent's use of a tool. It ends the text before it.
+	tool(t *toolUse)
 	end()
 }
 
-// plainPrinter writes the agent's own text with a new line between blocks.
+// plainPrinter writes the agent's own text with a new line between blocks,
+// and its tool calls to errOut: they are notes about the answer.
 type plainPrinter struct {
-	out   io.Writer
-	block string
-	open  bool // the last write did not end a line
+	out, errOut io.Writer
+	block       string
+	open        bool // the last write did not end a line
 }
 
 func (p *plainPrinter) write(block, text string) {
@@ -547,6 +573,57 @@ func (p *plainPrinter) write(block, text string) {
 	}
 	fmt.Fprint(p.out, text)
 	p.block, p.open = block, !strings.HasSuffix(text, "\n")
+}
+
+func (p *plainPrinter) tool(t *toolUse) {
+	line := toolLine(t)
+	if line == "" || p.errOut == nil {
+		return
+	}
+	p.end()
+	p.block = ""
+	fmt.Fprintln(p.errOut, line)
+}
+
+// toolLine is a tool call, or a failed result, in a line of plain words. It
+// is empty for a result that worked: the call said it already.
+func toolLine(t *toolUse) string {
+	if t.result {
+		if !t.failed {
+			return ""
+		}
+		what := "A tool"
+		if t.name != "" {
+			what = t.name
+		}
+		if out := firstLine(fmt.Sprint(t.output)); t.output != nil && out != "" {
+			return what + " failed: " + out
+		}
+		return what + " failed"
+	}
+	// A shell command is what it runs, as in Codex.
+	if c, ok := t.args["command"].(string); ok && firstLine(c) != "" {
+		return "Ran " + firstLine(c)
+	}
+	name := t.name
+	if name == "" {
+		name = "a tool"
+	}
+	for _, k := range []string{"file_path", "path", "pattern", "query", "url", "description"} {
+		if v, ok := t.args[k].(string); ok && firstLine(v) != "" {
+			return "Used " + name + " " + firstLine(v)
+		}
+	}
+	return "Used " + name
+}
+
+// firstLine is the text's first line, marked when there is more.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i]) + " …"
+	}
+	return s
 }
 
 func (p *plainPrinter) end() {

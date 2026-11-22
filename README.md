@@ -482,7 +482,10 @@ airo chat -a reviewer -r 7c9e6679-7425-40de-944b-e07fc1f90ae7
 ```
 
 **The answer goes to standard output and everything else to standard
-error**, so the answer can be piped. The command fails when the agent fails,
+error**, so the answer can be piped. The agent's tool calls are notes on
+standard error, one line each, such as `Ran go test ./...`, and a failed one
+says so. A tool call ends the agent's message before it, so what the agent
+says before a step and its answer after it are separate messages. The command fails when the agent fails,
 turns the prompt down or the turn is canceled. In a conversation it prints
 the failure and takes the next prompt.
 

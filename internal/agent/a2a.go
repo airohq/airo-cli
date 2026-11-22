@@ -66,6 +66,16 @@ const (
 	metaPosition    = "kagent.dev/a2a/timeline-position"
 )
 
+// kagent's A2A tool activity: a data part whose metadata names it a tool call
+// or a tool's result. The data holds the call's id and name, and its args or
+// its response. Each is an artifact of its own, and closes the text run
+// before it.
+const (
+	metaPartType     = "kagent.dev/a2a/part-type"
+	partToolCall     = "function_call"
+	partToolResponse = "function_response"
+)
+
 // The request that sends a prompt.
 type rpcRequest struct {
 	JSONRPC string     `json:"jsonrpc"`
@@ -134,9 +144,11 @@ type wireMessage struct {
 	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
-// wirePart is a part's text. A part with a file or data has none.
+// wirePart is a part's text, or its data. A part with a file has neither.
 type wirePart struct {
-	Text string `json:"text,omitempty"`
+	Text     string         `json:"text,omitempty"`
+	Data     any            `json:"data,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 type wireTask struct {
@@ -164,6 +176,9 @@ type wireArtifactUpdate struct {
 	TaskID    string        `json:"taskId"`
 	ContextID string        `json:"contextId"`
 	Artifact  *wireArtifact `json:"artifact"`
+	// Append adds the parts to the artifact sent before with the same ID.
+	// Without it, the parts are the artifact's whole content so far.
+	Append bool `json:"append"`
 }
 
 type wireArtifact struct {
@@ -188,8 +203,26 @@ type event struct {
 	// snapshot is true for text that a task holds already, which earlier
 	// objects of the stream may have carried.
 	snapshot bool
+	// whole is true for a block's text that is all of it so far, not a piece
+	// to add: an artifact update without append.
+	whole bool
 	// reply is true for a message that answers in place of a task.
 	reply bool
+	// tool is the agent's use of a tool, or nil.
+	tool *toolUse
+}
+
+// toolUse is a tool call, or the result of one.
+type toolUse struct {
+	id, name string
+	// result is true for a result, and false for a call.
+	result bool
+	// args are the call's arguments.
+	args map[string]any
+	// failed is true for a result that is an error, and output is what the
+	// tool returned.
+	failed bool
+	output any
 }
 
 // events returns what a result holds. It returns nothing for a result this
@@ -220,13 +253,44 @@ func (r streamResult) events() []event {
 			text:      agentText(r.StatusUpdate.Status.Message),
 		}}
 	case r.ArtifactUpdate != nil:
-		e := event{taskID: r.ArtifactUpdate.TaskID, contextID: r.ArtifactUpdate.ContextID}
-		if a := r.ArtifactUpdate.Artifact; a != nil {
+		u := r.ArtifactUpdate
+		e := event{taskID: u.TaskID, contextID: u.ContextID, whole: !u.Append}
+		if a := u.Artifact; a != nil {
 			e.text, e.block = partsText(a.Parts), a.ArtifactID
+			for _, p := range a.Parts {
+				if t := p.toolUse(); t != nil {
+					es := []event{{taskID: u.TaskID, contextID: u.ContextID, tool: t}}
+					if e.text != "" {
+						es = append([]event{e}, es...)
+					}
+					return es
+				}
+			}
 		}
 		return []event{e}
 	}
 	return nil
+}
+
+// toolUse reads a kagent tool call or result. It is nil for any other part.
+func (p wirePart) toolUse() *toolUse {
+	kind, _ := p.Metadata[metaPartType].(string)
+	if kind != partToolCall && kind != partToolResponse {
+		return nil
+	}
+	data, _ := p.Data.(map[string]any)
+	t := &toolUse{result: kind == partToolResponse}
+	t.id, _ = data["id"].(string)
+	t.name, _ = data["name"].(string)
+	if t.result {
+		// kagent wraps the result as {"result": ..., "isError": true}.
+		response, _ := data["response"].(map[string]any)
+		t.output = response["result"]
+		t.failed, _ = response["isError"].(bool)
+	} else {
+		t.args, _ = data["args"].(map[string]any)
+	}
+	return t
 }
 
 // agentText is a message's text, unless the person wrote it.

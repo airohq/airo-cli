@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -385,6 +386,95 @@ func TestTurnToleratesWhatItDoesNotKnow(t *testing.T) {
 	if got, want := out.String(), "Thinking.\nHello.\n"; got != want {
 		t.Errorf("output = %q, want %q", got, want)
 	}
+}
+
+// whole is an artifact update without append: the artifact's text so far.
+func whole(id, text string) string {
+	return fmt.Sprintf(`{"artifactUpdate":{"taskId":"task-1","contextId":"ctx-1","lastChunk":true,"artifact":{"artifactId":%q,"parts":[{"text":%q}]}}}`, id, text)
+}
+
+func TestTurnPrintsAWholeArtifactOnce(t *testing.T) {
+	// The ADK harness streams pieces, then sends the whole text as the last
+	// chunk without append.
+	s, _, out, _ := talk(t, stream(
+		result(submitted),
+		result(whole("a1", "I'll answer.")),
+		result(artifact("a1", "\n\nI'm an agent.")),
+		result(whole("a1", "I'll answer.\n\nI'm an agent.")),
+		result(completed),
+	))
+	if err := s.turn(context.Background(), "Who are you?"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "I'll answer.\n\nI'm an agent.\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+
+	// A whole text that goes beyond what was printed adds the rest. A server
+	// that leaves out append on every piece is still read as pieces.
+	s, _, out, _ = talk(t, stream(
+		result(whole("a1", "Hel")),
+		result(whole("a1", "Hello")),
+		result(whole("a2", "Wor")),
+		result(whole("a2", "ld.")),
+		result(completed),
+	))
+	if err := s.turn(context.Background(), "Hi"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "Hello\nWorld.\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func toolPart(kind, data string) string {
+	return fmt.Sprintf(`{"artifactUpdate":{"taskId":"task-1","contextId":"ctx-1","lastChunk":true,"artifact":{"artifactId":"t-%s","parts":[{"data":%s,"metadata":{"kagent.dev/a2a/part-type":%q}}]}}}`, kind, data, kind)
+}
+
+func TestTurnShowsToolCallsAsNotes(t *testing.T) {
+	s, _, out, errOut := talk(t, stream(
+		result(submitted),
+		result(artifact("a1", "I'll run it.")),
+		result(toolPart("function_call", `{"id":"t1","name":"Bash","args":{"command":"echo hello","description":"Print hello"}}`)),
+		result(toolPart("function_response", `{"id":"t1","name":"Bash","response":{"result":"hello"}}`)),
+		result(toolPart("function_call", `{"id":"t2","name":"Read","args":{"file_path":"/tmp/x"}}`)),
+		result(toolPart("function_response", `{"id":"t2","name":"Read","response":{"result":"no such file\nmore","isError":true}}`)),
+		result(artifact("a2", "It printed hello.")),
+		result(completed),
+	))
+	if err := s.turn(context.Background(), "Run it"); err != nil {
+		t.Fatal(err)
+	}
+	// The answer stays the agent's own text, for a pipe.
+	if got, want := out.String(), "I'll run it.\nIt printed hello.\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+	if got, want := errOut.String(), "Ran echo hello\nUsed Read /tmp/x\nRead failed: no such file …\n"; got != want {
+		t.Errorf("notes = %q, want %q", got, want)
+	}
+}
+
+func TestChatEndsTheMessageAtAToolCall(t *testing.T) {
+	m, _ := testChat(t)
+	m.start("Run it")
+	m.Update(printedMsg{})
+	m.Update(answerMsg{"a1", "I'll run it."})
+	m.Update(toolMsg{&toolUse{name: "Bash", args: map[string]any{"command": "echo hello"}}})
+	if m.pending != "" || m.block != "" || m.answerPrinted {
+		t.Fatalf("the tool call left the message open: pending %q, block %q", m.pending, m.block)
+	}
+	m.Update(printedMsg{})
+	m.Update(answerMsg{"a2", "It printed hello."})
+	if got := ansi.Strip(m.preview); !strings.HasPrefix(strings.TrimLeft(got, "\n"), "• It printed hello.") {
+		t.Errorf("the answer after the tool call has no marker of its own: %q", got)
+	}
+	if got := ansi.Strip(m.formatTool(&toolUse{name: "Bash", args: map[string]any{"command": "echo hello"}})); got != "\n• Ran echo hello" {
+		t.Errorf("tool line = %q", got)
+	}
+	if got := ansi.Strip(m.formatTool(&toolUse{name: "Bash", result: true})); got != "" {
+		t.Errorf("a result that worked shows %q, want nothing", got)
+	}
+	m.stopTurn()
 }
 
 func TestTurnPrintsAMessageAndATaskThatAnswerAtOnce(t *testing.T) {
