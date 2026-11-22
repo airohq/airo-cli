@@ -36,7 +36,8 @@ Flags:
 {{$flags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{end}}
 
 {{if .HasAvailableSubCommands}}Use "{{.CommandPath}} [command] --help" for more information about a command.
-{{end}}Use "airo options" to see global command-line options.
+{{end}}Use "airo options" to see global command-line options.{{with index .Annotations "helpHint"}}
+{{.}}{{end}}
 `
 
 func newOptionsCommand() *cobra.Command {

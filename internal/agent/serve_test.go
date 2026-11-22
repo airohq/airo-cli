@@ -33,6 +33,9 @@ func TestLocalAgentCommandArguments(t *testing.T) {
 		valid bool
 	}{
 		{"serve", nil, true},
+		{"serve", []string{"--claude-permission-mode=plan", "--harness", "claude"}, true},
+		{"serve", []string{"--codex-sandbox=workspace-write"}, true},
+		{"serve", []string{"--harness=claude", "--", "--harness=codex", "--claude-permission-mode=plan"}, true},
 		{"serve", []string{"--runner-command", "remote-harness"}, false},
 		{"serve", []string{"--name", "demo", "--", "--idle-timeout=10s"}, true},
 		{"serve", []string{"--name="}, false},
@@ -40,6 +43,7 @@ func TestLocalAgentCommandArguments(t *testing.T) {
 		{"serve", []string{"-a", "reviewer"}, false},
 		{"serve", []string{"--agent", "reviewer"}, false},
 		{"connect", []string{"reviewer"}, true},
+		{"connect", []string{"reviewer", "--", "--harness=claude", "--claude-permission-mode=plan"}, true},
 		{"connect", []string{"reviewer", "--runner-command", "remote-harness"}, false},
 		{"connect", []string{"-v", "reviewer", "--", "--idle-timeout=10s"}, true},
 		{"connect", nil, false},
@@ -53,10 +57,7 @@ func TestLocalAgentCommandArguments(t *testing.T) {
 			if err != nil || cmd.Name() != tc.verb {
 				t.Fatalf("find %s: %v", tc.verb, err)
 			}
-			err = cmd.ParseFlags(tc.args)
-			if err == nil {
-				err = cmd.ValidateArgs(cmd.Flags().Args())
-			}
+			err = cmd.ValidateArgs(tc.args)
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%v: %v", tc.valid, err)
 			}

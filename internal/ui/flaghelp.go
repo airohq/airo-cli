@@ -9,17 +9,34 @@ import (
 
 const flagSection = "airo-help-section"
 
-// GroupFlags adds a help section. Sections appear in registration order.
-func GroupFlags(cmd *cobra.Command, heading string, names ...string) {
+// FlagGroup lists the flags that share a help heading.
+type FlagGroup struct {
+	Heading string
+	Names   []string
+}
+
+// SetFlagGroups shows the selected groups in order, hiding previously shown
+// groups. Flags outside any group stay under Basic Flags.
+func SetFlagGroups(cmd *cobra.Command, groups ...FlagGroup) {
 	if cmd.Annotations == nil {
 		cmd.Annotations = make(map[string]string)
 	}
-	cmd.Annotations[flagSection] += heading + "\n"
-	for _, name := range names {
-		if err := cmd.Flags().SetAnnotation(name, flagSection, []string{heading}); err != nil {
-			panic(err) // A section names a flag the command did not register.
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if len(f.Annotations[flagSection]) != 0 {
+			f.Hidden = true
+		}
+	})
+	var headings []string
+	for _, group := range groups {
+		headings = append(headings, group.Heading)
+		for _, name := range group.Names {
+			if err := cmd.Flags().SetAnnotation(name, flagSection, []string{group.Heading}); err != nil {
+				panic(err) // A section names a flag the command did not register.
+			}
+			cmd.Flags().Lookup(name).Hidden = false
 		}
 	}
+	cmd.Annotations[flagSection] = strings.Join(headings, "\n")
 }
 
 // FlagSections returns sections for commands that opt into grouped help.
@@ -52,7 +69,7 @@ func FlagSections(cmd *cobra.Command, flags *pflag.FlagSet) []*pflag.FlagSet {
 	if basic.HasFlags() {
 		sections = append(sections, basic)
 	}
-	for title := range strings.SplitSeq(strings.TrimSuffix(order, "\n"), "\n") {
+	for title := range strings.SplitSeq(order, "\n") {
 		if section := groups[title]; section != nil {
 			sections = append(sections, section)
 		}

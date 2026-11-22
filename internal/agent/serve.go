@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,7 +17,6 @@ import (
 
 	"github.com/airohq/kagent-remote-harness/runner/supervisor"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
@@ -75,21 +73,21 @@ type serveAgent func(ctx context.Context, message string, target tunnel.RunnerTu
 
 func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, start func(context.Context, client.Client, string, []string, serveAgent) error) *cobra.Command {
 	var defaults supervisor.Options
-	settings := flag.NewFlagSet("runner", flag.ContinueOnError)
-	defaults.BindFlags(settings)
 	validate := cmd.Args
+	settings := bindLocalFlags(cmd, &defaults)
+	// Cobra normally handles --help before argument validation. Parse here so
+	// help and execution both use the final sandbox and harness selection.
+	cmd.DisableFlagParsing = true
+	var positionals []string
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		if dash := cmd.ArgsLenAtDash(); dash >= 0 {
-			args = args[:dash]
+		var err error
+		positionals, err = parseLocalFlags(cmd, args, settings, &defaults)
+		if err != nil {
+			return err
 		}
-		return validate(cmd, args)
+		return validate(cmd, positionals)
 	}
-	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		var runnerArgs []string
-		if dash := cmd.ArgsLenAtDash(); dash >= 0 {
-			runnerArgs = append(runnerArgs, args[dash:]...)
-			args = args[:dash]
-		}
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		cfg, err := flags.ToRESTConfig()
@@ -104,31 +102,7 @@ func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 		if err != nil {
 			return err
 		}
-		// Explicit CLI flags take precedence over legacy settings after --.
-		cmd.Flags().Visit(func(f *pflag.Flag) {
-			if settings.Lookup(f.Name) != nil {
-				runnerArgs = append(runnerArgs, "--"+f.Name+"="+f.Value.String())
-			}
-		})
 		out := cmd.ErrOrStderr()
-		settings.SetOutput(out)
-		if err := settings.Parse(runnerArgs); err != nil {
-			return err
-		}
-		if settings.NArg() != 0 {
-			return fmt.Errorf("unexpected runner argument %q", settings.Arg(0))
-		}
-		if defaults.ClaudePermissionMode == "" && defaults.CodexSandbox == "" {
-			switch defaults.Harness {
-			case "", "codex":
-				defaults.Harness, defaults.CodexSandbox = "codex", "read-only"
-			case "claude":
-				defaults.ClaudePermissionMode = "plan"
-			}
-		}
-		if _, err := defaults.Adapter(); err != nil {
-			return err
-		}
 		var terminal *os.File
 		if ui.Interactive(cmd.InOrStdin(), out) {
 			terminal, _ = cmd.InOrStdin().(*os.File)
@@ -136,19 +110,13 @@ func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 		if err := defaults.PrepareCredentials(ctx, "airo", terminal, out); err != nil {
 			return fmt.Errorf("prepare %s credentials: %w", defaults.Harness, err)
 		}
-		return start(ctx, c, ns, args, func(ctx context.Context, message string, t tunnel.RunnerTunnel, workspace *temporaryWorkspace) error {
+		return start(ctx, c, ns, positionals, func(ctx context.Context, message string, t tunnel.RunnerTunnel, workspace *temporaryWorkspace) error {
 			return serveRunner(ctx, t.Namespace, t.UID, workspace, defaults, out, func(ctx context.Context, h http.Handler) error {
 				fmt.Fprintln(out, message)
 				return t.ServeHTTP(ctx, out, cfg, h)
 			})
 		})
 	}
-	cmd.Flags().BoolVarP(&defaults.Verbose, "verbose", "v", false, settings.Lookup("verbose").Usage)
-	cmd.Flags().AddGoFlagSet(settings)
-	cmd.Flags().Lookup("harness").Usage = "coding agent: codex (default, read-only) or claude (plan mode by default)"
-	_ = cmd.Flags().MarkHidden("runner")
-	ui.GroupFlags(cmd, "Sandbox Flags", "sandbox", "image", "idle-timeout")
-	ui.GroupFlags(cmd, "Harness Flags", "harness", "claude-permission-mode", "codex-sandbox")
 	return cmd
 }
 

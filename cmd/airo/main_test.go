@@ -31,16 +31,26 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 		},
 		{
 			[]string{"agent", "serve", "-h"},
-			[]string{"Basic Flags:", "--help", "--name", "--turn-timeout", "-v, --verbose",
-				"Sandbox Flags:", "--idle-timeout", "--image", "--sandbox",
-				"Harness Flags:", "--claude-permission-mode", "--codex-sandbox", "--harness", "airo options"},
-			[]string{"\nFlags:\n", "--runner", "--kubeconfig"},
+			[]string{"Basic Flags:", "--help", "--name", "--sandbox", "--turn-timeout", "-v, --verbose",
+				"Container Sandbox Flags:", "--harness", "--idle-timeout", "--image",
+				"Codex Harness Flags:", "--codex-sandbox", "airo options", "Pass --sandbox and/or --harness with --help"},
+			[]string{"\nFlags:\n", "--runner", "--kubeconfig", "Claude Harness Flags:", "--claude-permission-mode"},
 		},
 		{
-			[]string{"agent", "connect", "-h"},
-			[]string{"Basic Flags:", "--verbose", "Sandbox Flags:", "--sandbox",
-				"Harness Flags:", "--harness", "airo options"},
-			[]string{"\nFlags:\n", "--name", "--runner", "--kubeconfig"},
+			[]string{"agent", "connect", "-h", "--harness=claude", "--sandbox", "container"},
+			[]string{"Basic Flags:", "--sandbox", "--verbose", "Container Sandbox Flags:", "--harness",
+				"Claude Harness Flags:", "--claude-permission-mode", "airo options", "Pass --sandbox and/or --harness with --help"},
+			[]string{"--name", "--runner", "--kubeconfig", "Codex Harness Flags:", "--codex-sandbox"},
+		},
+		{
+			[]string{"agent", "serve", "--sandbox", "container", "--harness", "claude", "--help"},
+			[]string{"Basic Flags:", "Container Sandbox Flags:", "Claude Harness Flags:", "--claude-permission-mode"},
+			[]string{"Codex Harness Flags:", "--codex-sandbox"},
+		},
+		{
+			[]string{"agent", "connect", "--help"},
+			[]string{"Basic Flags:", "Container Sandbox Flags:", "Codex Harness Flags:", "--codex-sandbox"},
+			[]string{"Claude Harness Flags:", "--claude-permission-mode"},
 		},
 		{
 			[]string{"options"},
@@ -68,6 +78,29 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 				if strings.Contains(out.String(), omit) {
 					t.Errorf("unexpected %q in:\n%s", omit, &out)
 				}
+			}
+		})
+	}
+}
+
+func TestLocalAgentFlagErrors(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"serve", "--claude-permission-mode=plan"}, "unknown flag: --claude-permission-mode"},
+		{[]string{"connect", "reviewer", "--codex-sandbox=", "--harness", "claude"}, "unknown flag: --codex-sandbox"},
+		{[]string{"serve", "--help", "--claude-permission-mode=plan"}, "unknown flag: --claude-permission-mode"},
+		{[]string{"serve", "--harness=claude", "--", "--codex-sandbox=read-only"}, "unknown flag: --codex-sandbox"},
+		{[]string{"connect", "--sandbox=other", "--help"}, `unknown sandbox "other" (available: container)`},
+		{[]string{"serve", "--harness=other", "--help"}, `unknown harness "other" for sandbox "container" (available: claude, codex)`},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			root := newRoot()
+			root.SilenceErrors = true
+			root.SetArgs(append([]string{"agent"}, tc.args...))
+			if err := root.Execute(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
 			}
 		})
 	}
