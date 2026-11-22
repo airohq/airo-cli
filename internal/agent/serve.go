@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/airohq/airo-cli/internal/tunnel"
+	"github.com/airohq/airo-cli/internal/ui"
 )
 
 func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
@@ -37,7 +38,7 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "serve [--name NAME]",
 		Short:   "Run a temporary local Agent and delete it on exit",
-		Long:    "Run a temporary Agent with a fresh local workspace. Ctrl-C deletes the Agent and its workspace. To use a ChatGPT subscription with the default worker, sign in once with airo agent login codex.",
+		Long:    "Run a temporary Agent with a fresh local workspace. Ctrl-C deletes the Agent and its workspace. The container sandbox prompts for subscription sign-in on the first run.",
 		Example: "  airo agent serve\n  airo agent serve --name demo",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("name") && name == "" {
@@ -56,7 +57,7 @@ func newConnectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "connect NAME",
 		Short:   "Connect this machine to an existing Agent to run its turns",
-		Long:    "Connect this machine to an Agent with a private relay, such as one created with airo agent create --local. Ctrl-C disconnects this machine. Run the command again to reconnect with the same workspace on this engine. To use a ChatGPT subscription, sign in once with airo agent login codex.",
+		Long:    "Connect this machine to an Agent with a private relay, such as one created with airo agent create --local. Ctrl-C disconnects this machine. Run the command again to reconnect with the same workspace on this engine. The container sandbox prompts for subscription sign-in when needed.",
 		Example: "  airo agent connect reviewer",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 || args[0] == "" {
@@ -130,15 +131,23 @@ func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 			if settings.NArg() != 0 {
 				return fmt.Errorf("unexpected runner argument %q", settings.Arg(0))
 			}
-			if defaults.Harness == "" && defaults.ClaudePermissionMode == "" && defaults.CodexSandbox == "" {
-				defaults.Harness, defaults.CodexSandbox = "codex", "read-only"
-			}
-			defaults.CodexLoginVolume, err = workerCodexLogin(defaults)
-			if err != nil {
-				return fmt.Errorf("select local Codex sign-in: %w", err)
+			if defaults.ClaudePermissionMode == "" && defaults.CodexSandbox == "" {
+				switch defaults.Harness {
+				case "", "codex":
+					defaults.Harness, defaults.CodexSandbox = "codex", "read-only"
+				case "claude":
+					defaults.ClaudePermissionMode = "plan"
+				}
 			}
 			if _, err := defaults.Adapter(); err != nil {
 				return err
+			}
+			var terminal *os.File
+			if ui.Interactive(cmd.InOrStdin(), out) {
+				terminal, _ = cmd.InOrStdin().(*os.File)
+			}
+			if err := defaults.PrepareCredentials(ctx, "airo", terminal, out); err != nil {
+				return fmt.Errorf("prepare %s credentials: %w", defaults.Harness, err)
 			}
 		}
 		return start(ctx, c, ns, args, func(ctx context.Context, message string, t tunnel.RunnerTunnel, workspace *temporaryWorkspace) error {
@@ -150,7 +159,7 @@ func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 	}
 	cmd.Flags().BoolVarP(&defaults.Verbose, "verbose", "v", false, settings.Lookup("verbose").Usage)
 	cmd.Flags().AddGoFlagSet(settings)
-	cmd.Flags().Lookup("harness").Usage = "coding agent: claude or codex (default with no coding-agent settings: read-only Codex)"
+	cmd.Flags().Lookup("harness").Usage = "coding agent: codex (default, read-only) or claude (plan mode by default)"
 	_ = cmd.Flags().MarkHidden("runner")
 	cmd.Flags().StringVar(&program, "runner-command", "", "use an external supervisor executable (default: embedded runner)")
 	return cmd

@@ -131,9 +131,8 @@ YAML
 
 ## Run the demo
 
-For a ChatGPT subscription, run `airo agent login codex` on the serving machine
-and complete the browser sign-in once. Unset `OPENAI_API_KEY` and `CODEX_API_KEY`
-in that terminal. To use an API key, export either variable instead. On the first turn, the CLI pulls the released
+For a ChatGPT subscription, unset `OPENAI_API_KEY` and `CODEX_API_KEY` in the
+serving terminal. Follow the device sign-in prompt on the first run. To use an API key, export either variable instead. On the first turn, the CLI pulls the released
 worker image from GHCR and uses its image ID until the server exits.
 
 ```sh

@@ -661,25 +661,26 @@ docker build --target runner -t local/remote-harness:dev .
 airo agent connect reviewer --harness codex --sandbox container --codex-sandbox workspace-write --image local/remote-harness:dev
 ```
 
-To use your ChatGPT subscription, sign in once from the serving machine:
+With the default worker, both commands prepare credentials before serving turns.
+On the first interactive run, Codex prints a ChatGPT device code. For a Claude
+subscription, select Claude Code. Its default permission mode is `plan`.
 
 ```sh
-airo agent login codex
+airo agent serve --harness claude
 ```
 
-Open the URL printed by Codex and enter the device code. The default Codex
-worker for `serve` and `connect` can then use and refresh that login. Its
-credentials live in a separate volume on the selected container engine.
-The worker can read those credentials. Signing in uses the published image
-pinned by the CLI and also works before selecting an Airo project. To forget
-the login locally, stop the workers and run `docker volume rm VOLUME` with
-the credential volume name printed by the sign-in command.
+Open the link from Claude Code in your browser and paste its authorization
+code in the serving terminal when prompted. The sandbox keeps the selected
+provider's credentials in a separate volume on the container engine. Later
+runs on the same machine and engine reuse the login, including after a
+temporary Agent's workspace is removed. To forget it locally, stop the
+workers and run `docker volume rm VOLUME` with the name printed at sign-in.
 
-An exported `CODEX_API_KEY` or `OPENAI_API_KEY` takes precedence. Unset both
-in the serving shell to use the subscription. Custom worker images and
-external supervisors use their own credentials. For a Claude subscription,
-export `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` in the serving
-shell. An Anthropic API key can also be supplied as `ANTHROPIC_API_KEY`.
+For unattended use, sign in once interactively or export a credential in
+the serving shell. Codex accepts `CODEX_API_KEY` or `OPENAI_API_KEY`.
+Claude Code accepts `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`.
+An exported credential takes precedence over a saved login. Custom images and
+external supervisors handle their own sign-in.
 Add `-v` or `--verbose` to see the image, credential variable names, turn
 event types and recognized failure reasons on stderr. To select another Engine API socket,
 set `DOCKER_HOST`.
