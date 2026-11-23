@@ -556,8 +556,9 @@ terminals show numbered choices. A project default appears first and is marked `
 Passing `--harness` or `--model` supplies that choice directly.
 
 A harness that runs its own image (`byo`) lets you skip the model or choose
-one. The wizard then asks for skill sources, one at a time, until an empty
-answer.
+one. The wizard then asks for skills, one at a time, until an empty answer.
+Each answer is a skill's source, or words to search for, as in the wizard
+of [`airo agent skill add`](#skills).
 
 In scripts, supply a name and `--prompt` or `--prompt-file`. An omitted harness or required model uses the project's only
 choice or its annotated default (`airohq.dev/default-harness: "true"` or
@@ -682,9 +683,10 @@ On a terminal that shows hyperlinks, such as iTerm2, each name is a link:
 to the skill's page on skills.sh, or with `--source` to its directory on
 GitHub at the listed commit. Piped output stays plain text.
 
-**The wizard of `add` searches too.** A bare `airo agent skill add` asks
-for a skill's source, or words to search for: words show the matching
-skills to pick from, each linked to its page on skills.sh.
+**The wizards of `add` and `airo agent create` search too.** A bare
+`airo agent skill add` asks for a skill's source, or words to search for:
+words show the matching skills to pick from, each linked to its page on
+skills.sh.
 
 Finding a skill by name works only in a GitHub repository. On another host,
 give the skill's directory. A local directory does not work, because the

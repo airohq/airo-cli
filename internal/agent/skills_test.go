@@ -16,6 +16,7 @@ import (
 
 	"github.com/airohq/airo-cli/internal/registry"
 	"github.com/airohq/airo-cli/internal/skill"
+	"github.com/airohq/airo-cli/internal/wizard"
 )
 
 const (
@@ -412,6 +413,20 @@ func TestSearchPrintsWhatAddTakes(t *testing.T) {
 	useRegistry(t, registry.Result{Name: "Paddle", Repository: "developer.paddle.com", Skill: "paddle"})
 	if err := searchRegistry(context.Background(), &out, &errOut, "paddle", registry.Options{}); err == nil || !strings.Contains(err.Error(), `fake.sh has no skill in a GitHub repository for "paddle"`) {
 		t.Errorf("search = %v, want an error when nothing can be added", err)
+	}
+}
+
+func TestLeavingTheSearchGoesBackToTheQuestion(t *testing.T) {
+	f := useRegistry(t, registry.Result{Name: "pdf", Repository: "anthropics/skills", Skill: "pdf", Installs: 235455})
+	// Search for pdf, leave the results with q, then skip skills.
+	var out bytes.Buffer
+	w := wizard.Plain(context.Background(), strings.NewReader("pdf\nq\n\n"), &out)
+	pinned, err := askSkills(context.Background(), w)
+	if err != nil || len(pinned) != 0 {
+		t.Fatalf("askSkills = %v, %v, want no skills", pinned, err)
+	}
+	if len(f.asked) != 1 || strings.Contains(out.String(), "canceled") || strings.Count(out.String(), sourceQuestion) != 2 {
+		t.Errorf("searched %v, and the wizard showed %q: want the question again, without a cancellation", f.asked, out.String())
 	}
 }
 

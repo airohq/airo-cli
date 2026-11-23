@@ -43,7 +43,20 @@ func WithHeader(cmd *cobra.Command, header string) *Wizard {
 		header: header, palette: ui.NewPalette(out)}
 }
 
+// Plain asks on ordinary lines, as on a terminal without styling, so that
+// a test can answer.
+func Plain(ctx context.Context, in io.Reader, out io.Writer) *Wizard {
+	return &Wizard{ctx: ctx, in: in, out: out, lines: bufio.NewReader(in), palette: ui.NewPalette(out)}
+}
+
 var errCanceled = errors.New("creation canceled")
+
+// Canceled says whether the person left a question or a choice, with Esc
+// or Ctrl+C. Leaving a choice that answers a question may go back to the
+// question rather than end the wizard.
+func Canceled(err error) bool {
+	return errors.Is(err, errCanceled)
+}
 
 func (w *Wizard) begin() {
 	if w.header != "" {

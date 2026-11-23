@@ -51,7 +51,7 @@ var (
 func pinSkills(ctx context.Context, args []string) ([]skill.Pinned, error) {
 	var pinned []skill.Pinned
 	for _, arg := range args {
-		p, err := parseAndPin(ctx, arg, pinned, nil)
+		p, err := parseAndPin(ctx, arg, pinned)
 		if err != nil {
 			return nil, err
 		}
@@ -60,14 +60,13 @@ func pinSkills(ctx context.Context, args []string) ([]skill.Pinned, error) {
 	return pinned, nil
 }
 
-// parseAndPin reads and pins a source. For a source of several skills it
-// asks for one, when ask is not nil.
-func parseAndPin(ctx context.Context, arg string, others []skill.Pinned, ask func([]string) (string, error)) (skill.Pinned, error) {
+// parseAndPin reads and pins a source of one skill.
+func parseAndPin(ctx context.Context, arg string, others []skill.Pinned) (skill.Pinned, error) {
 	s, err := skill.Parse(arg)
 	if err != nil {
 		return skill.Pinned{}, err
 	}
-	p, err := pinChosen(ctx, s, ask)
+	p, err := pin(ctx, s)
 	if err != nil {
 		return skill.Pinned{}, err
 	}
@@ -181,25 +180,20 @@ func pinForAdd(ctx context.Context, s skill.Skill, o addOptions, ask func([]stri
 	return pinned, sameNames(pinned)
 }
 
-// askSkills asks for skill sources until an empty answer.
+// askSkills asks for skills, as the wizard of add does, until an empty
+// answer.
 func askSkills(ctx context.Context, w *wizard.Wizard) ([]skill.Pinned, error) {
 	var pinned []skill.Pinned
 	for {
-		label := "Skill source"
+		label := sourceQuestion
 		if len(pinned) > 0 {
-			label = "Another skill source"
+			label = "Another " + label
 		}
-		answer, err := w.Optional(label)
-		if err != nil || answer == "" {
+		more, err := askSource(ctx, w, label, false, addOptions{}, pinned)
+		if err != nil || len(more) == 0 {
 			return pinned, err
 		}
-		p, err := parseAndPin(ctx, answer, pinned, func(names []string) (string, error) { return w.Pick("Skill", names) })
-		if err != nil {
-			w.Problem(err)
-			continue
-		}
-		w.Note(fmt.Sprintf("  %s at %s", p.Name, p.Pin()))
-		pinned = append(pinned, p)
+		pinned = append(pinned, more...)
 	}
 }
 
@@ -417,28 +411,45 @@ func addSkill(ctx context.Context, out io.Writer, c client.Client, ns, agent, ar
 	return addPinned(ctx, out, c, ns, agent, pinned, timeout)
 }
 
+// sourceQuestion asks for a skill in both wizards: create and add.
+const sourceQuestion = "Skill source, or words to search for"
+
 // askSource asks for a skill source, or words to search for one, until its
-// skills pin.
-func askSource(ctx context.Context, w *wizard.Wizard, o addOptions) ([]skill.Pinned, error) {
+// skills pin with names that others do not have. o are the flags of add
+// that choose skills. Unless required, an empty answer returns no skills.
+func askSource(ctx context.Context, w *wizard.Wizard, label string, required bool, o addOptions, others []skill.Pinned) ([]skill.Pinned, error) {
+	ask := w.Optional
+	if required {
+		ask = w.Required
+	}
+	// Leaving a choice of skills goes back to the question, quietly.
+	problem := func(err error) {
+		if !wizard.Canceled(err) {
+			w.Problem(err)
+		}
+	}
 	for {
-		answer, err := w.Required("Skill source, or words to search for")
-		if err != nil {
+		answer, err := ask(label)
+		if err != nil || answer == "" {
 			return nil, err
 		}
 		if isQuery(answer) {
 			if answer, err = pickResult(ctx, w, answer); err != nil {
-				w.Problem(err)
+				problem(err)
 				continue
 			}
 		}
 		s, err := skill.Parse(answer)
 		if err != nil {
-			w.Problem(err)
+			problem(err)
 			continue
 		}
 		pinned, err := pinForAdd(ctx, s, o, func(names []string) (string, error) { return w.Pick("Skill", names) })
+		if err == nil {
+			err = sameNames(append(slices.Clone(others), pinned...))
+		}
 		if err != nil {
-			w.Problem(err)
+			problem(err)
 			continue
 		}
 		for _, p := range pinned {
@@ -801,7 +812,7 @@ func addWizard(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, agent s
 			return err
 		}
 	}
-	pinned, err := askSource(ctx, w, o)
+	pinned, err := askSource(ctx, w, sourceQuestion, true, o, nil)
 	if err != nil {
 		return err
 	}
