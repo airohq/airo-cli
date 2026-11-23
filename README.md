@@ -723,8 +723,13 @@ airo agent connect reviewer --harness claude -- --permission-mode acceptEdits --
 Airo starts Codex with `codex exec --json --skip-git-repo-check -C <workspace>`
 and defaults to `--sandbox read-only`. On resume it supplies the session ID
 and passes the selected sandbox mode through Codex configuration. Airo starts
-Claude with `claude -p --output-format stream-json --verbose` and defaults to
-`--permission-mode plan`. On resume it adds `--resume <session>`. Both harnesses
+Claude with `claude -p --output-format stream-json --verbose
+--include-partial-messages`, so its answer streams as it is written, and
+defaults to `--permission-mode plan`. Each Claude turn starts clean: it reads
+the workspace's project settings but not yours, runs no hooks and connects to
+no MCP server (`--strict-mcp-config --setting-sources project`). Your own
+`--setting-sources`, `--settings` or `--mcp-config` after the separator bring
+them back. On resume it adds `--resume <session>`. Both harnesses
 receive the prompt on stdin. An explicit native model
 option overrides a model supplied by the Agent for this invocation.
 
