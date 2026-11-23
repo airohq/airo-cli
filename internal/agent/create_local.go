@@ -17,7 +17,7 @@ import (
 
 // This in-cluster image forwards remote harness protocol v1. The sandbox
 // image selected by agent connect runs separately on the serving machine.
-const relayImage = "ghcr.io/airohq/kagent-remote-harness@sha256:a75eef68c5a4468d3dbe1e60d4202bea4399007e8dd5e520dc118c5d94aca31b"
+const relayImage = "ghcr.io/airohq/kagent-remote-harness@sha256:d94b644f9d87dfdecbba3090775a1b65a22d632db160971f4a1e1c7c7de0a882"
 
 func localSubstrate(ctx context.Context, c client.Client, ns string) (map[string]any, error) {
 	items, err := list(ctx, c, ns, harnesses)

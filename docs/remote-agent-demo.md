@@ -86,7 +86,7 @@ relay digest used in the working demo. Use the published relay digest for the
 release you are demonstrating.
 
 ```sh
-relay=ghcr.io/airohq/kagent-remote-harness@sha256:a75eef68c5a4468d3dbe1e60d4202bea4399007e8dd5e520dc118c5d94aca31b
+relay=ghcr.io/airohq/kagent-remote-harness@sha256:d94b644f9d87dfdecbba3090775a1b65a22d632db160971f4a1e1c7c7de0a882
 airo -n "$project" create -f - <<YAML
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
