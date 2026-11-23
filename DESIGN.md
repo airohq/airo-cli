@@ -247,6 +247,20 @@ background:
 standard error, with what it waits for and for how long. It leaves no trace
 when it ends.
 
+**A status line says what happens, never which keys to press.** Spinners,
+progress, working and idle status lines carry the state, the subject and
+the elapsed time. Keys that work everywhere, such as Ctrl-C to stop, are
+not repeated there. Key help has three places only:
+
+| Where | What |
+| --- | --- |
+| A picker's guide | One Muted line below its choices ([Default task](#default-task)), because the keys of a list are not obvious |
+| A contextual hint | Once, after an action whose result needs explaining, such as the first Ctrl-C in a chat or Enter during a turn |
+| Help | `/help` in a chat, and a command's `--help`. A chat on a plain terminal, which has no `/help`, says once as it starts how to leave |
+
+A question may name its answer, such as `(Enter to skip)` or `(y/N)`,
+since that tells what the answer means, not a key guide.
+
 **An agent's text is rendered as markdown on a terminal, and is the agent's
 own text in a pipe.**
 
@@ -350,7 +364,8 @@ Keep the working status and elapsed time above the input while a turn runs.
 **Keys mean what people know from other tools.** Keep routine keyboard help
 behind `/help`, with contextual hints after an action needs explanation,
 such as Enter during a turn or the first Ctrl-C. Do not repeat the key guide
-in the idle or working status line.
+in the idle or working status line, or in the wait before a chat starts
+([a status line says what happens](#terminal)).
 
 | Key | Does |
 | --- | --- |
