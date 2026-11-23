@@ -34,6 +34,7 @@ func (p *terminalPrinter) send(msg tea.Msg) {
 	}
 }
 func (p *terminalPrinter) write(block, text string) { p.send(answerMsg{block, text}) }
+func (p *terminalPrinter) tool(t *toolUse)          { p.send(toolMsg{t}) }
 func (p *terminalPrinter) end()                     { p.send(answerEndMsg{}) }
 func (p *terminalPrinter) Write(b []byte) (int, error) {
 	p.send(noteMsg(string(b)))
@@ -42,6 +43,7 @@ func (p *terminalPrinter) Write(b []byte) (int, error) {
 
 type answerMsg struct{ block, text string }
 type answerEndMsg struct{}
+type toolMsg struct{ tool *toolUse }
 type noteMsg string
 type turnDoneMsg struct{ err error }
 type cancelDoneMsg struct {
@@ -317,6 +319,27 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.flush()
 		}
 		return m, m.wait()
+	case toolMsg:
+		// A tool call ends the agent's message before it, as in Codex: the
+		// text after it is a message of its own, with its own marker.
+		answer := m.commitAnswer(m.pending)
+		m.pending, m.preview, m.block, m.answerPrinted = "", "", "", false
+		line := m.formatTool(msg.tool)
+		if answer == "" && line == "" {
+			return m, m.wait()
+		}
+		return m, m.printWith(func() error {
+			if answer != "" {
+				if _, err := fmt.Fprintln(m.out, strings.TrimRight(answer, "\n")); err != nil {
+					return err
+				}
+			}
+			if line != "" {
+				_, err := fmt.Fprintln(m.errOut, line)
+				return err
+			}
+			return nil
+		})
 	case noteMsg:
 		return m, m.print(m.styles.Muted.Render(ui.Wrap(ui.Text(string(msg)), m.width)), m.errOut)
 	case event:
@@ -533,6 +556,21 @@ func (m *chatModel) formatMessage(from, text string) string {
 		return messageLines(ui.Wrap(ui.Text(text), m.width-2), m.styles.Accent.Render(userPromptMarker))
 	}
 	return messageLines(m.renderMarkdown(text), m.styles.Muted.Render("• "))
+}
+
+// formatTool is a tool call as a step of the answer: muted, so the agent's
+// own words stand out, with the same two-column margin. A failed result is
+// marked as an error. It is empty for what toolLine leaves out.
+func (m *chatModel) formatTool(t *toolUse) string {
+	line := toolLine(t)
+	if line == "" {
+		return ""
+	}
+	marker, style := m.styles.Muted.Render("• "), m.styles.Muted
+	if t.result {
+		marker, style = m.styles.Error.Render("✗ "), m.styles.Default
+	}
+	return messageLines(style.Render(ui.Wrap(ui.Text(line), m.width-2)), marker)
 }
 
 // Each message gets one marker. Later streamed paragraphs keep the same

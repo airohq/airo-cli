@@ -310,6 +310,15 @@ same layout. Pipes keep the agent's original text without these markers.
 › Can you fix it?
 ```
 
+**The agent's steps show between its messages, quieter than its words.** As
+in Codex, a tool call is one Muted line on standard error with the `•`
+marker: `Ran` and the command for a shell, or `Used` and the tool's name
+with its main argument. A result that worked adds nothing; a failed one is a
+line with `✗` in Error. A tool call ends the message before it, and the text
+after it is a new message with its own marker. The agents' API marks only
+tool activity: it does not tell a preamble from the answer, nor carry the
+model's reasoning, so `airo` shows neither as such.
+
 [codex-prompt]: https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/tui/src/bottom_pane/chat_composer.rs#L4895
 
 **Resuming an interactive conversation restores what was said.** Both
