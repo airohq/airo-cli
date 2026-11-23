@@ -57,7 +57,7 @@ func (m *readyModel) View() tea.View {
 	if m.done {
 		return tea.NewView("")
 	}
-	line := fmt.Sprintf("%s Waiting for agent %s to become ready: %s · %s · Ctrl-C stops",
+	line := fmt.Sprintf("%s Waiting for agent %s to become ready: %s · %s",
 		m.spinner.View(), ui.Text(m.agent), ui.Text(m.why), time.Since(m.started).Truncate(time.Second))
 	return tea.NewView(m.styles.Muted.Render(line))
 }

@@ -20,6 +20,12 @@ import (
 // current marks the active entry. With no active entry (-1), Enter selects
 // the first option. Callers put the project default first when there is one.
 func One(ctx context.Context, in io.Reader, out io.Writer, noun string, names []string, current int) (string, error) {
+	return Linked(ctx, in, out, noun, names, nil, current)
+}
+
+// Linked is One with a web page for each name, which a click on the name
+// opens in a terminal that knows hyperlinks. An empty page links nothing.
+func Linked(ctx context.Context, in io.Reader, out io.Writer, noun string, names, pages []string, current int) (string, error) {
 	if len(names) == 0 {
 		return "", fmt.Errorf("no %s choices available", noun)
 	}
@@ -34,6 +40,7 @@ func One(ctx context.Context, in io.Reader, out io.Writer, noun string, names []
 		}
 		return name, err
 	}
+	m.pages = pages
 	_, err := tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(out), tea.WithContext(ctx),
 		tea.WithColorProfile(m.palette.Profile)).Run()
 	if ctx.Err() != nil {
@@ -45,6 +52,7 @@ func One(ctx context.Context, in io.Reader, out io.Writer, noun string, names []
 type menu struct {
 	label           string
 	names           []string
+	pages           []string // linked only in the styled view
 	current         int
 	palette         ui.Palette
 	filter          textinput.Model
@@ -70,6 +78,9 @@ func (m *menu) resetMatches() {
 
 func (m *menu) option(i int) string {
 	name := ui.Text(m.names[i])
+	if i < len(m.pages) && m.pages[i] != "" {
+		name = ui.Linked(m.pages[i], name)
+	}
 	if i == m.current {
 		name += " (current)"
 	}

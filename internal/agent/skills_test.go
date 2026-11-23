@@ -2,8 +2,11 @@ package agent
 
 import (
 	"bytes"
+	"cmp"
 	"context"
+	"errors"
 	"path"
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,7 +14,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/airohq/airo-cli/internal/registry"
 	"github.com/airohq/airo-cli/internal/skill"
+	"github.com/airohq/airo-cli/internal/wizard"
 )
 
 const (
@@ -109,13 +114,13 @@ func TestSkillAddUpgradeRemove(t *testing.T) {
 	ctx := context.Background()
 	var out bytes.Buffer
 
-	if err := ignoreNoStatus(addSkill(ctx, &out, c, "team", "my-agent", repo+"//skills/pdf", 0)); err != nil {
+	if err := ignoreNoStatus(addSkill(ctx, &out, c, "team", "my-agent", repo+"//skills/pdf", addOptions{}, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := ignoreNoStatus(addSkill(ctx, &out, c, "team", "my-agent", "docs="+repo+"//skills/docs@v1", 0)); err != nil {
+	if err := ignoreNoStatus(addSkill(ctx, &out, c, "team", "my-agent", "docs="+repo+"//skills/docs@v1", addOptions{}, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := addSkill(ctx, &out, c, "team", "my-agent", repo+"//other/pdf", 0); err == nil || !strings.Contains(err.Error(), "has a skill named pdf") {
+	if err := addSkill(ctx, &out, c, "team", "my-agent", repo+"//other/pdf", addOptions{}, 0); err == nil || !strings.Contains(err.Error(), "has a skill named pdf") {
 		t.Errorf("add = %v, want an error for a name the agent has", err)
 	}
 	entries, v := skillsOf(t, c)
@@ -186,11 +191,258 @@ func TestSkillCommandsRefuseATemplateAgent(t *testing.T) {
 	fakePin(t, map[string]string{"": commit1})
 	a := resource(agentGVK, "my-agent", map[string]any{"template": map[string]any{"ref": map[string]any{"name": "shared"}}})
 	c := fake.NewClientBuilder().WithObjects(a).Build()
-	err := addSkill(context.Background(), &bytes.Buffer{}, c, "team", "my-agent", repo+"//pdf", 0)
+	err := addSkill(context.Background(), &bytes.Buffer{}, c, "team", "my-agent", repo+"//pdf", addOptions{}, 0)
 	if err == nil || !strings.Contains(err.Error(), "AgentTemplate shared") {
 		t.Errorf("add = %v, want an error for an agent with a template", err)
 	}
 	if err := listSkills(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, c, "team", "missing"); err == nil || !strings.Contains(err.Error(), "no agent named missing") {
 		t.Errorf("list = %v, want an error for a missing agent", err)
+	}
+}
+
+func TestSkillCommandsTakeNoDefaultAgent(t *testing.T) {
+	ctx := context.Background()
+	only := resource(agentGVK, "only", map[string]any{})
+	only.SetAnnotations(map[string]string{defaultAnnotation: "true"})
+	c := fake.NewClientBuilder().WithObjects(only).Build()
+
+	// Without anybody to ask, even the only agent, marked as default, is
+	// not taken.
+	if _, err := pickToChange(ctx, c, "team", "", nil); err == nil || !strings.Contains(err.Error(), "--agent: project team has only") {
+		t.Errorf("pick = %v, want an error that names the agents", err)
+	}
+	var asked []string
+	ask := func(names []string) (string, error) { asked = names; return names[0], nil }
+	if name, err := pickToChange(ctx, c, "team", "", ask); err != nil || name != "only" || len(asked) != 1 {
+		t.Errorf("pick = %q, %v after asking %v, want the agent the person picks", name, err, asked)
+	}
+	asked = nil
+	if name, err := pickToChange(ctx, c, "team", "named", ask); err != nil || name != "named" || asked != nil {
+		t.Errorf("pick = %q, %v after asking %v, want the agent named without asking", name, err, asked)
+	}
+	empty := fake.NewClientBuilder().Build()
+	if _, err := pickToChange(ctx, empty, "team", "", ask); err == nil || !strings.Contains(err.Error(), "has no agent") {
+		t.Errorf("pick = %v, want an error for a project without agents", err)
+	}
+}
+
+// fakeRepo stands for a GitHub repository with the skills docx,
+// frontend-design and pdf, which pin at commit1.
+func fakeRepo(t *testing.T) {
+	t.Helper()
+	oldPin, oldList := pin, skillsIn
+	t.Cleanup(func() { pin, skillsIn = oldPin, oldList })
+	found := []skill.Found{{Name: "docx", Path: "skills/docx"}, {Name: "frontend-design", Path: "skills/frontend"}, {Name: "pdf", Path: "skills/pdf"}}
+	pin = func(_ context.Context, s skill.Skill) (skill.Pinned, error) {
+		p := skill.Pinned{Skill: s, Commit: commit1}
+		switch {
+		case s.Find != "":
+			i := slices.IndexFunc(found, func(f skill.Found) bool { return skill.SameName(f.Name, s.Find) })
+			if i < 0 {
+				return p, errors.New("no skill named " + s.Find)
+			}
+			p.Path, p.Find = found[i].Path, ""
+			p.Name = cmp.Or(s.Name, found[i].Name)
+		case s.Path == "":
+			return p, &skill.Choice{Source: s.Git, Names: []string{"docx", "frontend-design", "pdf"}}
+		}
+		p.Name = cmp.Or(p.Name, path.Base(p.Path))
+		return p, nil
+	}
+	skillsIn = func(_ context.Context, s skill.Skill) (skill.Pinned, []skill.Found, error) {
+		return skill.Pinned{Skill: s, Commit: commit1}, found, nil
+	}
+}
+
+func TestPinForAddChoosesSkillsAsNpxSkills(t *testing.T) {
+	fakeRepo(t)
+	pick := func([]string) (string, error) { return "pdf", nil }
+	for _, tc := range []struct {
+		source string
+		o      addOptions
+		ask    func([]string) (string, error)
+		want   []string // name=path
+	}{
+		{"org/repo@frontend-design", addOptions{}, nil, []string{"frontend-design=skills/frontend"}},
+		{"org/repo", addOptions{skills: []string{"pdf"}}, nil, []string{"pdf=skills/pdf"}},
+		{"https://github.com/org/repo", addOptions{skills: []string{"Frontend Design"}}, nil, []string{"frontend-design=skills/frontend"}},
+		{"org/repo", addOptions{skills: []string{"pdf", "docx"}}, nil, []string{"pdf=skills/pdf", "docx=skills/docx"}},
+		{"org/repo@pdf", addOptions{skills: []string{"docx"}}, nil, []string{"pdf=skills/pdf", "docx=skills/docx"}},
+		{"org/repo", addOptions{all: true}, nil, []string{"docx=skills/docx", "frontend-design=skills/frontend", "pdf=skills/pdf"}},
+		{"org/repo", addOptions{skills: []string{"*"}}, nil, []string{"docx=skills/docx", "frontend-design=skills/frontend", "pdf=skills/pdf"}},
+		// On a terminal, airo asks which skill of several.
+		{"org/repo", addOptions{}, pick, []string{"pdf=skills/pdf"}},
+		{"org/repo", addOptions{skills: []string{"pdf"}, rename: "papers"}, nil, []string{"papers=skills/pdf"}},
+		{"papers=org/repo@pdf", addOptions{}, nil, []string{"papers=skills/pdf"}},
+		{"org/repo/skills/pdf", addOptions{}, nil, []string{"pdf=skills/pdf"}},
+	} {
+		s, err := skill.Parse(tc.source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pinned, err := pinForAdd(context.Background(), s, tc.o, tc.ask)
+		var got []string
+		for _, p := range pinned {
+			got = append(got, p.Name+"="+p.Path)
+		}
+		if err != nil || !slices.Equal(got, tc.want) {
+			t.Errorf("add %s %+v = %v, %v, want %v", tc.source, tc.o, got, err, tc.want)
+		}
+	}
+
+	for _, tc := range []struct {
+		source string
+		o      addOptions
+		want   string
+	}{
+		// Without a terminal to ask on, a source of several skills names them.
+		{"org/repo", addOptions{}, "choose one with --skill NAME, or add them all with --all: docx, frontend-design, pdf"},
+		{"org/repo", addOptions{skills: []string{"pdf", "nope"}}, "has no skill named nope"},
+		{"org/repo", addOptions{all: true, rename: "papers"}, "names one skill"},
+		{"org/repo", addOptions{skills: []string{"pdf"}, rename: "Bad_Name"}, "cannot name a skill"},
+		{"org/repo", addOptions{skills: []string{"nope"}}, "no skill named nope"},
+	} {
+		s, err := skill.Parse(tc.source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pinForAdd(context.Background(), s, tc.o, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("add %s %+v = %v, want an error with %q", tc.source, tc.o, err, tc.want)
+		}
+	}
+}
+
+func TestAddPutsSeveralSkillsInOneChange(t *testing.T) {
+	fakeRepo(t)
+	ctx := context.Background()
+	c := fake.NewClientBuilder().WithObjects(agentWithSkills(nil, nil)).Build()
+	skillsOf := func() []any {
+		a, err := getAgent(ctx, c, "team", "my-agent")
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries, _ := inlineSkills(a)
+		return entries
+	}
+	var out bytes.Buffer
+	if err := ignoreNoStatus(addSkill(ctx, &out, c, "team", "my-agent", "org/repo", addOptions{skills: []string{"pdf", "docx"}}, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if entries := skillsOf(); len(entries) != 2 || entryName(entries[0]) != "pdf" || entryName(entries[1]) != "docx" {
+		t.Errorf("skills = %v, want pdf and docx", entries)
+	}
+	// One name the agent has refuses the whole add.
+	err := addSkill(ctx, &out, c, "team", "my-agent", "org/repo", addOptions{skills: []string{"frontend-design", "docx"}}, 0)
+	if err == nil || !strings.Contains(err.Error(), "has a skill named docx") {
+		t.Errorf("add = %v, want an error for a name the agent has", err)
+	}
+	if entries := skillsOf(); len(entries) != 2 {
+		t.Errorf("a refused add left skills %v", entries)
+	}
+}
+
+func TestSearchListsTheSkillsOfASource(t *testing.T) {
+	fakeRepo(t)
+	var out, errOut bytes.Buffer
+	if err := searchSource(context.Background(), &out, &errOut, "org/repo", ""); err != nil {
+		t.Fatal(err)
+	}
+	want := "NAME              PATH\ndocx              skills/docx\nfrontend-design   skills/frontend\npdf               skills/pdf\n"
+	if out.String() != want || !strings.Contains(errOut.String(), "Skills in https://github.com/org/repo at "+commit1) {
+		t.Errorf("search printed %q and %q, want %q", &out, &errOut, want)
+	}
+	if err := searchSource(context.Background(), &out, &errOut, "./skills", ""); err == nil || !strings.Contains(err.Error(), "local directory") {
+		t.Errorf("search = %v, want an error for a local directory", err)
+	}
+	out.Reset()
+	if err := searchSource(context.Background(), &out, &errOut, "org/repo", "FRONT design"); err != nil || strings.Contains(out.String(), "pdf") || !strings.Contains(out.String(), "frontend-design") {
+		t.Errorf("search with words printed %q, %v, want only frontend-design", &out, err)
+	}
+	if err := searchSource(context.Background(), &out, &errOut, "org/repo", "xlsx"); err == nil || !strings.Contains(err.Error(), `no skill named like "xlsx"`) {
+		t.Errorf("search = %v, want an error for words no skill has", err)
+	}
+}
+
+// fakeRegistry answers every search with its results.
+type fakeRegistry struct {
+	results []registry.Result
+	asked   []string
+}
+
+func (f *fakeRegistry) Name() string { return "fake.sh" }
+
+func (f *fakeRegistry) Search(_ context.Context, query string, o registry.Options) ([]registry.Result, error) {
+	f.asked = append(f.asked, query+"|"+o.Owner)
+	return f.results, nil
+}
+
+func useRegistry(t *testing.T, results ...registry.Result) *fakeRegistry {
+	t.Helper()
+	old := searchIn
+	t.Cleanup(func() { searchIn = old })
+	f := &fakeRegistry{results: results}
+	searchIn = f
+	return f
+}
+
+func TestSearchPrintsWhatAddTakes(t *testing.T) {
+	f := useRegistry(t,
+		registry.Result{Name: "pdf", Repository: "anthropics/skills", Skill: "pdf", Installs: 235455},
+		registry.Result{Name: "Paddle billing", Repository: "developer.paddle.com", Skill: "paddle-billing", Installs: 10},
+		registry.Result{Name: "PDF OCR", Repository: "office/skills", Skill: "pdf-ocr", Installs: 1_234_567},
+		registry.Result{Name: "pdf-tiny", Repository: "me/skills", Skill: "pdf-tiny", Installs: -1},
+	)
+	var out, errOut bytes.Buffer
+	if err := searchRegistry(context.Background(), &out, &errOut, "pdf", registry.Options{Owner: "anthropics"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "NAME       INSTALLS   SOURCE\n" +
+		"pdf        235K       anthropics/skills@pdf\n" +
+		"PDF OCR    1.2M       office/skills@pdf-ocr\n" +
+		"pdf-tiny   -          me/skills@pdf-tiny\n"
+	if out.String() != want {
+		t.Errorf("search printed\n%s\nwant\n%s", &out, want)
+	}
+	if !strings.Contains(errOut.String(), "Left out 1 skills that fake.sh found on websites") {
+		t.Errorf("search said %q, want how many it left out", &errOut)
+	}
+	if !slices.Equal(f.asked, []string{"pdf|anthropics"}) {
+		t.Errorf("asked %v", f.asked)
+	}
+
+	useRegistry(t, registry.Result{Name: "Paddle", Repository: "developer.paddle.com", Skill: "paddle"})
+	if err := searchRegistry(context.Background(), &out, &errOut, "paddle", registry.Options{}); err == nil || !strings.Contains(err.Error(), `fake.sh has no skill in a GitHub repository for "paddle"`) {
+		t.Errorf("search = %v, want an error when nothing can be added", err)
+	}
+}
+
+func TestLeavingTheSearchGoesBackToTheQuestion(t *testing.T) {
+	f := useRegistry(t, registry.Result{Name: "pdf", Repository: "anthropics/skills", Skill: "pdf", Installs: 235455})
+	// Search for pdf, leave the results with q, then skip skills.
+	var out bytes.Buffer
+	w := wizard.Plain(context.Background(), strings.NewReader("pdf\nq\n\n"), &out)
+	pinned, err := askSkills(context.Background(), w)
+	if err != nil || len(pinned) != 0 {
+		t.Fatalf("askSkills = %v, %v, want no skills", pinned, err)
+	}
+	if len(f.asked) != 1 || strings.Contains(out.String(), "canceled") || strings.Count(out.String(), sourceQuestion) != 2 {
+		t.Errorf("searched %v, and the wizard showed %q: want the question again, without a cancellation", f.asked, out.String())
+	}
+}
+
+func TestWizardSearchesWhatIsNoSource(t *testing.T) {
+	for answer, want := range map[string]bool{
+		"pdf":                          true,
+		"frontend design":              true,
+		"next.js":                      true,
+		"anthropics/skills@pdf":        false,
+		"https://github.com/org/repo":  false,
+		"github:org/repo":              false,
+		"./skills/pdf":                 false,
+		"oci://ghcr.io/org/skills:1.0": false,
+	} {
+		if got := isQuery(answer); got != want {
+			t.Errorf("isQuery(%q) = %v, want %v", answer, got, want)
+		}
 	}
 }

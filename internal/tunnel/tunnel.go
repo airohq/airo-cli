@@ -26,6 +26,7 @@ import (
 
 	"github.com/airohq/airo-cli/internal/expiry"
 	"github.com/airohq/airo-cli/internal/generic"
+	"github.com/airohq/airo-cli/internal/ui"
 	"github.com/airohq/airo-cli/internal/wizard"
 )
 
@@ -80,8 +81,8 @@ minutes. A Tunnel made with airo tunnel create is used as it is and stays.`,
 	cmd.Flags().StringVar(&name, "name", "", "name of the Tunnel (default: <your username>-<port>)")
 	cmd.Flags().BoolVar(&public, "public", false, "make the tunnel reachable from the internet too")
 	cmd.Flags().BoolVar(&noAuth, "no-auth", false, "let callers in without a token")
-	cmd.AddCommand(newCreateCommand(flags))
-	cmd.AddCommand(generic.Commands(flags, cmd.Name())...)
+	generic.AddBasic(cmd, generic.Commands(flags, cmd.Name())...)
+	ui.AddCommandGroup(cmd, "tunnel", "Tunnel Commands", newCreateCommand(flags))
 	return cmd
 }
 

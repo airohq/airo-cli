@@ -29,15 +29,34 @@ type Wizard struct {
 // New returns nil when input, results or questions are redirected. The
 // heading appears only if the command actually needs to ask a question.
 func New(cmd *cobra.Command, kind, project string) *Wizard {
+	return WithHeader(cmd, fmt.Sprintf("Creating %s in project %s", kind, ui.Text(project)))
+}
+
+// WithHeader is New for a task other than creating a resource, such as
+// adding a skill to an agent.
+func WithHeader(cmd *cobra.Command, header string) *Wizard {
 	in, out := cmd.InOrStdin(), cmd.ErrOrStderr()
 	if !ui.Interactive(in, cmd.OutOrStdout()) || !ui.IsTerminal(out) {
 		return nil
 	}
 	return &Wizard{ctx: cmd.Context(), in: in, out: out, lines: bufio.NewReader(in),
-		header: fmt.Sprintf("Creating %s in project %s", kind, ui.Text(project)), palette: ui.NewPalette(out)}
+		header: header, palette: ui.NewPalette(out)}
+}
+
+// Plain asks on ordinary lines, as on a terminal without styling, so that
+// a test can answer.
+func Plain(ctx context.Context, in io.Reader, out io.Writer) *Wizard {
+	return &Wizard{ctx: ctx, in: in, out: out, lines: bufio.NewReader(in), palette: ui.NewPalette(out)}
 }
 
 var errCanceled = errors.New("creation canceled")
+
+// Canceled says whether the person left a question or a choice, with Esc
+// or Ctrl+C. Leaving a choice that answers a question may go back to the
+// question rather than end the wizard.
+func Canceled(err error) bool {
+	return errors.Is(err, errCanceled)
+}
 
 func (w *Wizard) begin() {
 	if w.header != "" {
@@ -108,13 +127,53 @@ func (w *Wizard) Confirm(label string, def bool) (bool, error) {
 	}
 }
 
+// Edit asks with the current value filled in, to keep with Enter or to
+// change. On a plain terminal the value shows in brackets, and an empty
+// answer keeps it.
+func (w *Wizard) Edit(label, current string) (string, error) {
+	if !ui.Styled(w.out) {
+		w.begin()
+		fmt.Fprintf(w.out, "? %s [%s] › ", label, ui.Text(current))
+		line, err := w.lines.ReadString('\n')
+		if errors.Is(err, io.EOF) {
+			return "", errCanceled
+		}
+		if line = strings.TrimSpace(line); line != "" || err != nil {
+			return line, err
+		}
+		return current, nil
+	}
+	return w.askWith(label, current)
+}
+
 func (w *Wizard) Pick(label string, names []string) (string, error) {
+	return w.PickLinked(label, names, nil)
+}
+
+// PickCurrent is Pick with names[current] marked as the current choice,
+// which Enter keeps.
+func (w *Wizard) PickCurrent(label string, names []string, current int) (string, error) {
 	w.begin()
 	input := w.in
 	if !ui.Styled(w.out) {
 		input = w.lines
 	}
-	name, err := picker.One(w.ctx, input, w.out, label, names, -1)
+	name, err := picker.One(w.ctx, input, w.out, label, names, current)
+	if err == nil && name == "" {
+		return "", errCanceled
+	}
+	return name, err
+}
+
+// PickLinked is Pick with a web page for each name, which a click on the
+// name opens in a terminal that knows hyperlinks.
+func (w *Wizard) PickLinked(label string, names, pages []string) (string, error) {
+	w.begin()
+	input := w.in
+	if !ui.Styled(w.out) {
+		input = w.lines
+	}
+	name, err := picker.Linked(w.ctx, input, w.out, label, names, pages, -1)
 	if err == nil && name == "" {
 		return "", errCanceled
 	}
@@ -131,8 +190,16 @@ func (w *Wizard) ask(label string) (string, error) {
 		}
 		return strings.TrimSpace(line), err
 	}
+	return w.askWith(label, "")
+}
+
+// askWith asks on a styled terminal, with value filled in.
+func (w *Wizard) askWith(label, value string) (string, error) {
+	w.begin()
 	m := &question{input: textinput.New(), label: label, palette: w.palette}
 	m.input.Prompt = ""
+	m.input.SetValue(value)
+	m.input.CursorEnd()
 	_, err := tea.NewProgram(m, tea.WithContext(w.ctx), tea.WithInput(w.in), tea.WithOutput(w.out),
 		tea.WithColorProfile(w.palette.Profile)).Run()
 	w.palette = m.palette

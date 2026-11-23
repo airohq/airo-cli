@@ -21,7 +21,7 @@ airo chat "fix the build"    # a prompt for the default agent
 | --- | --- |
 | Noun | A kind of resource, such as `tunnel` or `agent`. `tunnels` and `agents` mean the same |
 | No verb | The noun's default task, if it has one. Otherwise the help |
-| `list`, `get`, `describe`, `delete` | Work for every kind the cluster serves, also kinds this binary does not know |
+| `list`, `get`, `describe`, `edit`, `delete` | Work for every kind the cluster serves, also kinds this binary does not know |
 | `create` | Resource-specific flags. Agent and tunnel also prompt for missing input on a terminal |
 | Other verbs | Actions of one noun, such as `airo agent logs` |
 | Inner noun | A part of a resource, such as `airo agent skill add SOURCE --agent NAME`. See below |
@@ -47,9 +47,10 @@ resource's noun**: `airo agent skill add SOURCE`. Such a part, like a skill
 in an Agent, is not a kind in the cluster.
 
 - **The resource is a flag named for the outer noun**, with its short form:
-  `--agent` or `-a`. It is resolved as any missing choice is ([Default
-  task](#default-task)). It is never a second argument, because everything
-  but the one argument is a flag.
+  `--agent` or `-a`. It has no default, because the command changes the
+  resource: without the flag, airo asks on a terminal, even when the project
+  has one, and fails elsewhere. It is never a second argument, because
+  everything but the one argument is a flag.
 - **Its verbs are `list`, `add` and `remove`**, not `create` and `delete`,
   because they change the outer resource and make or delete none. A verb of
   its own may follow, such as `upgrade`, which moves a pinned version to a
@@ -66,6 +67,18 @@ ctx` for `airo context`. Add it as an alias when you add the noun.
 - **A noun without a known short form has none.**
 - **The README and the help use the long form**, and name the short one
   once.
+
+**A noun's help groups its verbs as kubectl's help does.** The verbs every
+kind has, `list`, `get`, `describe`, `edit` and `delete`, come first under
+Basic Commands, also when the noun replaces one of them with its own, as
+`airo project delete` does. The noun's own verbs follow in groups named
+for what they are about, such as Agent Commands for `create`, `update` and
+`skill`, and Local Run Commands for `serve` and `connect`. A group of one
+verb is fine. A kind without a command of its own, such as `airo configmap
+-h`, shows the same Basic Commands. A noun that is not a kind, such as
+`airo session`, or an inner noun, such as `airo agent skill`, has no Basic
+Commands and lists its verbs as one group. Add groups with
+`ui.AddCommandGroup`, and the basic verbs with `generic.AddBasic`.
 
 **`get` shows a resource's details, and `view` shows content.** `airo agent
 get` prints the Agent as the cluster holds it. `airo session view` prints the
@@ -246,6 +259,20 @@ background:
 standard error, with what it waits for and for how long. It leaves no trace
 when it ends.
 
+**A status line says what happens, never which keys to press.** Spinners,
+progress, working and idle status lines carry the state, the subject and
+the elapsed time. Keys that work everywhere, such as Ctrl-C to stop, are
+not repeated there. Key help has three places only:
+
+| Where | What |
+| --- | --- |
+| A picker's guide | One Muted line below its choices ([Default task](#default-task)), because the keys of a list are not obvious |
+| A contextual hint | Once, after an action whose result needs explaining, such as the first Ctrl-C in a chat or Enter during a turn |
+| Help | `/help` in a chat, and a command's `--help`. A chat on a plain terminal, which has no `/help`, says once as it starts how to leave |
+
+A question may name its answer, such as `(Enter to skip)` or `(y/N)`,
+since that tells what the answer means, not a key guide.
+
 **An agent's text is rendered as markdown on a terminal, and is the agent's
 own text in a pipe.**
 
@@ -349,7 +376,8 @@ Keep the working status and elapsed time above the input while a turn runs.
 **Keys mean what people know from other tools.** Keep routine keyboard help
 behind `/help`, with contextual hints after an action needs explanation,
 such as Enter during a turn or the first Ctrl-C. Do not repeat the key guide
-in the idle or working status line.
+in the idle or working status line, or in the wait before a chat starts
+([a status line says what happens](#terminal)).
 
 | Key | Does |
 | --- | --- |
@@ -488,3 +516,10 @@ conditions:
   token.
 - **The caller is the person signed in with `airo login`.** No self-declared
   identity.
+
+**Public services outside the platform may have a built-in address** when
+the call carries no credentials and holds nothing of the project. Pinning a
+skill reads its Git host or registry, and `airo agent skill search` asks a
+public directory of skills such as skills.sh. Such a call sends only what
+the person typed, such as a source or search words, and an answer from it
+is data: text shown on the terminal is stripped of control characters.

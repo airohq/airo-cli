@@ -2,6 +2,7 @@ package skill
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -31,12 +32,19 @@ func (r Resolver) client() *http.Client {
 }
 
 // Pin returns the skill at the immutable version its Version names, and
-// fills in the name and, for a GitHub page, the version and the path.
+// fills in the name and, for a GitHub page, the version and the path. In a
+// GitHub repository, it finds the skill Find names, or the only skill under
+// the path, and returns a *Choice for a path with several.
 func (r Resolver) Pin(ctx context.Context, s Skill) (Pinned, error) {
 	var p Pinned
 	var err error
+	if _, _, github := githubRepo(s.Git); s.Find != "" && !github {
+		return p, fmt.Errorf("airo finds a skill by name only in a GitHub repository: give the directory of %s, as %s//PATH", s.Find, cmp.Or(s.Git, "oci://"+s.OCI))
+	}
 	if s.Git != "" {
-		p, err = r.pinGit(ctx, s)
+		if p, err = r.pinGit(ctx, s); err == nil {
+			p, err = r.locate(ctx, p)
+		}
 	} else {
 		p, err = r.pinOCI(ctx, s)
 	}

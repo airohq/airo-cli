@@ -40,6 +40,44 @@ func TestParse(t *testing.T) {
 			Skill{OCI: "localhost:5000/pdf"}},
 		{"oci://ghcr.io/org/bundle@" + digest + "//skills/pdf",
 			Skill{OCI: "ghcr.io/org/bundle", Version: digest, Path: "skills/pdf"}},
+
+		// As npx skills takes them.
+		{"anthropics/skills",
+			Skill{Git: "https://github.com/anthropics/skills"}},
+		{"anthropics/skills@frontend-design",
+			Skill{Git: "https://github.com/anthropics/skills", Find: "frontend-design"}},
+		{"anthropics/skills@v1.2.3",
+			Skill{Git: "https://github.com/anthropics/skills", Version: "v1.2.3"}},
+		{"anthropics/skills@v2",
+			Skill{Git: "https://github.com/anthropics/skills", Find: "v2"}},
+		{"anthropics/skills.git/skills/pdf",
+			Skill{Git: "https://github.com/anthropics/skills", Path: "skills/pdf"}},
+		{"anthropics/skills#dev@pdf",
+			Skill{Git: "https://github.com/anthropics/skills", Version: "dev", Find: "pdf"}},
+		{"anthropics/skills#@pdf",
+			Skill{Git: "https://github.com/anthropics/skills", Find: "pdf"}},
+		{"docs=github:org/repo#feature/x",
+			Skill{Name: "docs", Git: "https://github.com/org/repo", Version: "feature/x"}},
+		{"gitlab:group/repo/skills",
+			Skill{Git: "https://gitlab.com/group/repo", Path: "skills"}},
+		{"git@github.com:org/repo.git",
+			Skill{Git: "https://github.com/org/repo.git"}},
+		{"https://github.com/openai/skills#main@pdf",
+			Skill{Git: "https://github.com/openai/skills", Version: "main", Find: "pdf"}},
+		{"https://github.com/org/repo#@pdf",
+			Skill{Git: "https://github.com/org/repo", Find: "pdf"}},
+		{"github:org/repo@pdf",
+			Skill{Git: "https://github.com/org/repo", Find: "pdf"}},
+		{"org/repo@" + mainCommit,
+			Skill{Git: "https://github.com/org/repo", Version: mainCommit}},
+		{"org/repo@1.2",
+			Skill{Git: "https://github.com/org/repo", Version: "1.2"}},
+		{"org/repo@v1.2.3-rc.1",
+			Skill{Git: "https://github.com/org/repo", Version: "v1.2.3-rc.1"}},
+		{"org/repo/skills/pdf@pdf",
+			Skill{Git: "https://github.com/org/repo", Path: "skills/pdf", Find: "pdf"}},
+		{"git@gitlab.com:group/repo.git",
+			Skill{Git: "https://gitlab.com/group/repo.git"}},
 	} {
 		got, err := Parse(tc.arg)
 		if err != nil || got != tc.want {
@@ -50,8 +88,13 @@ func TestParse(t *testing.T) {
 
 func TestParseRefuses(t *testing.T) {
 	for arg, want := range map[string]string{
-		"git@github.com:org/repo.git": "cannot read the skill source",
-		"pdf":                         "cannot read the skill source",
+		"pdf":                           "cannot read the skill source",
+		"./skills/pdf":                  "local directory",
+		"org/repo@":                     "nothing after @",
+		"org/repo#":                     "nothing after #",
+		"org/":                          "give OWNER/REPO",
+		"https://github.com/o/r@v1#dev": "a version twice",
+		"https://git.example.com/o/r?x": "has a query",
 		"https://user:secret@git.example.com/org/repo": "has credentials",
 		"https://git.example.com/org/repo//../etc":     "leaves the repository",
 		"https://git.example.com/org/repo@":            "empty version",
@@ -74,21 +117,23 @@ func TestParseRefuses(t *testing.T) {
 // gitServer serves a repository's refs as Git's smart HTTP does.
 func gitServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(serveRefs))
+}
+
+// serveRefs serves the refs of /org/skills.
+func serveRefs(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/org/skills/info/refs" || r.URL.Query().Get("service") != "git-upload-pack" {
+		http.NotFound(w, r)
+		return
+	}
 	pkt := func(s string) string { return fmt.Sprintf("%04x%s", len(s)+4, s) }
-	body := pkt("# service=git-upload-pack\n") + "0000" +
-		pkt(mainCommit+" HEAD\x00multi_ack symref=HEAD:refs/heads/main\n") +
-		pkt(mainCommit+" refs/heads/main\n") +
-		pkt(featureCommit+" refs/heads/feature/x\n") +
-		pkt(tagObject+" refs/tags/v1.2\n") +
-		pkt(tagCommit+" refs/tags/v1.2^{}\n") + "0000"
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/org/skills/info/refs" || r.URL.Query().Get("service") != "git-upload-pack" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
-		fmt.Fprint(w, body)
-	}))
+	w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+	fmt.Fprint(w, pkt("# service=git-upload-pack\n")+"0000"+
+		pkt(mainCommit+" HEAD\x00multi_ack symref=HEAD:refs/heads/main\n")+
+		pkt(mainCommit+" refs/heads/main\n")+
+		pkt(featureCommit+" refs/heads/feature/x\n")+
+		pkt(tagObject+" refs/tags/v1.2\n")+
+		pkt(tagCommit+" refs/tags/v1.2^{}\n")+"0000")
 }
 
 func TestPinGit(t *testing.T) {

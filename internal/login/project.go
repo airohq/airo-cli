@@ -119,8 +119,8 @@ in another project, pass -n to that command instead.`,
 			return switchProject(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, newPreviousProjectStore, list, target, ask)
 		},
 	}
-	cmd.AddCommand(generic.ReadCommands(flags, projectResource.Resource)...)
-	cmd.AddCommand(&cobra.Command{
+	generic.AddBasic(cmd, generic.ReadCommands(flags, projectResource.Resource)...)
+	ui.AddCommandGroup(cmd, "project", "Project Commands", &cobra.Command{
 		Use:   "create NAME",
 		Short: "Create a project",
 		Long: `Create makes a new project, a namespace of the platform. The platform
@@ -140,7 +140,9 @@ tenant's name, and how many projects you may have.`,
 	deleteCmd.Long = `Delete removes a project and everything in it. When your commands work in
 it, airo switches them to the project you were in before, or else to your
 default project, as airo login chooses it.`
-	cmd.AddCommand(deleteCmd)
+	editCmd := generic.NewEditCommand(flags, projectResource.Resource)
+	editCmd.Example = "  airo project edit acme-web"
+	generic.AddBasic(cmd, editCmd, deleteCmd)
 	return cmd
 }
 

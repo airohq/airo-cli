@@ -1,4 +1,4 @@
-// Package generic implements the verbs every kind has: list, get, describe and delete,
+// Package generic implements the verbs every kind has: list, get, describe, edit and delete,
 // for any kind the cluster serves, and apply for files. It asks the cluster
 // what a kind is and how to show it, so a new kind needs no new airo.
 package generic
@@ -14,27 +14,45 @@ import (
 	"k8s.io/kubectl/pkg/cmd/describe"
 	"k8s.io/kubectl/pkg/cmd/get"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
+
+	"github.com/airohq/airo-cli/internal/ui"
 )
 
 // Verbs is the help line for a kind without a command of its own.
-const Verbs = "list, get [NAME], describe NAME or delete NAME"
+const Verbs = "list, get [NAME], describe NAME, edit NAME or delete NAME"
 
 // AddResourceHandler handles kinds that do not have a dedicated Airo command.
 func AddResourceHandler(cmd *cobra.Command, flags *genericclioptions.ConfigFlags) {
 	o := addReadFlags(cmd)
 	runDescribe := describeRunner(cmd, flags)
 	runDelete := deleteRunner(cmd, flags, nil)
+	runEdit := editRunner(cmd, flags)
 	cmd.Args = cobra.ArbitraryArgs
+	// airo KIND -h shows the kind's verbs, as airo agent -h shows its own,
+	// not the help of airo.
+	rootHelp := cmd.HelpFunc()
+	cmd.SetHelpFunc(func(c *cobra.Command, args []string) {
+		words := c.Flags().Args()
+		if c != cmd || len(words) == 0 {
+			rootHelp(c, args)
+			return
+		}
+		if shown, err := showKindHelp(cmd, flags, words); !shown {
+			fmt.Fprintf(c.ErrOrStderr(), "Error: %v\n\n", err)
+			rootHelp(c, args)
+		} else if err != nil {
+			fmt.Fprintf(c.ErrOrStderr(), "Error: %v\n", err)
+		}
+	})
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return cmd.Help()
 		}
 		kind := args[0]
 		if len(args) == 1 {
-			if _, err := mapping(flags, kind); err != nil {
-				return err
-			}
-			return fmt.Errorf("airo %s needs a verb: %s", kind, Verbs)
+			// Without a verb, a kind shows its verbs, as airo agent does.
+			_, err := showKindHelp(cmd, flags, args)
+			return err
 		}
 		switch args[1] {
 		case "list":
@@ -48,6 +66,10 @@ func AddResourceHandler(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 		case "describe":
 			if len(args) == 3 {
 				return runDescribe(kind, args[2])
+			}
+		case "edit":
+			if len(args) == 3 {
+				return runEdit(kind, args[2])
 			}
 		case "delete":
 			if len(args) == 3 {
@@ -130,7 +152,13 @@ func ReadCommands(flags *genericclioptions.ConfigFlags, resource string) []*cobr
 
 // Commands returns the resource verbs for a built-in noun.
 func Commands(flags *genericclioptions.ConfigFlags, resource string) []*cobra.Command {
-	return append(ReadCommands(flags, resource), NewDeleteCommand(flags, resource, nil))
+	return append(ReadCommands(flags, resource), NewEditCommand(flags, resource), NewDeleteCommand(flags, resource, nil))
+}
+
+// AddBasic adds the verbs every kind has to a noun under Basic Commands, as
+// kubectl heads its own. A noun's own commands go in groups below them.
+func AddBasic(noun *cobra.Command, verbs ...*cobra.Command) {
+	ui.AddCommandGroup(noun, "basic", "Basic Commands", verbs...)
 }
 
 // mapping asks the cluster which kind the word means. It takes what kubectl

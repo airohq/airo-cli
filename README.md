@@ -287,8 +287,10 @@ A value of `"true"` shows as enabled. Any other value shows as disabled.
 
 ## Resources
 
-**Every kind of resource in the cluster is a noun with `list`, `get`, `describe` and
+**Every kind of resource in the cluster is a noun with `list`, `get`, `describe`, `edit` and
 `delete`**, including custom resources added after this CLI was built.
+`airo RESOURCE` or `airo RESOURCE -h`, such as `airo configmap -h`, shows
+those verbs for the kind, as `airo agent -h` shows the agent's.
 `airo RESOURCE list` and `airo RESOURCE get` both run the equivalent of
 `kubectl get RESOURCE`. Add a name to `get` to show one object. Both verbs
 use kubectl's Go library for discovery, server-provided columns, pagination,
@@ -304,6 +306,14 @@ waits for deletion by default. Use `--wait=false` to return when the API
 accepts the request, or `--dry-run=server` to have the API check it without
 deleting the object. A project dry run also preserves the selected project.
 
+`airo RESOURCE edit NAME` runs `kubectl edit` on one named object: it opens
+the object as YAML in the editor that `KUBE_EDITOR` or `EDITOR` names, or
+`vi`, and saves the changes when the editor closes. Closing it without
+changes changes nothing. When the cluster refuses a change, the editor
+opens again with the reason at the top; when the object changed meanwhile,
+your version stays in a temporary file. `-o json` edits JSON instead, and
+`--output-patch` prints the patch that was sent.
+
 ```sh
 airo agent list                    # in your project
 airo agent list -A                 # in every namespace you may read
@@ -311,6 +321,8 @@ airo agent get my-agent            # one row
 airo agent get my-agent -o yaml    # the whole resource, or -o json
 airo agent describe my-agent       # details and related events
 airo pods get -o wide              # include the API's additional columns
+airo agent edit my-agent           # change it in your editor
+EDITOR=nano airo tunnel edit web   # with another editor
 airo agent delete my-agent
 airo create -f agent.yaml          # create once, including custom resource kinds
 airo apply -f agent.yaml           # create or update from a file, a directory, a URL or -
@@ -556,8 +568,9 @@ terminals show numbered choices. A project default appears first and is marked `
 Passing `--harness` or `--model` supplies that choice directly.
 
 A harness that runs its own image (`byo`) lets you skip the model or choose
-one. The wizard then asks for skill sources, one at a time, until an empty
-answer.
+one. The wizard then asks for skills, one at a time, until an empty answer.
+Each answer is a skill's source, or words to search for, as in the wizard
+of [`airo agent skill add`](#skills).
 
 In scripts, supply a name and `--prompt` or `--prompt-file`. An omitted harness or required model uses the project's only
 choice or its annotated default (`airohq.dev/default-harness: "true"` or
@@ -585,23 +598,58 @@ EOF
 
 **An agent the cluster turns down stays in the project.** The command stops
 with the cluster's reason, such as a model its Harness cannot use. Delete the
-agent, or change it with `airo apply -f`. Tools, an AgentTemplate
+agent, or change it with `airo agent update`. Tools, an AgentTemplate
 (`spec.template.ref`) and the other fields of an Agent go in a file for
-`airo apply -f` too.
+`airo apply -f`, or change them with `airo agent edit NAME`.
+
+**`airo agent update` changes an agent's settings and waits until it is
+ready again.** Flags change only the settings they name. Without flags, on
+a terminal, it asks for each setting with the current value filled in, and
+Enter keeps it. Without `NAME` it asks for the agent first.
+
+```sh
+airo agent update reviewer                     # asks, with the current values
+airo agent update reviewer --model opus-5.5
+airo agent update reviewer --prompt-file prompt.md --description "Reviews pull requests"
+```
+
+```text
+Updated agent my-project/reviewer
+  description:  Reviews pull requests
+  model:        opus-5.5
+  ready
+```
+
+| Flag | Changes |
+| --- | --- |
+| `--prompt`, `--prompt-file` | The system prompt. `--prompt-file -` reads standard input |
+| `--description` | The description. `--description ""` removes it |
+| `--harness` | The Harness |
+| `--model` | The ModelConfig. `--model ""` removes it, which only a `byo` harness can do without |
+
+The wizard offers the project's harnesses and models with the current one
+marked `(current)`. Instructions of several lines open in your editor
+(`KUBE_EDITOR` or `EDITOR`, as `airo agent edit` uses) when you choose to
+change them. A local agent's harness is its relay, so `update` leaves it.
+Skills change with [`airo agent skill`](#skills). Setting values the agent
+already has changes nothing, and says so.
 
 ### Skills
 
 **`airo agent skill` lists, adds, upgrades and removes an agent's skills.**
-Without `--agent` (`-a`), it takes the project's only agent, then the one
-marked as default, then asks, as `airo chat` does.
+Each verb but `search` acts on the agent named with `--agent` (`-a`). Unlike `airo chat`,
+it has no default agent, because the verbs change the agent: without
+`--agent`, `airo` asks on a terminal and fails elsewhere. A bare
+`airo agent skill add` asks for the skill's source, then for the agent.
 
 ```sh
-airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf -a reviewer
-airo agent skill add docs=https://git.example.com/team/skills//docs@v1.2 -a reviewer
-airo agent skill list -a reviewer
-airo agent skill upgrade pdf -a reviewer
-airo agent skill upgrade docs --version v1.3 -a reviewer
-airo agent skill remove pdf -a reviewer
+airo agent skill add anthropics/skills@frontend-design -a designer
+airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf -a writer
+airo agent skill add docs=https://git.example.com/team/skills//docs@v1.2 -a writer
+airo agent skill list -a writer
+airo agent skill upgrade pdf -a writer
+airo agent skill upgrade docs --version v1.3 -a writer
+airo agent skill remove pdf -a writer
 ```
 
 ```text
@@ -610,16 +658,90 @@ pdf    default   https://github.com/anthropics/skills//skills/pdf@e4bb5d960d8712
 docs   v1.2      https://git.example.com/team/skills//docs@0c5b6f0d2e8a4b7c9d1e3f5a7b9c0d2e4f6a8b0c
 ```
 
-A source is a Git repository or an OCI image, the same for `--skill`:
+A source is a Git repository or an OCI image, the same for `--skill` of
+`airo agent create`:
 
 | Source | Example |
 | --- | --- |
+| A GitHub repository | `OWNER/REPO[/PATH][@SKILL\|@VERSION]`, `OWNER/REPO#REF[@SKILL]`, `github:OWNER/REPO` |
 | A GitHub page | `https://github.com/OWNER/REPO/tree/REF/PATH`, or a `SKILL.md`'s `blob` page |
-| Any Git host | `https://HOST/REPO[//PATH][@VERSION]` |
+| Any Git host | `https://HOST/REPO[//PATH][@VERSION]`, `gitlab:OWNER/REPO`, `git@HOST:OWNER/REPO` |
 | An OCI image | `oci://IMAGE[:TAG\|@sha256:DIGEST][//PATH]` |
 
-`NAME=SOURCE` names the skill. Otherwise the name is the path's last
-directory, or the repository's name. A skill's directory has a `SKILL.md`.
+**`add` takes the commands of `npx skills add`.** A skill's page often shows
+one: replace `npx` with `airo agent`.
+
+```sh
+npx skills add https://github.com/openai/skills --skill security-best-practices
+airo agent skills add https://github.com/openai/skills --skill security-best-practices -a reviewer
+```
+
+In a GitHub repository, `airo` finds a skill by the `name` in its
+`SKILL.md`, as `npx skills` does. `OWNER/REPO@SKILL` and `--skill SKILL`
+name one. A version such as `@v1.2.3`, or a full commit, pins the repository
+instead, and `#REF` names any branch, tag or commit. A source that holds
+several skills asks which one to add on a terminal, and fails elsewhere,
+listing them.
+
+| Flag of `add` | Does |
+| --- | --- |
+| `--skill NAME` | Adds the skill of that name. Repeat for more, or give `'*'` for all. No `-s`, which is kubectl's `--server` |
+| `--all` | Adds every skill of the source |
+| `--rename NAME` | Names the one skill added, as `NAME=SOURCE` does |
+| `-y` | Accepted, so a copied command works. `airo` asks only for what is missing |
+
+**`airo agent skill search QUERY` finds skills to add.** It asks
+[skills.sh](https://skills.sh), the directory `npx skills find` searches,
+for the skills that match every word, and prints the `SOURCE` that `add`
+takes. It adds nothing, and needs no agent.
+
+```sh
+airo agent skills search frontend design
+```
+
+```text
+NAME                       INSTALLS   SOURCE
+frontend-design            1.2M       anthropics/skills@frontend-design
+design-taste-frontend      813K       leonxlnx/taste-skill@design-taste-frontend
+...
+```
+
+| Flag of `search` | Does |
+| --- | --- |
+| `--owner OWNER` | Keeps the skills of one GitHub owner, such as `anthropics` |
+| `--source SOURCE` | Lists the skills in a repository instead, or under a path of it, by the names in their `SKILL.md` files. With a QUERY, only those whose names have its words |
+| `--limit N` | Shows at most N skills, 25 by default |
+
+```sh
+airo agent skills search --source anthropics/skills
+airo agent skills search security --source https://github.com/openai/skills
+```
+
+A query of a few words that finds few skills is asked again without each
+word, as `npx skills find` does. skills.sh also lists skills that websites
+publish rather than GitHub repositories. `airo` cannot add those yet, so
+it leaves them out and says how many. skills.sh limits how often an address
+may search.
+
+On a terminal that shows hyperlinks, such as iTerm2, each name is a link:
+to the skill's page on skills.sh, or with `--source` to its directory on
+GitHub at the listed commit. Piped output stays plain text.
+
+**The wizards of `add` and `airo agent create` search too.** A bare
+`airo agent skill add` asks for a skill's source, or words to search for:
+words show the matching skills to pick from, each linked to its page on
+skills.sh.
+
+Finding a skill by name works only in a GitHub repository. On another host,
+give the skill's directory. A local directory does not work, because the
+cluster fetches the skill. GitHub limits how often `airo` may list a
+repository's files without signing in. A source with the skill's directory
+needs no listing.
+
+`NAME=SOURCE` or `--rename` names the skill in the agent. Otherwise the name
+is the one in its `SKILL.md`, the path's last directory, or the
+repository's name. The verbs take the aliases of `npx skills` too: `ls`,
+`rm` and `update`.
 
 **The Agent holds only immutable versions**, so `airo` pins a branch or a
 tag to its commit, and an image tag to its digest, before it writes the

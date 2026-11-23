@@ -16,6 +16,7 @@ import (
 	"github.com/airohq/airo-cli/internal/login"
 	"github.com/airohq/airo-cli/internal/session"
 	"github.com/airohq/airo-cli/internal/tunnel"
+	"github.com/airohq/airo-cli/internal/ui"
 )
 
 // version is set at build time for a release (.goreleaser.yaml).
@@ -37,7 +38,7 @@ func newRoot() *cobra.Command {
 		Long: `Work with the Airo platform from your machine.
 
 Use a resource's singular or plural name. Every resource kind in the cluster
-supports list, get, describe and delete.`,
+supports list, get, describe, edit and delete.`,
 		Example: `  airo login                     # See 'airo login -h' for first-time setup
   airo project list              # List the namespaces you can access
   airo agent list                # List agents in the current project
@@ -50,30 +51,26 @@ supports list, get, describe and delete.`,
 	generic.AddResourceHandler(root, flags)
 	root.SetUsageTemplate(usageTemplate)
 	addGroup := func(id, title string, commands ...*cobra.Command) {
-		root.AddGroup(&cobra.Group{ID: id, Title: title})
-		for _, cmd := range commands {
-			cmd.GroupID = id
-		}
-		root.AddCommand(commands...)
+		ui.AddCommandGroup(root, id, title, commands...)
 	}
-	addGroup("resource", "Resource Commands:",
+	addGroup("resource", "Resource Commands",
 		agent.NewCommand(flags),
 		session.NewCommand(flags),
 		login.NewTenantCommand(flags),
 		tunnel.NewCommand(flags),
 	)
-	addGroup("auth", "Authentication Commands:",
+	addGroup("auth", "Authentication Commands",
 		login.NewCommand(flags),
 		login.NewWhoamiCommand(flags),
 	)
-	addGroup("config", "Configuration Commands:",
+	addGroup("config", "Configuration Commands",
 		login.NewContextCommand(flags),
 		login.NewProjectCommand(flags),
 		login.NewStatusCommand(flags),
 	)
-	addGroup("advanced", "Advanced Commands:", generic.NewApplyCommand(flags), generic.NewCreateCommand(flags))
+	addGroup("advanced", "Advanced Commands", generic.NewApplyCommand(flags), generic.NewCreateCommand(flags))
 	root.SetCompletionCommandGroupID("advanced")
-	addGroup("other", "Other Commands:",
+	addGroup("other", "Other Commands",
 		agent.NewChatCommand(flags),
 		newOptionsCommand(),
 		&cobra.Command{
