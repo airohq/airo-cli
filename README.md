@@ -598,13 +598,13 @@ it has no default agent, because the verbs change the agent: without
 `airo agent skill add` asks for the skill's source, then for the agent.
 
 ```sh
-airo agent skill add anthropics/skills@frontend-design -a reviewer
-airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf -a reviewer
-airo agent skill add docs=https://git.example.com/team/skills//docs@v1.2 -a reviewer
-airo agent skill list -a reviewer
-airo agent skill upgrade pdf -a reviewer
-airo agent skill upgrade docs --version v1.3 -a reviewer
-airo agent skill remove pdf -a reviewer
+airo agent skill add anthropics/skills@frontend-design -a designer
+airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf -a writer
+airo agent skill add docs=https://git.example.com/team/skills//docs@v1.2 -a writer
+airo agent skill list -a writer
+airo agent skill upgrade pdf -a writer
+airo agent skill upgrade docs --version v1.3 -a writer
+airo agent skill remove pdf -a writer
 ```
 
 ```text

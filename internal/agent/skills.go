@@ -733,14 +733,14 @@ version it was added with, or at --version.
 Every verb acts on the Agent named with --agent (-a). Unlike airo chat, it
 has no default agent, because the verbs change the Agent: without --agent,
 airo asks on a terminal and fails elsewhere.`,
-		Example: `  airo agent skill add anthropics/skills@frontend-design --agent reviewer
-  airo agent skill add https://github.com/anthropics/skills --skill pdf --skill docx -a reviewer
-  airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf -a reviewer
-  airo agent skill add docs=https://git.example.com/team/skills//docs@v1.2 -a reviewer
-  airo agent skill list -a reviewer
-  airo agent skill upgrade pdf -a reviewer
-  airo agent skill upgrade docs --version v1.3 -a reviewer
-  airo agent skill remove pdf -a reviewer`,
+		Example: `  airo agent skill add anthropics/skills@frontend-design --agent designer
+  airo agent skill add https://github.com/anthropics/skills --skill pdf --skill docx -a writer
+  airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf -a writer
+  airo agent skill add docs=https://git.example.com/team/skills//docs@v1.2 -a writer
+  airo agent skill list -a writer
+  airo agent skill upgrade pdf -a writer
+  airo agent skill upgrade docs --version v1.3 -a writer
+  airo agent skill remove pdf -a writer`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
@@ -793,9 +793,9 @@ does not work, because the cluster fetches the skill.
 
 Without SOURCE, airo asks for the source on a terminal, and then for the
 agent unless --agent names it.`,
-		Example: `  airo agent skills add anthropics/skills@frontend-design -a reviewer
+		Example: `  airo agent skills add anthropics/skills@frontend-design -a designer
   airo agent skills add https://github.com/openai/skills --skill security-best-practices -a reviewer
-  airo agent skills add anthropics/skills --skill pdf --skill docx -a reviewer
+  airo agent skills add anthropics/skills --skill pdf --skill docx -a writer
   airo agent skills add anthropics/skills --list`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
