@@ -140,7 +140,9 @@ tenant's name, and how many projects you may have.`,
 	deleteCmd.Long = `Delete removes a project and everything in it. When your commands work in
 it, airo switches them to the project you were in before, or else to your
 default project, as airo login chooses it.`
-	cmd.AddCommand(deleteCmd)
+	editCmd := generic.NewEditCommand(flags, projectResource.Resource)
+	editCmd.Example = "  airo project edit acme-web"
+	cmd.AddCommand(deleteCmd, editCmd)
 	return cmd
 }
 

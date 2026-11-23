@@ -287,7 +287,7 @@ A value of `"true"` shows as enabled. Any other value shows as disabled.
 
 ## Resources
 
-**Every kind of resource in the cluster is a noun with `list`, `get`, `describe` and
+**Every kind of resource in the cluster is a noun with `list`, `get`, `describe`, `edit` and
 `delete`**, including custom resources added after this CLI was built.
 `airo RESOURCE list` and `airo RESOURCE get` both run the equivalent of
 `kubectl get RESOURCE`. Add a name to `get` to show one object. Both verbs
@@ -304,6 +304,14 @@ waits for deletion by default. Use `--wait=false` to return when the API
 accepts the request, or `--dry-run=server` to have the API check it without
 deleting the object. A project dry run also preserves the selected project.
 
+`airo RESOURCE edit NAME` runs `kubectl edit` on one named object: it opens
+the object as YAML in the editor that `KUBE_EDITOR` or `EDITOR` names, or
+`vi`, and saves the changes when the editor closes. Closing it without
+changes changes nothing. When the cluster refuses a change, the editor
+opens again with the reason at the top; when the object changed meanwhile,
+your version stays in a temporary file. `-o json` edits JSON instead, and
+`--output-patch` prints the patch that was sent.
+
 ```sh
 airo agent list                    # in your project
 airo agent list -A                 # in every namespace you may read
@@ -311,6 +319,8 @@ airo agent get my-agent            # one row
 airo agent get my-agent -o yaml    # the whole resource, or -o json
 airo agent describe my-agent       # details and related events
 airo pods get -o wide              # include the API's additional columns
+airo agent edit my-agent           # change it in your editor
+EDITOR=nano airo tunnel edit web   # with another editor
 airo agent delete my-agent
 airo create -f agent.yaml          # create once, including custom resource kinds
 airo apply -f agent.yaml           # create or update from a file, a directory, a URL or -

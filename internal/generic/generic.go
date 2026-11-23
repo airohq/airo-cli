@@ -1,4 +1,4 @@
-// Package generic implements the verbs every kind has: list, get, describe and delete,
+// Package generic implements the verbs every kind has: list, get, describe, edit and delete,
 // for any kind the cluster serves, and apply for files. It asks the cluster
 // what a kind is and how to show it, so a new kind needs no new airo.
 package generic
@@ -17,13 +17,14 @@ import (
 )
 
 // Verbs is the help line for a kind without a command of its own.
-const Verbs = "list, get [NAME], describe NAME or delete NAME"
+const Verbs = "list, get [NAME], describe NAME, edit NAME or delete NAME"
 
 // AddResourceHandler handles kinds that do not have a dedicated Airo command.
 func AddResourceHandler(cmd *cobra.Command, flags *genericclioptions.ConfigFlags) {
 	o := addReadFlags(cmd)
 	runDescribe := describeRunner(cmd, flags)
 	runDelete := deleteRunner(cmd, flags, nil)
+	runEdit := editRunner(cmd, flags)
 	cmd.Args = cobra.ArbitraryArgs
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
@@ -48,6 +49,10 @@ func AddResourceHandler(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 		case "describe":
 			if len(args) == 3 {
 				return runDescribe(kind, args[2])
+			}
+		case "edit":
+			if len(args) == 3 {
+				return runEdit(kind, args[2])
 			}
 		case "delete":
 			if len(args) == 3 {
@@ -130,7 +135,7 @@ func ReadCommands(flags *genericclioptions.ConfigFlags, resource string) []*cobr
 
 // Commands returns the resource verbs for a built-in noun.
 func Commands(flags *genericclioptions.ConfigFlags, resource string) []*cobra.Command {
-	return append(ReadCommands(flags, resource), NewDeleteCommand(flags, resource, nil))
+	return append(ReadCommands(flags, resource), NewEditCommand(flags, resource), NewDeleteCommand(flags, resource, nil))
 }
 
 // mapping asks the cluster which kind the word means. It takes what kubectl
