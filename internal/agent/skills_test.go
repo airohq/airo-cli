@@ -5,8 +5,8 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"slices"
 	"path"
+	"slices"
 	"strings"
 	"testing"
 
@@ -336,5 +336,20 @@ func TestAddPutsSeveralSkillsInOneChange(t *testing.T) {
 	}
 	if entries := skillsOf(); len(entries) != 2 {
 		t.Errorf("a refused add left skills %v", entries)
+	}
+}
+
+func TestSearchListsTheSkillsOfASource(t *testing.T) {
+	fakeRepo(t)
+	var out, errOut bytes.Buffer
+	if err := searchSource(context.Background(), &out, &errOut, "org/repo"); err != nil {
+		t.Fatal(err)
+	}
+	want := "NAME              PATH\ndocx              skills/docx\nfrontend-design   skills/frontend\npdf               skills/pdf\n"
+	if out.String() != want || !strings.Contains(errOut.String(), "Skills in https://github.com/org/repo at "+commit1) {
+		t.Errorf("search printed %q and %q, want %q", &out, &errOut, want)
+	}
+	if err := searchSource(context.Background(), &out, &errOut, "./skills"); err == nil || !strings.Contains(err.Error(), "local directory") {
+		t.Errorf("search = %v, want an error for a local directory", err)
 	}
 }

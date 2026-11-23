@@ -464,8 +464,8 @@ func addPinned(ctx context.Context, out io.Writer, c client.Client, ns, agent st
 	return finish(ctx, out, c, a, timeout)
 }
 
-// listSource prints the skills a source holds, as npx skills add --list.
-func listSource(ctx context.Context, out, errOut io.Writer, arg string) error {
+// searchSource prints the skills a source holds.
+func searchSource(ctx context.Context, out, errOut io.Writer, arg string) error {
 	s, err := skill.Parse(arg)
 	if err != nil {
 		return err
@@ -705,7 +705,8 @@ func newSkillCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		Use:     "skill",
 		Aliases: []string{"skills"},
 		Short:   "Manage the skills of an agent",
-		Long: `Skill lists, adds, upgrades and removes the skills of an Agent.
+		Long: `Skill lists, adds, upgrades and removes the skills of an Agent, and
+search lists the skills a source holds.
 
 A skill's source is a Git repository or an OCI image:
 
@@ -730,9 +731,9 @@ The Agent holds only immutable versions: airo pins a branch or a tag to its
 commit, and an image tag to its digest. Upgrade pins the skill again, at the
 version it was added with, or at --version.
 
-Every verb acts on the Agent named with --agent (-a). Unlike airo chat, it
-has no default agent, because the verbs change the Agent: without --agent,
-airo asks on a terminal and fails elsewhere.`,
+Every verb but search acts on the Agent named with --agent (-a). Unlike
+airo chat, it has no default agent, because the verbs change the Agent:
+without --agent, airo asks on a terminal and fails elsewhere.`,
 		Example: `  airo agent skill add anthropics/skills@frontend-design --agent designer
   airo agent skill add https://github.com/anthropics/skills --skill pdf --skill docx -a writer
   airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf -a writer
@@ -772,7 +773,6 @@ airo asks on a terminal and fails elsewhere.`,
 		},
 	}
 	var o addOptions
-	var listOnly bool
 	add := &cobra.Command{
 		Use:     "add SOURCE --agent NAME",
 		Aliases: []string{"a"},
@@ -795,18 +795,9 @@ Without SOURCE, airo asks for the source on a terminal, and then for the
 agent unless --agent names it.`,
 		Example: `  airo agent skills add anthropics/skills@frontend-design -a designer
   airo agent skills add https://github.com/openai/skills --skill security-best-practices -a reviewer
-  airo agent skills add anthropics/skills --skill pdf --skill docx -a writer
-  airo agent skills add anthropics/skills --list`,
+  airo agent skills add anthropics/skills --skill pdf --skill docx -a writer`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if listOnly {
-				if len(args) == 0 {
-					return errors.New("give the SOURCE to list the skills of")
-				}
-				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-				defer stop()
-				return listSource(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0])
-			}
 			if len(args) == 0 {
 				return addWizard(cmd, flags, agent, o)
 			}
@@ -842,7 +833,6 @@ agent unless --agent names it.`,
 	add.Flags().StringArrayVar(&o.skills, "skill", nil, "the name of a skill in the source to add, or '*' for all; repeat for more")
 	add.Flags().BoolVar(&o.all, "all", false, "add every skill of the source")
 	add.Flags().StringVar(&o.rename, "rename", "", "the name of the skill in the agent")
-	add.Flags().BoolVarP(&listOnly, "list", "l", false, "list the skills of the source, and add none")
 	// npx skills add -y skips its questions. airo asks only for what is
 	// missing, so a command copied with -y works as it is.
 	add.Flags().BoolP("yes", "y", false, "")
@@ -880,6 +870,23 @@ commit, image tag or digest, and later upgrades follow it.`,
 	for _, verb := range []*cobra.Command{list, add, upgrade, remove} {
 		verb.Flags().StringVarP(&agent, "agent", "a", "", "name of the Agent to change; asked on a terminal when not given")
 	}
-	cmd.AddCommand(list, add, upgrade, remove)
+	// search changes no agent, so it has no --agent.
+	search := &cobra.Command{
+		Use:   "search SOURCE",
+		Short: "List the skills a source holds, to add with airo agent skill add",
+		Long: `Search lists the skills in a GitHub repository, or under a path of it, by
+the names in their SKILL.md files. It takes the sources of add, and adds
+nothing. Add one with airo agent skill add SOURCE --skill NAME.`,
+		Example: `  airo agent skills search anthropics/skills
+  airo agent skills search https://github.com/openai/skills
+  airo agent skills search anthropics/skills#main`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return searchSource(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0])
+		},
+	}
+	cmd.AddCommand(list, search, add, upgrade, remove)
 	return cmd
 }

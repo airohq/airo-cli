@@ -592,7 +592,7 @@ agent, or change it with `airo apply -f`. Tools, an AgentTemplate
 ### Skills
 
 **`airo agent skill` lists, adds, upgrades and removes an agent's skills.**
-Each verb acts on the agent named with `--agent` (`-a`). Unlike `airo chat`,
+Each verb but `search` acts on the agent named with `--agent` (`-a`). Unlike `airo chat`,
 it has no default agent, because the verbs change the agent: without
 `--agent`, `airo` asks on a terminal and fails elsewhere. A bare
 `airo agent skill add` asks for the skill's source, then for the agent.
@@ -642,9 +642,22 @@ listing them.
 | --- | --- |
 | `--skill NAME` | Adds the skill of that name. Repeat for more, or give `'*'` for all. No `-s`, which is kubectl's `--server` |
 | `--all` | Adds every skill of the source |
-| `--list`, `-l` | Lists the skills of the source, and adds none |
 | `--rename NAME` | Names the one skill added, as `NAME=SOURCE` does |
 | `-y` | Accepted, so a copied command works. `airo` asks only for what is missing |
+
+**`airo agent skill search SOURCE` lists the skills a source holds**, by the
+names in their `SKILL.md` files, and adds none. It needs no agent.
+
+```sh
+airo agent skills search https://github.com/openai/skills
+```
+
+```text
+NAME                      PATH
+aspnet-core               skills/.curated/aspnet-core
+security-best-practices   skills/.curated/security-best-practices
+...
+```
 
 Finding a skill by name works only in a GitHub repository. On another host,
 give the skill's directory. A local directory does not work, because the
