@@ -627,8 +627,8 @@ A source is a Git repository or an OCI image, the same for `--skill` of
 one: replace `npx` with `airo agent`.
 
 ```sh
-npx skills add https://github.com/TheBushidoCollective/han --skill kubernetes-resources
-airo agent skills add https://github.com/TheBushidoCollective/han --skill kubernetes-resources -a reviewer
+npx skills add https://github.com/openai/skills --skill security-best-practices
+airo agent skills add https://github.com/openai/skills --skill security-best-practices -a reviewer
 ```
 
 In a GitHub repository, `airo` finds a skill by the `name` in its

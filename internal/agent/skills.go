@@ -794,7 +794,7 @@ does not work, because the cluster fetches the skill.
 Without SOURCE, airo asks for the source on a terminal, and then for the
 agent unless --agent names it.`,
 		Example: `  airo agent skills add anthropics/skills@frontend-design -a reviewer
-  airo agent skills add https://github.com/TheBushidoCollective/han --skill kubernetes-resources -a reviewer
+  airo agent skills add https://github.com/openai/skills --skill security-best-practices -a reviewer
   airo agent skills add anthropics/skills --skill pdf --skill docx -a reviewer
   airo agent skills add anthropics/skills --list`,
 		Args: cobra.MaximumNArgs(1),
