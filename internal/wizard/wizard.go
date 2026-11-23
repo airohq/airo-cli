@@ -127,8 +127,42 @@ func (w *Wizard) Confirm(label string, def bool) (bool, error) {
 	}
 }
 
+// Edit asks with the current value filled in, to keep with Enter or to
+// change. On a plain terminal the value shows in brackets, and an empty
+// answer keeps it.
+func (w *Wizard) Edit(label, current string) (string, error) {
+	if !ui.Styled(w.out) {
+		w.begin()
+		fmt.Fprintf(w.out, "? %s [%s] › ", label, ui.Text(current))
+		line, err := w.lines.ReadString('\n')
+		if errors.Is(err, io.EOF) {
+			return "", errCanceled
+		}
+		if line = strings.TrimSpace(line); line != "" || err != nil {
+			return line, err
+		}
+		return current, nil
+	}
+	return w.askWith(label, current)
+}
+
 func (w *Wizard) Pick(label string, names []string) (string, error) {
 	return w.PickLinked(label, names, nil)
+}
+
+// PickCurrent is Pick with names[current] marked as the current choice,
+// which Enter keeps.
+func (w *Wizard) PickCurrent(label string, names []string, current int) (string, error) {
+	w.begin()
+	input := w.in
+	if !ui.Styled(w.out) {
+		input = w.lines
+	}
+	name, err := picker.One(w.ctx, input, w.out, label, names, current)
+	if err == nil && name == "" {
+		return "", errCanceled
+	}
+	return name, err
 }
 
 // PickLinked is Pick with a web page for each name, which a click on the
@@ -156,8 +190,16 @@ func (w *Wizard) ask(label string) (string, error) {
 		}
 		return strings.TrimSpace(line), err
 	}
+	return w.askWith(label, "")
+}
+
+// askWith asks on a styled terminal, with value filled in.
+func (w *Wizard) askWith(label, value string) (string, error) {
+	w.begin()
 	m := &question{input: textinput.New(), label: label, palette: w.palette}
 	m.input.Prompt = ""
+	m.input.SetValue(value)
+	m.input.CursorEnd()
 	_, err := tea.NewProgram(m, tea.WithContext(w.ctx), tea.WithInput(w.in), tea.WithOutput(w.out),
 		tea.WithColorProfile(w.palette.Profile)).Run()
 	w.palette = m.palette

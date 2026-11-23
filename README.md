@@ -596,9 +596,41 @@ EOF
 
 **An agent the cluster turns down stays in the project.** The command stops
 with the cluster's reason, such as a model its Harness cannot use. Delete the
-agent, or change it with `airo apply -f`. Tools, an AgentTemplate
+agent, or change it with `airo agent update`. Tools, an AgentTemplate
 (`spec.template.ref`) and the other fields of an Agent go in a file for
-`airo apply -f` too.
+`airo apply -f`, or change them with `airo agent edit NAME`.
+
+**`airo agent update` changes an agent's settings and waits until it is
+ready again.** Flags change only the settings they name. Without flags, on
+a terminal, it asks for each setting with the current value filled in, and
+Enter keeps it. Without `NAME` it asks for the agent first.
+
+```sh
+airo agent update reviewer                     # asks, with the current values
+airo agent update reviewer --model opus-5.5
+airo agent update reviewer --prompt-file prompt.md --description "Reviews pull requests"
+```
+
+```text
+Updated agent my-project/reviewer
+  description:  Reviews pull requests
+  model:        opus-5.5
+  ready
+```
+
+| Flag | Changes |
+| --- | --- |
+| `--prompt`, `--prompt-file` | The system prompt. `--prompt-file -` reads standard input |
+| `--description` | The description. `--description ""` removes it |
+| `--harness` | The Harness |
+| `--model` | The ModelConfig. `--model ""` removes it, which only a `byo` harness can do without |
+
+The wizard offers the project's harnesses and models with the current one
+marked `(current)`. Instructions of several lines open in your editor
+(`KUBE_EDITOR` or `EDITOR`, as `airo agent edit` uses) when you choose to
+change them. A local agent's harness is its relay, so `update` leaves it.
+Skills change with [`airo agent skill`](#skills). Setting values the agent
+already has changes nothing, and says so.
 
 ### Skills
 

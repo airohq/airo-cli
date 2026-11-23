@@ -55,7 +55,7 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		Use:     "agent",
 		Aliases: []string{"agents"},
 		Short:   "Manage agents in the current project",
-		Long:    "Create, list, inspect, or delete agents in the current project. Use airo chat to start a conversation.",
+		Long:    "Create, list, inspect, update, edit or delete agents in the current project. Use airo chat to start a conversation.",
 		Example: `  airo agent list
   airo agent get assistant
   airo agent create reviewer --prompt "You review pull requests."`,
@@ -66,7 +66,7 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			return fmt.Errorf("unknown agent verb %q: see airo agent --help for verbs, or use airo chat to send a prompt", args[0])
 		},
 	}
-	cmd.AddCommand(newCreateCommand(flags), newServeCommand(flags), newConnectCommand(flags), newSkillCommand(flags))
+	cmd.AddCommand(newCreateCommand(flags), newUpdateCommand(flags), newServeCommand(flags), newConnectCommand(flags), newSkillCommand(flags))
 	cmd.AddCommand(generic.Commands(flags, cmd.Name())...)
 	return cmd
 }
@@ -264,7 +264,7 @@ func create(ctx context.Context, out io.Writer, c client.Client, ns, name string
 	for _, p := range skills {
 		fmt.Fprintf(out, "  skill:    %s  %s\n", p.Name, p)
 	}
-	stays := fmt.Sprintf("It stays in the project: delete it with airo agent delete %s, or change it with airo apply -f", a.GetName())
+	stays := fmt.Sprintf("It stays in the project: delete it with airo agent delete %s, or change it with airo agent update %[1]s", a.GetName())
 	if err := waitReady(ctx, c, a, timeout, stays); err != nil {
 		return err
 	}
