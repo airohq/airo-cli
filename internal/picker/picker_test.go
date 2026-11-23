@@ -13,6 +13,19 @@ import (
 	"github.com/airohq/airo-cli/internal/ui"
 )
 
+func TestViewLinksNamesToTheirPages(t *testing.T) {
+	m := &menu{label: "Choose a skill", names: []string{"a/b@pdf", "c/d@docs"}, pages: []string{"https://skills.sh/a/b/pdf", ""},
+		current: -1, visible: 2, filter: textinput.New()}
+	m.resetMatches()
+	view := m.View().Content
+	if !strings.Contains(view, ui.Linked("https://skills.sh/a/b/pdf", "a/b@pdf")) {
+		t.Errorf("view %q does not link a/b@pdf", view)
+	}
+	if strings.Count(view, "\x1b]8;;") != 2 {
+		t.Errorf("view %q links more than a/b@pdf", view)
+	}
+}
+
 func TestInlineChoice(t *testing.T) {
 	m := &menu{label: "Choose a model", names: []string{"alpha", "beta", "gamma"}, current: 1, visible: 2, filter: textinput.New()}
 	m.resetMatches()

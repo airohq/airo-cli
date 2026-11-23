@@ -488,10 +488,12 @@ func pickResult(ctx context.Context, w *wizard.Wizard, query string) (string, er
 		return "", err
 	}
 	labels := make([]string, len(results))
+	pages := make([]string, len(results))
 	for i, r := range results {
 		labels[i] = fmt.Sprintf("%s  (%s installs)", r.Source(), installs(r.Installs))
+		pages[i] = r.Page
 	}
-	label, err := w.Pick("Skill", labels)
+	label, err := w.PickLinked("Skill", labels, pages)
 	if err != nil {
 		return "", err
 	}
@@ -530,12 +532,11 @@ func searchRegistry(ctx context.Context, out, errOut io.Writer, query string, o 
 	if err != nil {
 		return err
 	}
-	tw := tabwriter.NewWriter(out, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tINSTALLS\tSOURCE")
+	rows := [][]string{{"NAME", "INSTALLS", "SOURCE"}}
 	for _, r := range results {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", r.Name, installs(r.Installs), r.Source())
+		rows = append(rows, []string{ui.Link(out, r.Page, r.Name), installs(r.Installs), r.Source()})
 	}
-	if err := tw.Flush(); err != nil {
+	if err := ui.Table(out, rows); err != nil {
 		return err
 	}
 	if others > 0 {
@@ -582,12 +583,11 @@ func searchSource(ctx context.Context, out, errOut io.Writer, arg, query string)
 		return fmt.Errorf("%s has no skill named like %q", at.Location(), query)
 	}
 	fmt.Fprintf(errOut, "Skills in %s at %s\n", at.Location(), at.Commit)
-	tw := tabwriter.NewWriter(out, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tPATH")
+	rows := [][]string{{"NAME", "PATH"}}
 	for _, f := range matching {
-		fmt.Fprintf(tw, "%s\t%s\n", f.Name, cmp.Or(f.Path, "."))
+		rows = append(rows, []string{ui.Link(out, at.Page(f.Path), f.Name), cmp.Or(f.Path, ".")})
 	}
-	return tw.Flush()
+	return ui.Table(out, rows)
 }
 
 // hasWords says whether the name has every word of the query, without case.

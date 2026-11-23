@@ -115,12 +115,18 @@ func (w *Wizard) Confirm(label string, def bool) (bool, error) {
 }
 
 func (w *Wizard) Pick(label string, names []string) (string, error) {
+	return w.PickLinked(label, names, nil)
+}
+
+// PickLinked is Pick with a web page for each name, which a click on the
+// name opens in a terminal that knows hyperlinks.
+func (w *Wizard) PickLinked(label string, names, pages []string) (string, error) {
 	w.begin()
 	input := w.in
 	if !ui.Styled(w.out) {
 		input = w.lines
 	}
-	name, err := picker.One(w.ctx, input, w.out, label, names, -1)
+	name, err := picker.Linked(w.ctx, input, w.out, label, names, pages, -1)
 	if err == nil && name == "" {
 		return "", errCanceled
 	}

@@ -65,6 +65,22 @@ func githubRepo(git string) (owner, repo string, ok bool) {
 	return owner, repo, found && owner != "" && repo != "" && !strings.Contains(repo, "/")
 }
 
+// Page is GitHub's page of a directory of the repository at the pinned
+// commit, or empty outside GitHub.
+func (p Pinned) Page(dir string) string {
+	owner, repo, ok := githubRepo(p.Git)
+	if !ok || p.Commit == "" {
+		return ""
+	}
+	page := "https://github.com/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/tree/" + p.Commit
+	for part := range strings.SplitSeq(dir, "/") {
+		if part != "" {
+			page += "/" + url.PathEscape(part)
+		}
+	}
+	return page
+}
+
 // locate finds the directory of the skill a pinned Git source means: the
 // one named by Find, or the only one under its path. A path that holds a
 // SKILL.md is the skill itself. Outside GitHub the path is taken as given.

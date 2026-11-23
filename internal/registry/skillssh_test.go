@@ -69,6 +69,9 @@ func TestSkillsSHSearch(t *testing.T) {
 	if !got[0].OnGitHub() || got[1].OnGitHub() {
 		t.Errorf("OnGitHub = %v, %v, want a repository and a website", got[0].OnGitHub(), got[1].OnGitHub())
 	}
+	if got[0].Page != "https://skills.sh/anthropics/skills/pdf" || got[1].Page != "" {
+		t.Errorf("pages = %q, %q, want one for the repository's skill", got[0].Page, got[1].Page)
+	}
 	if got[1].Name != "Paddle ]0;billing" {
 		t.Errorf("name = %q, want it without control characters", got[1].Name)
 	}

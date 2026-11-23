@@ -156,9 +156,19 @@ func (s SkillsSH) search(ctx context.Context, query string, o Options) ([]Result
 		if r.Repository == "" || r.Skill == "" {
 			continue
 		}
+		if r.OnGitHub() {
+			r.Page = page(r.Repository, r.Skill)
+		}
 		results = append(results, r)
 	}
 	return results, nil
+}
+
+// page is the skills.sh page of a skill in a GitHub repository, such as
+// https://skills.sh/anthropics/skills/frontend-design.
+func page(repository, skill string) string {
+	owner, repo, _ := strings.Cut(repository, "/")
+	return skillsSHURL + "/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/" + url.PathEscape(skill)
 }
 
 // clean removes what could steer a terminal, since the text comes from

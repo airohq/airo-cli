@@ -36,6 +36,8 @@ type Result struct {
 	// Installs is how many times the skill was installed, as the registry
 	// counts, or -1 when it does not count.
 	Installs int64
+	// Page is the registry's web page about the skill, or empty.
+	Page string
 }
 
 // OnGitHub says whether the skill lives in a GitHub repository, which airo

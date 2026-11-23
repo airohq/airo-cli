@@ -678,9 +678,13 @@ publish rather than GitHub repositories. `airo` cannot add those yet, so
 it leaves them out and says how many. skills.sh limits how often an address
 may search.
 
+On a terminal that shows hyperlinks, such as iTerm2, each name is a link:
+to the skill's page on skills.sh, or with `--source` to its directory on
+GitHub at the listed commit. Piped output stays plain text.
+
 **The wizard of `add` searches too.** A bare `airo agent skill add` asks
 for a skill's source, or words to search for: words show the matching
-skills to pick from.
+skills to pick from, each linked to its page on skills.sh.
 
 Finding a skill by name works only in a GitHub repository. On another host,
 give the skill's directory. A local directory does not work, because the

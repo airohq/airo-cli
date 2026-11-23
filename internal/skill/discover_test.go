@@ -114,6 +114,25 @@ func TestPinFindsASkillInAGitHubRepository(t *testing.T) {
 	}
 }
 
+func TestPinnedPage(t *testing.T) {
+	gh := Pinned{Skill: Skill{Git: "https://github.com/org/skills.git"}, Commit: mainCommit}
+	for _, tc := range []struct {
+		p    Pinned
+		dir  string
+		want string
+	}{
+		{gh, "skills/pdf", "https://github.com/org/skills/tree/" + mainCommit + "/skills/pdf"},
+		{gh, "", "https://github.com/org/skills/tree/" + mainCommit},
+		{gh, "a b/c#d", "https://github.com/org/skills/tree/" + mainCommit + "/a%20b/c%23d"},
+		{Pinned{Skill: Skill{Git: srvlessRepo}, Commit: mainCommit}, "pdf", ""},
+		{Pinned{Skill: Skill{OCI: "ghcr.io/org/skills"}, Digest: "sha256:1"}, "pdf", ""},
+	} {
+		if got := tc.p.Page(tc.dir); got != tc.want {
+			t.Errorf("Page(%q) of %s = %q, want %q", tc.dir, tc.p.Location(), got, tc.want)
+		}
+	}
+}
+
 // srvlessRepo is a repository outside GitHub that no test serves: finding a
 // skill there fails before anything is asked.
 const srvlessRepo = "https://git.example.com/org/skills"
