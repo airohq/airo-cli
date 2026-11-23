@@ -43,7 +43,7 @@ func kindCommand(flags *genericclioptions.ConfigFlags, word string) (*cobra.Comm
 		cmd.Aliases = append(cmd.Aliases, plural)
 	}
 	cmd.Long = ui.Wrap(cmd.Long, 76)
-	cmd.AddCommand(Commands(flags, word)...)
+	AddBasic(cmd, Commands(flags, word)...)
 	return cmd, nil
 }
 

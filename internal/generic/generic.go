@@ -14,6 +14,8 @@ import (
 	"k8s.io/kubectl/pkg/cmd/describe"
 	"k8s.io/kubectl/pkg/cmd/get"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
+
+	"github.com/airohq/airo-cli/internal/ui"
 )
 
 // Verbs is the help line for a kind without a command of its own.
@@ -151,6 +153,12 @@ func ReadCommands(flags *genericclioptions.ConfigFlags, resource string) []*cobr
 // Commands returns the resource verbs for a built-in noun.
 func Commands(flags *genericclioptions.ConfigFlags, resource string) []*cobra.Command {
 	return append(ReadCommands(flags, resource), NewEditCommand(flags, resource), NewDeleteCommand(flags, resource, nil))
+}
+
+// AddBasic adds the verbs every kind has to a noun under Basic Commands, as
+// kubectl heads its own. A noun's own commands go in groups below them.
+func AddBasic(noun *cobra.Command, verbs ...*cobra.Command) {
+	ui.AddCommandGroup(noun, "basic", "Basic Commands", verbs...)
 }
 
 // mapping asks the cluster which kind the word means. It takes what kubectl

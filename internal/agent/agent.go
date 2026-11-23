@@ -25,6 +25,7 @@ import (
 
 	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/skill"
+	"github.com/airohq/airo-cli/internal/ui"
 	"github.com/airohq/airo-cli/internal/wizard"
 )
 
@@ -66,8 +67,9 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			return fmt.Errorf("unknown agent verb %q: see airo agent --help for verbs, or use airo chat to send a prompt", args[0])
 		},
 	}
-	cmd.AddCommand(newCreateCommand(flags), newUpdateCommand(flags), newServeCommand(flags), newConnectCommand(flags), newSkillCommand(flags))
-	cmd.AddCommand(generic.Commands(flags, cmd.Name())...)
+	generic.AddBasic(cmd, generic.Commands(flags, cmd.Name())...)
+	ui.AddCommandGroup(cmd, "agent", "Agent Commands", newCreateCommand(flags), newUpdateCommand(flags), newSkillCommand(flags))
+	ui.AddCommandGroup(cmd, "machine", "Run on This Machine", newServeCommand(flags), newConnectCommand(flags))
 	return cmd
 }
 

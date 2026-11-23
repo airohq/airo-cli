@@ -68,6 +68,18 @@ ctx` for `airo context`. Add it as an alias when you add the noun.
 - **The README and the help use the long form**, and name the short one
   once.
 
+**A noun's help groups its verbs as kubectl's help does.** The verbs every
+kind has, `list`, `get`, `describe`, `edit` and `delete`, come first under
+Basic Commands, also when the noun replaces one of them with its own, as
+`airo project delete` does. The noun's own verbs follow in groups named
+for what they are about, such as Agent Commands for `create`, `update` and
+`skill`, and Run on This Machine for `serve` and `connect`. A group of one
+verb is fine. A kind without a command of its own, such as `airo configmap
+-h`, shows the same Basic Commands. A noun that is not a kind, such as
+`airo session`, or an inner noun, such as `airo agent skill`, has no Basic
+Commands and lists its verbs as one group. Add groups with
+`ui.AddCommandGroup`, and the basic verbs with `generic.AddBasic`.
+
 **`get` shows a resource's details, and `view` shows content.** `airo agent
 get` prints the Agent as the cluster holds it. `airo session view` prints the
 conversation.

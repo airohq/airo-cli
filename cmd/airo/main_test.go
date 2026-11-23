@@ -52,6 +52,35 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 			[]string{"Basic Flags:", "Container Sandbox Flags:", "Codex Harness Args:", "--sandbox read-only"},
 			[]string{"Claude Harness Args:", "--permission-mode plan"},
 		},
+		// The verbs every kind has come first, then the noun's own groups.
+		{
+			[]string{"agent", "-h"},
+			[]string{"Basic Commands:", "  delete ", "  describe ", "  edit ", "  get ", "  list ",
+				"Agent Commands:", "  create ", "  skill ", "  update ",
+				"Run on This Machine:", "  connect ", "  serve "},
+			[]string{"Available Commands:"},
+		},
+		{
+			[]string{"tunnel", "-h"},
+			[]string{"Basic Commands:", "  delete ", "  list ", "Tunnel Commands:", "  create "},
+			[]string{"Available Commands:"},
+		},
+		{
+			[]string{"project", "-h"},
+			[]string{"Basic Commands:", "  delete ", "Delete a project", "  edit ", "  list ", "Project Commands:", "  create "},
+			[]string{"Available Commands:"},
+		},
+		{
+			[]string{"tenant", "-h"},
+			[]string{"Basic Commands:", "  delete ", "  list "},
+			[]string{"Available Commands:"},
+		},
+		// A noun that is not a kind has no basic verbs.
+		{
+			[]string{"session", "-h"},
+			[]string{"Available Commands:", "  cancel ", "  list ", "  view "},
+			[]string{"Basic Commands:"},
+		},
 		{
 			[]string{"options"},
 			[]string{"--context", "--kubeconfig", "--namespace"},
@@ -81,6 +110,21 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The help shows only the commands of a group once a noun has groups, so
+// a verb added without one would be missing from it.
+func TestGroupedNounsGroupEveryVerb(t *testing.T) {
+	var walk func(*cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		for _, child := range cmd.Commands() {
+			if len(cmd.Groups()) > 0 && child.IsAvailableCommand() && child.GroupID == "" {
+				t.Errorf("%s has groups, but %s is in none: the help would leave it out", cmd.CommandPath(), child.Name())
+			}
+			walk(child)
+		}
+	}
+	walk(newRoot())
 }
 
 func TestLocalAgentFlagErrors(t *testing.T) {

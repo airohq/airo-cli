@@ -40,7 +40,7 @@ func NewTenantCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			verb.Short = "List tenants you can see"
 		}
 	}
-	cmd.AddCommand(verbs...)
+	generic.AddBasic(cmd, verbs...)
 	return cmd
 }
 
