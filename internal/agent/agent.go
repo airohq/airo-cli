@@ -69,7 +69,7 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	}
 	generic.AddBasic(cmd, generic.Commands(flags, cmd.Name())...)
 	ui.AddCommandGroup(cmd, "agent", "Agent Commands", newCreateCommand(flags), newUpdateCommand(flags), newSkillCommand(flags))
-	ui.AddCommandGroup(cmd, "machine", "Run on This Machine", newServeCommand(flags), newConnectCommand(flags))
+	ui.AddCommandGroup(cmd, "local", "Local Run Commands", newServeCommand(flags), newConnectCommand(flags))
 	return cmd
 }
 

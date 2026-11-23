@@ -73,7 +73,7 @@ kind has, `list`, `get`, `describe`, `edit` and `delete`, come first under
 Basic Commands, also when the noun replaces one of them with its own, as
 `airo project delete` does. The noun's own verbs follow in groups named
 for what they are about, such as Agent Commands for `create`, `update` and
-`skill`, and Run on This Machine for `serve` and `connect`. A group of one
+`skill`, and Local Run Commands for `serve` and `connect`. A group of one
 verb is fine. A kind without a command of its own, such as `airo configmap
 -h`, shows the same Basic Commands. A noun that is not a kind, such as
 `airo session`, or an inner noun, such as `airo agent skill`, has no Basic

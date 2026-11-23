@@ -57,7 +57,7 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 			[]string{"agent", "-h"},
 			[]string{"Basic Commands:", "  delete ", "  describe ", "  edit ", "  get ", "  list ",
 				"Agent Commands:", "  create ", "  skill ", "  update ",
-				"Run on This Machine:", "  connect ", "  serve "},
+				"Local Run Commands:", "  connect ", "  serve "},
 			[]string{"Available Commands:"},
 		},
 		{
