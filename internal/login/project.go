@@ -38,7 +38,7 @@ type projectLister func(context.Context) (*unstructured.UnstructuredList, error)
 type projectWriter func(ctx context.Context, name string) error
 
 // NewProjectCommand returns the project command.
-func NewProjectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
+func NewProjectCommand(flags *genericclioptions.ConfigFlags, selection *Selection) *cobra.Command {
 	access := func() clientcmd.ConfigAccess { return flags.ToRawKubeConfigLoader().ConfigAccess() }
 	namespaces := func() (dynamic.ResourceInterface, string, error) {
 		cfg, err := flags.ToRESTConfig()
@@ -56,7 +56,7 @@ func NewProjectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		if err != nil {
 			return nil, err
 		}
-		projects, err := r.List(ctx, metav1.ListOptions{})
+		projects, err := r.List(ctx, metav1.ListOptions{LabelSelector: tenantSelector(selection.Tenant)})
 		if apierrors.IsForbidden(err) {
 			return nil, fmt.Errorf("the platform's API at %s does not list your projects: %w", host, err)
 		}
@@ -71,11 +71,20 @@ func NewProjectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		ns.SetAPIVersion("v1")
 		ns.SetKind("Namespace")
 		ns.SetName(name)
+		if selection.Tenant != "" {
+			ns.SetLabels(map[string]string{tenantLabel: selection.Tenant})
+		}
 		_, err = r.Create(ctx, ns, metav1.CreateOptions{})
+		if selection.Tenant == "" && apierrors.IsForbidden(err) && strings.Contains(err.Error(), tenantLabel) {
+			return fmt.Errorf("%w: choose the owner with --tenant NAME", err)
+		}
 		return err
 	}
 	// The project airo login chooses at a first sign-in.
 	defaultOf := func(ctx context.Context) (string, error) {
+		if selection.Tenant != "" {
+			return selection.Tenant + defaultProjectSuffix, nil
+		}
 		cfg, err := flags.ToRESTConfig()
 		if err != nil {
 			return "", err
@@ -92,22 +101,21 @@ func NewProjectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		Aliases: []string{"projects"},
 		Short:   "Switch between your projects",
 		Long: `Project makes another project the one your commands work in, for every
-later command of airo and kubectl. A project is a namespace of the platform,
-and the switch sets the namespace of your kubeconfig's context.
+later command of airo and kubectl. Each tenant remembers its project.
 
-Without a name it offers an inline choice. Use the arrow keys or type to
-filter, then press Enter. Plain terminals show numbered choices. "-" switches back to the project you were in before.
-
-It changes the current context, or the one --context names. For one command
-in another project, pass -n to that command instead.`,
+Without a name, choose a project from a list. "-" switches back to the
+previous project. Pass --project NAME to another command for a one-time choice.`,
 		Example: `  airo project                # choose from a picker
   airo project acme-web       # switch to the project acme-web
   airo project -              # switch back to the previous one
   airo project list`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			target := ""
+			target := *flags.Namespace
 			if len(args) == 1 {
+				if target != "" && args[0] != target {
+					return fmt.Errorf("choose one project: got %s and %s", args[0], target)
+				}
 				target = args[0]
 			}
 			var ask func([]string, int) (string, error)
@@ -116,10 +124,32 @@ in another project, pass -n to that command instead.`,
 					return picker.One(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr(), "project", names, current)
 				}
 			}
-			return switchProject(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, newPreviousProjectStore, list, target, ask)
+			return switchProject(cmd.Context(), cmd.OutOrStdout(), access(), *flags.Context, newPreviousProjectStore, list, target, ask, selection.Tenant)
 		},
 	}
-	generic.AddBasic(cmd, generic.ReadCommands(flags, projectResource.Resource)...)
+	// Keep kubectl's server-side table and output formats. Combine the
+	// tenant filter with any selector supplied by the caller.
+	checkNamed := func(cmd *cobra.Command, args []string) error {
+		if selection.Tenant == "" {
+			return nil
+		}
+		if len(args) == 0 {
+			selector, _ := cmd.Flags().GetString("selector")
+			if selector != "" {
+				selector += ","
+			}
+			return cmd.Flags().Set("selector", selector+tenantSelector(selection.Tenant))
+		}
+		c, err := selectionClient(flags)
+		if err != nil {
+			return err
+		}
+		return requireProject(cmd.Context(), c, selection.Tenant, args[0])
+	}
+	for _, verb := range generic.ReadCommands(flags, projectResource.Resource) {
+		verb.PreRunE = checkNamed
+		generic.AddBasic(cmd, verb)
+	}
 	ui.AddCommandGroup(cmd, "project", "Project Commands", &cobra.Command{
 		Use:   "create NAME",
 		Short: "Create a project",
@@ -130,24 +160,41 @@ tenant's name, and how many projects you may have.`,
   airo project acme-web       # then work in it`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return createProject(cmd.Context(), cmd.OutOrStdout(), args[0], create, list, time.Minute)
+			switchTo := "airo project " + args[0]
+			if cmd.Flags().Changed("tenant") {
+				switchTo = "airo tenant " + selection.Tenant + " --project " + args[0]
+			}
+			return createProject(cmd.Context(), cmd.OutOrStdout(), args[0], create, list, time.Minute, switchTo)
 		},
 	})
 	deleteCmd := generic.NewDeleteCommand(flags, projectResource.Resource, func(cmd *cobra.Command, name string) error {
-		return switchAfterProjectDeletion(cmd.Context(), cmd.ErrOrStderr(), access(), *flags.Context, name, newPreviousProjectStore, list, defaultOf)
+		contextName := *flags.Context
+		if selection.Tenant != "" {
+			cfg, err := access().GetStartingConfig()
+			if err != nil {
+				return err
+			}
+			contextName, _, err = tenantContext(cfg, selectedContext(cfg, flags), selection.Tenant)
+			if err != nil {
+				return err
+			}
+		}
+		return switchAfterProjectDeletion(cmd.Context(), cmd.ErrOrStderr(), access(), contextName, name, newPreviousProjectStore, list, defaultOf)
 	})
+	deleteCmd.PreRunE = checkNamed
 	deleteCmd.Short = "Delete a project and everything in it"
 	deleteCmd.Long = `Delete removes a project and everything in it. When your commands work in
 it, airo switches them to the project you were in before, or else to your
 default project, as airo login chooses it.`
 	editCmd := generic.NewEditCommand(flags, projectResource.Resource)
+	editCmd.PreRunE = checkNamed
 	editCmd.Example = "  airo project edit acme-web"
 	generic.AddBasic(cmd, editCmd, deleteCmd)
 	return cmd
 }
 
 // createProject creates the project name.
-func createProject(ctx context.Context, out io.Writer, name string, create projectWriter, list projectLister, wait time.Duration) error {
+func createProject(ctx context.Context, out io.Writer, name string, create projectWriter, list projectLister, wait time.Duration, switchTo string) error {
 	err := create(ctx, name)
 	if apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("a project or namespace named %s exists already", name)
@@ -161,11 +208,11 @@ func createProject(ctx context.Context, out io.Writer, name string, create proje
 	deadline := time.Now().Add(wait)
 	for {
 		if names, err := projectNames(ctx, list); err == nil && slices.Contains(names, name) {
-			fmt.Fprintf(out, "  work in it: airo project %s\n", name)
+			fmt.Fprintf(out, "  work in it: %s\n", switchTo)
 			return nil
 		}
 		if time.Now().After(deadline) || ctx.Err() != nil {
-			fmt.Fprintf(out, "  the platform does not list it yet: in a moment, work in it with airo project %s\n", name)
+			fmt.Fprintf(out, "  the platform does not list it yet: in a moment, work in it with %s\n", switchTo)
 			return nil
 		}
 		select {
@@ -182,6 +229,7 @@ func switchAfterProjectDeletion(ctx context.Context, out io.Writer, access clien
 	if err != nil {
 		return nil
 	}
+	edit := configEdit{access, cfg.DeepCopy()}
 	if kctxName == "" {
 		kctxName = cfg.CurrentContext
 	}
@@ -192,6 +240,18 @@ func switchAfterProjectDeletion(ctx context.Context, out io.Writer, access clien
 	// The context worked in the deleted project: move it to the project it
 	// was in before, or else to the one airo login would choose.
 	stay := func() error {
+		tenant, err := storedTenant(kctx)
+		if err != nil {
+			return err
+		}
+		if tenant != "" {
+			kctx.Namespace = ""
+			if err := edit.save(cfg); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "  tenant %s has no project selected: choose one with airo project\n", tenant)
+			return nil
+		}
 		fmt.Fprintln(out, "  your commands still work in it: choose another with airo project")
 		return nil
 	}
@@ -214,7 +274,7 @@ func switchAfterProjectDeletion(ctx context.Context, out io.Writer, access clien
 		}
 	}
 	kctx.Namespace = target
-	if err := clientcmd.ModifyConfig(access, *cfg, true); err != nil {
+	if err := edit.save(cfg); err != nil {
 		return err
 	}
 	// The remembered project is used up, and "-" must not lead back to the
@@ -227,17 +287,25 @@ func switchAfterProjectDeletion(ctx context.Context, out io.Writer, access clien
 // switchProject makes target the namespace of the context name, or of the
 // current context when name is empty. An empty target is chosen with ask, as
 // in switchContext. The project must be one the cluster lists.
-func switchProject(ctx context.Context, out io.Writer, access clientcmd.ConfigAccess, name string, storeFor func(string) (previousStore, error), list projectLister, target string, ask func(names []string, current int) (string, error)) error {
+func switchProject(ctx context.Context, out io.Writer, access clientcmd.ConfigAccess, name string, storeFor func(string) (previousStore, error), list projectLister, target string, ask func(names []string, current int) (string, error), tenant string) error {
 	cfg, err := access.GetStartingConfig()
 	if err != nil {
 		return err
 	}
+	edit := configEdit{access, cfg.DeepCopy()}
 	if name == "" {
 		name = cfg.CurrentContext
 	}
 	// Only a sign-in is changed: another cluster's context is not airo's.
 	if _, err := oidcOf(cfg, name); err != nil {
 		return fmt.Errorf("%w: sign in with airo login", contextError(name, err))
+	}
+	created := false
+	if tenant != "" {
+		name, created, err = tenantContext(cfg, name, tenant)
+		if err != nil {
+			return err
+		}
 	}
 	kctx := cfg.Contexts[name]
 	store, err := storeFor(name)
@@ -268,14 +336,14 @@ func switchProject(ctx context.Context, out io.Writer, access clientcmd.ConfigAc
 	if !slices.Contains(names, target) {
 		return fmt.Errorf("you have no project %q: your projects are %s", target, strings.Join(names, ", "))
 	}
-	if target == kctx.Namespace {
+	if target == kctx.Namespace && !created {
 		fmt.Fprintf(out, "Already in project %s\n", target)
 		return nil
 	}
 
 	previous := kctx.Namespace
 	kctx.Namespace = target
-	if err := clientcmd.ModifyConfig(access, *cfg, true); err != nil {
+	if err := edit.save(cfg); err != nil {
 		return err
 	}
 	if previous != "" {
@@ -284,7 +352,9 @@ func switchProject(ctx context.Context, out io.Writer, access clientcmd.ConfigAc
 		}
 	}
 	fmt.Fprintf(out, "Switched to project %s\n", target)
-	if name != cfg.CurrentContext {
+	if tenant != "" {
+		fmt.Fprintf(out, "  tenant: %s\n", tenant)
+	} else if name != cfg.CurrentContext {
 		fmt.Fprintf(out, "  context: %s\n", name)
 	}
 	return nil

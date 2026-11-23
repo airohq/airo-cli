@@ -12,14 +12,20 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/client-go/dynamic"
 	clientauthv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+
+	"github.com/airohq/airo-cli/internal/picker"
+	"github.com/airohq/airo-cli/internal/ui"
 )
 
 const (
@@ -42,7 +48,7 @@ type platform struct {
 }
 
 // NewCommand returns the login command.
-func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
+func NewCommand(flags *genericclioptions.ConfigFlags, selection *Selection) *cobra.Command {
 	var (
 		p      platform
 		caData string
@@ -59,16 +65,15 @@ and the API server's certificate authority. The platform's admin gives you
 the values. They stay in the kubeconfig, so after that airo login signs you
 in again, for example to pick up a new role.
 
---context names the sign-in. A context that does not exist yet is created
-for the same platform with its own tokens, so you can be signed in as two
-people and choose one with --context on any command.`,
+Choose a tenant with --tenant and a project with --project. Switching tenants
+later reuses this sign-in and restores each tenant's project.`,
 		Example: `  # the first time
   airo login --server https://api.example.com:6443 --certificate-authority ca.crt \
     --issuer https://login.example.com/ --client-id abc123
 
   airo login                       # sign in again
-  airo login -n acme-web           # work in another project from now on
-  airo login --context customer    # sign in as someone else, side by side`,
+  airo login --project acme-web    # work in another project from now on
+  airo login --tenant acme         # choose a tenant when signing in`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var err error
@@ -76,7 +81,7 @@ people and choose one with --context on any command.`,
 			if p.ca, err = readCA(*flags.CAFile, caData); err != nil {
 				return err
 			}
-			return run(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), flags, p)
+			return run(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(), flags, p, selection.Tenant)
 		},
 	}
 	cmd.Flags().StringVar(&p.issuer, "issuer", "", "the OIDC issuer's URL, for the first sign-in")
@@ -116,7 +121,7 @@ func NewCredentialCommand() *cobra.Command {
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// stdout is the credential, so the sign-in prompt goes to stderr.
-			id, exp, err := o.token(cmd.Context(), cmd.ErrOrStderr(), false)
+			id, exp, err := o.token(cmd.Context(), cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -137,22 +142,20 @@ func NewCredentialCommand() *cobra.Command {
 	return cmd
 }
 
-func run(ctx context.Context, out, prompt io.Writer, flags *genericclioptions.ConfigFlags, p platform) error {
+func run(ctx context.Context, in io.Reader, out, prompt io.Writer, flags *genericclioptions.ConfigFlags, p platform, tenant string) error {
 	access := flags.ToRawKubeConfigLoader().ConfigAccess()
 	cfg, err := access.GetStartingConfig()
 	if err != nil {
 		return err
 	}
+	edit := configEdit{access, cfg.DeepCopy()}
 	name, o, err := prepare(cfg, *flags.Context, p)
 	if err != nil {
 		return err
 	}
 	cfg.CurrentContext = name
-	if err := clientcmd.ModifyConfig(access, *cfg, true); err != nil {
-		return err
-	}
 
-	id, _, err := o.token(ctx, prompt, true)
+	token, _, err := o.authenticate(ctx, prompt, "")
 	if err != nil {
 		return err
 	}
@@ -164,40 +167,101 @@ func run(ctx context.Context, out, prompt io.Writer, flags *genericclioptions.Co
 		return err
 	}
 	rc.ExecProvider = nil
-	rc.BearerToken = id
+	rc.BearerToken = token.IDToken
 	user, err := currentUser(ctx, rc)
 	if err != nil {
 		return fmt.Errorf("signed in, but could not verify your identity: %w", err)
 	}
 
-	// A customer's first sign-in starts in the tenant's default project. A
-	// namespace already in the context is the person's own choice and stays.
-	// -n chooses the project to work in from now on.
-	kctx := cfg.Contexts[name]
-	ns := *flags.Namespace
-	if ns == "" && kctx.Namespace == "" {
-		ns = defaultProject(user.Groups)
+	saved, err := storedTenant(cfg.Contexts[name])
+	if err != nil {
+		return err
 	}
-	if ns != "" && ns != kctx.Namespace {
-		kctx.Namespace = ns
-		if err := clientcmd.ModifyConfig(access, *cfg, true); err != nil {
-			return err
+	if tenant == "" {
+		memberships := tenantsOf(user.Groups)
+		if saved != "" && !slices.Contains(memberships, saved) {
+			// Admin access may come from grants outside customer groups.
+			c, err := dynamic.NewForConfig(rc)
+			if err != nil {
+				return err
+			}
+			err = checkTenant(ctx, c, saved)
+			switch {
+			case err == nil:
+				tenant = saved
+			case apierrors.IsForbidden(err), apierrors.IsNotFound(err):
+			default:
+				return err
+			}
+		}
+		if tenant == "" {
+			if !ui.IsTerminal(out) {
+				in = nil
+			}
+			tenant, err = chooseLoginTenant(ctx, in, prompt, saved, memberships)
+			if err != nil {
+				return err
+			}
 		}
 	}
-
-	fmt.Fprintf(out, "Signed in as %s\n", user.Username)
-	fmt.Fprintf(out, "  context:   %s\n", name)
-	if kctx.Namespace != "" {
-		fmt.Fprintf(out, "  namespace: %s\n", kctx.Namespace)
+	if tenant != "" {
+		if err := selectTenant(ctx, cfg, name, tenant, *flags.Namespace, rc); err != nil {
+			return err
+		}
 	} else {
-		// Someone in no customer group, such as a platform admin.
-		fmt.Fprintln(out, "  namespace: none, so commands use \"default\". Choose a project with airo project")
+		if saved != "" {
+			// The last tenant was removed. Return to this account's sign-in.
+			source := cfg.Contexts[name]
+			for candidate, c := range cfg.Contexts {
+				if c.Cluster == source.Cluster && c.AuthInfo == source.AuthInfo && c.Extensions[tenantExtension] == nil {
+					name = candidate
+					break
+				}
+			}
+			if name == cfg.CurrentContext {
+				return errors.New("previous tenant unavailable: select a tenant with airo login --tenant NAME")
+			}
+			cfg.CurrentContext = name
+		}
+		if *flags.Namespace != "" {
+			cfg.Contexts[name].Namespace = *flags.Namespace
+		}
 	}
+	path, err := o.cachePath()
+	if err != nil {
+		return err
+	}
+	if err := save(path, token); err != nil {
+		return err
+	}
+	if err := edit.save(cfg); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Signed in as %s\n", user.Username)
+	writeSelection(out, tenant, cfg.Contexts[cfg.CurrentContext].Namespace)
 	fmt.Fprintf(out, "  groups:    %s\n", strings.Join(user.Groups, ", "))
 	if _, err := exec.LookPath("airo"); err != nil {
 		fmt.Fprintln(prompt, "airo is not on your PATH. The kubeconfig runs it by name, so add it there.")
 	}
 	return nil
+}
+
+func chooseLoginTenant(ctx context.Context, in io.Reader, prompt io.Writer, saved string, memberships []string) (string, error) {
+	switch {
+	case slices.Contains(memberships, saved):
+		return saved, nil
+	case len(memberships) == 0:
+		return "", nil
+	case len(memberships) == 1:
+		return memberships[0], nil
+	case !ui.Interactive(in, prompt):
+		return "", fmt.Errorf("choose a tenant with --tenant NAME: %s", strings.Join(memberships, ", "))
+	}
+	tenant, err := picker.One(ctx, in, prompt, "tenant", memberships, -1)
+	if err == nil && tenant == "" {
+		err = errors.New("tenant selection canceled")
+	}
+	return tenant, err
 }
 
 // prepare makes the context name in cfg a sign-in to the platform, with airo
@@ -222,7 +286,7 @@ func prepare(cfg *clientcmdapi.Config, name string, p platform) (string, oidc, e
 	o, err := oidcOf(cfg, base)
 	if kctx != nil && err != nil {
 		// Someone else's entry, such as a local cluster's: leave it alone.
-		return "", oidc{}, fmt.Errorf("context %q: %w: choose another name with --context", name, err)
+		return "", oidc{}, fmt.Errorf("context %q: %w: choose a different sign-in", name, err)
 	}
 	if p.issuer != "" {
 		o.issuer = p.issuer
@@ -273,7 +337,9 @@ func prepare(cfg *clientcmdapi.Config, name string, p platform) (string, oidc, e
 
 	// The context's name keeps this sign-in's tokens apart from another
 	// context's at the same platform.
-	o.session = name
+	if o.session == "" || kctx.AuthInfo == name {
+		o.session = kctx.AuthInfo
+	}
 	origin := ""
 	if user := cfg.AuthInfos[kctx.AuthInfo]; user != nil {
 		origin = user.LocationOfOrigin
@@ -337,4 +403,14 @@ func defaultProject(groups []string) string {
 		return tenants[0] + defaultProjectSuffix
 	}
 	return ""
+}
+
+func writeSelection(out io.Writer, tenant, project string) {
+	if tenant == "" {
+		tenant = "none"
+	}
+	if project == "" {
+		project = "none (choose with airo project)"
+	}
+	fmt.Fprintf(out, "Tenant:  %s\nProject: %s\n", tenant, project)
 }

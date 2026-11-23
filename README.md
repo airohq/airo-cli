@@ -3,14 +3,14 @@
 > [!CAUTION]
 > **Early alpha.** Commands and flags may change.
 
-`airo` is the command-line tool of the Airo platform: sign in, switch between sign-ins and projects, talk to an
+`airo` is the command-line tool of the Airo platform: sign in, switch between tenants and projects, talk to an
 agent, see your sessions, manage the resources of your project, and give a local port a URL.
 Each command reads and writes Kubernetes resources as you, so everything it
 does to a resource can also be done with `kubectl`, and you do not need
 `kubectl` to use it.
 
 Run `airo -h` for commands grouped by task and `airo options` for global
-flags such as `--context` and `--namespace`. Each command has its own help,
+flags such as `--tenant` and `--project`. Each command has its own help,
 for example `airo login -h` for first-time setup. Once signed in, run
 `airo project list` to find your projects and `airo agent list` to see the
 agents in your current project.
@@ -56,26 +56,20 @@ airo login                       # sign in again, for example after a new role
 Open https://login.example.com/activate?user_code=ABCD-EFGH
 and confirm the code ABCD-EFGH
 Signed in as auth0:abc123
-  context:   airo
-  namespace: acme-default
+Tenant:  acme
+Project: acme-default
   groups:    customer:acme
 ```
 
-**It adds the platform to your kubeconfig as the current context**, so kubectl
-works with the same sign-in when you have it. The kubeconfig holds no
-credentials. `airo` keeps the tokens in your cache directory and refreshes
-them, and the kubeconfig runs `airo credential` to read them, so `airo` must
-be on your `PATH`.
+Airo keeps tokens in your cache directory and refreshes them. Each tenant
+on the same platform and sign-in shares those credentials and remembers its
+own project in your kubeconfig. Keep `airo` on your `PATH` so kubectl can
+run the credential plugin. Use `KUBECONFIG` or `--kubeconfig` to select a file.
 
-| Sign-in | What happens |
-| --- | --- |
-| First, with the platform's flags | Writes a cluster, a user and the context `airo` into your kubeconfig. It works without a kubeconfig, and other entries stay as they are |
-| A customer's first | Sets the context's namespace to the project `<tenant>-default`. A namespace you chose stays |
-| Again, without flags | Signs in again in the current context. When that is not the platform's, such as a local cluster's, it uses the context `airo` |
-| With `--context NAME` | Signs in to that context. One that does not exist yet is created for the same platform, with its own tokens |
-| With a platform flag again | Replaces that value in the context, for example after the issuer changed |
-| With `-n NAMESPACE` | Makes that project the context's namespace, for every later command, as `airo project NAMESPACE` does without a new sign-in |
-| In no customer group, such as a platform admin | Sets no namespace, so commands use `default` until you pass `-n` or choose one with `airo project` |
+On first login, Airo selects your sole tenant or asks you to choose from
+your memberships. In scripts, use `airo login --tenant NAME`. Later logins
+restore your selected tenant when you still have access. A platform admin
+can sign in first and then select a tenant with `airo tenant NAME`.
 
 | Flag | The first sign-in's value |
 | --- | --- |
@@ -84,85 +78,30 @@ be on your `PATH`.
 | `--issuer` | The OIDC issuer's URL |
 | `--client-id` | The OIDC client ID |
 
-**You can be signed in as two people at once, each in its own context.**
-Tokens are kept per context name.
+## Working across tenants
 
 ```sh
-airo login --context customer       # sign in as someone else: a new context
-airo agent list --context airo      # one command as the first person
-airo login --context airo           # sign in as the first person again
-airo context customer               # switch without signing in again
+airo tenant list                          # find accessible tenants
+airo tenant acme                          # switch and restore its project
+airo project acme-web                     # remember this project for Acme
+airo tenant beta                          # switch using the same sign-in
+airo agent list --tenant acme             # use acme-web for this invocation
+airo agent list --tenant beta --project beta-api
+airo status                               # show the saved working selection
 ```
 
-The browser remembers who signed in last. To sign in as someone else, open
-the printed URL in a private window.
+`airo tenant NAME` and `airo project NAME` change where subsequent Airo
+and kubectl commands run, including in other terminals sharing the kubeconfig.
+On a first visit, the tenant starts in its accessible `<tenant>-default`
+project, or keeps an accessible project from an older sign-in for that tenant.
+If the tenant has no default or its remembered project is gone,
+choose one with `airo project`. You can list or create projects before choosing one.
 
-`airo login` never changes a context that does not sign in through the
-platform. It writes to `~/.kube/config`, or to the file in `KUBECONFIG` or
-`--kubeconfig`.
-
-`airo` takes kubectl's flags, such as `-n`, `--context` and `--kubeconfig`,
-and works in the context's namespace by default.
-
-## Context
-
-**`airo context` switches between your sign-ins**, for every later command of
-`airo` and `kubectl`. `airo ctx` is the short form, and `airo contexts` also
-works.
-
-```sh
-airo context             # choose from a picker
-airo context customer    # switch to the context customer
-airo context -           # switch back to the previous one
-airo context list
-```
-
-```text
-Switched to context customer
-  namespace: acme-web
-```
-
-| Command | What happens |
-| --- | --- |
-| `airo context` | Shows an inline list with the current context selected. Use the arrow keys or type to filter, Enter to choose, and Esc to cancel. Plain terminals show numbered choices. Where nobody can answer, such as in a script, it stops and lists the names |
-| `airo context NAME` | Makes that context the kubeconfig's current one |
-| `airo context -` | Switches to the context you last switched away from, so twice brings you back. `airo` keeps its name in your cache directory |
-| `airo context list` | Lists the sign-ins with their namespaces, and marks the current one with `*` |
-| `airo context delete NAME` | Removes the named sign-in context from the kubeconfig. If it was active, clears its selection. The cluster and user entries stay available to other contexts |
-| `airo context set [NAME]` | Changes what a sign-in holds, without signing in again |
-
-**`airo context set` changes a sign-in's values in the kubeconfig**, such as
-the platform's address after it moved. It is `airo`'s form of `kubectl config
-set-context` and `set-cluster`. Without a name it changes the current
-context, and only the flags you pass are changed.
-
-```sh
-airo context set --server https://api.example.com
-airo context set -n acme-web                 # work in another project from now on
-airo context set customer --certificate-authority ca.crt
-```
-
-```text
-Set context airo
-  server:    https://api.example.com
-```
-
-| Flag | Sets |
-| --- | --- |
-| `--server` | The cluster's `server`: the API server's address |
-| `--certificate-authority`, `--certificate-authority-data` | The cluster's `certificate-authority-data` |
-| `--issuer`, `--client-id` | The arguments of the user's exec plugin. The next command signs you in again |
-| `-n` | The context's `namespace` |
-
-Sign-ins at the same platform share the cluster's entry, so a new address or
-certificate authority applies to all of them, and the command names them. It
-does not make a sign-in: `airo login` does.
-
-**It knows only the contexts that sign in through the platform.** Others,
-such as a local cluster's, are not listed and not switched to. Use `kubectl
-config use-context` for them.
-
-A context named like a verb goes after `--`, as in `airo context -- list`.
+For a single resource operation, `--tenant` uses that tenant's remembered
+project and `--project` overrides it. The next command uses your saved selection.
+For a cluster-wide list, use `-A` on its own. Airo checks project ownership
+using the platform's tenant label. The cluster
+authorizes every request as your signed-in identity.
 
 ## Project
 
@@ -190,18 +129,15 @@ acme-web       Active   2d
 | `airo project` | Shows an inline list with the current project selected. Use the arrow keys or type to filter, Enter to choose, and Esc to cancel. Plain terminals show numbered choices. Where nobody can answer, such as in a script, it stops and lists the names |
 | `airo project NAME` | Makes that project the context's namespace. The name must be one of your projects |
 | `airo project -` | Switches to the project you last switched away from in this context, so twice brings you back. `airo` keeps its name in your cache directory |
-| `airo project list` | Lists accessible Namespaces with the cluster's columns. Use `airo status` to see the current project |
+| `airo project list` | Lists accessible projects in the selected tenant with the cluster's columns. Use `airo status` to see the current project |
 | `airo project create NAME` | Creates the project, and returns when the platform lists it, so `airo project NAME` takes it. It does not switch to it |
 | `airo project delete NAME` | Deletes the project and everything in it. If your commands work in it, they switch to the project you were in before, as `airo project -`, or else to your default project, as `airo login` chooses it |
 
-**It changes the current context, or the one `--context` names**, and only a
-context that signs in through the platform. For one command in another
-project, pass `-n` to that command instead. `airo context set -n NAME` also
-sets the project, without asking the cluster whether it is one of yours.
-
-**Your projects are the namespaces the platform's API lists for you.** A
-customer's people see their own projects. A platform admin sees every
-namespace of the cluster.
+With a tenant selected, the project list and picker show its projects.
+`airo project create airohq-test --tenant airohq` sets the
+`capsule.clastix.io/tenant` label on the new project, including when a
+platform admin creates the tenant's first project. After `airo tenant airohq`,
+the shorter `airo project create airohq-test` sets the same label.
 
 **The platform decides which projects you may create and delete.** A
 customer's name must start with the tenant's name and a dash, such as
@@ -217,35 +153,28 @@ A project named like a verb goes after `--`, as in `airo project -- list`.
 
 ```sh
 airo status
-airo status --context customer    # inspect another sign-in
-airo status -n acme-web           # inspect another project
+airo status --tenant acme         # inspect another tenant
+airo status --project acme-web    # inspect another project
 ```
 
 ```text
 User:        auth0:abc123
 Tenant:      acme
 Project:     acme-default
-Context:     airo
 Server:      https://api.example.com:6443
 Connection:  Connected
 ```
 
-Project is currently the Kubernetes namespace. `--context`, `-n`,
-`--server`, and `--kubeconfig` select the values for this invocation without
-changing the saved context. An unset project uses `default`, as other
-commands do. Connected means the Kubernetes API answered the identity
-check; it does not check access to the project or the health of its resources.
-
-If the identity check fails, status still prints the selected project,
-context, and server, with `unknown` for user and tenant and `Unverified` for
-the connection. It reports the error on standard error and exits nonzero.
+Status prints the selected tenant and project, server, and result of the
+identity check. Older sign-ins show `none` for tenant until you select one.
+A failed check reports an unverified connection and exits
+nonzero. Use `airo project list` to see the accessible projects.
 
 **`airo whoami` shows your user, tenant, and groups**, like `kubectl auth
 whoami` with tenant membership included.
 
 ```sh
 airo whoami
-airo whoami --context customer
 ```
 
 ```text
@@ -265,8 +194,8 @@ makes either command exit nonzero.
 ## Tenant details
 
 `airo tenant` lists your tenant's solutions and capabilities in separate tables.
-The command uses the tenant membership shown by `airo whoami`.
-If you belong to several tenants, choose one with `airo tenant --name NAME`.
+The command uses the selected tenant, or your sole membership on an older sign-in.
+Use `airo tenant --name NAME` to inspect another tenant for one command.
 Platform admins can use the same flag to inspect a tenant by name.
 
 ```console

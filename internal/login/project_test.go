@@ -67,7 +67,7 @@ func TestSwitchProjectAndBack(t *testing.T) {
 		{"-", "airo-default", "Switched to project airo-default\n"},
 	} {
 		var out bytes.Buffer
-		if err := switchProject(context.Background(), &out, access, "", storeFor, list, step.target, nil); err != nil {
+		if err := switchProject(context.Background(), &out, access, "", storeFor, list, step.target, nil, ""); err != nil {
 			t.Fatalf("switch to %q: %v", step.target, err)
 		}
 		if got := projectOf(t, access, "airo"); got != step.want {
@@ -88,7 +88,7 @@ func TestSwitchProjectOfAnotherContext(t *testing.T) {
 	access, storeFor, _ := projectFixture(t)
 	list := projectsOf("customer-default", "customer-web")
 	var out bytes.Buffer
-	if err := switchProject(context.Background(), &out, access, "customer", storeFor, list, "customer-web", nil); err != nil {
+	if err := switchProject(context.Background(), &out, access, "customer", storeFor, list, "customer-web", nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if want := "Switched to project customer-web\n  context: customer\n"; out.String() != want {
@@ -100,7 +100,7 @@ func TestSwitchProjectOfAnotherContext(t *testing.T) {
 	if got := projectOf(t, access, "airo"); got != "airo-default" {
 		t.Errorf("the project of airo is %q, want it unchanged", got)
 	}
-	err := switchProject(context.Background(), &bytes.Buffer{}, access, "", storeFor, list, "-", nil)
+	err := switchProject(context.Background(), &bytes.Buffer{}, access, "", storeFor, list, "-", nil, "")
 	if err == nil || !strings.Contains(err.Error(), "remembers no previous project") {
 		t.Errorf("airo project - in the context airo: error = %v, want none remembered", err)
 	}
@@ -128,7 +128,7 @@ func TestSwitchProjectRefuses(t *testing.T) {
 			if tc.list != nil {
 				list = tc.list
 			}
-			err := switchProject(context.Background(), &bytes.Buffer{}, access, tc.context, storeFor, list, tc.target, nil)
+			err := switchProject(context.Background(), &bytes.Buffer{}, access, tc.context, storeFor, list, tc.target, nil, "")
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("error = %v, want it to contain %q", err, tc.want)
 			}
@@ -147,7 +147,7 @@ func TestSwitchProjectAsks(t *testing.T) {
 		}
 		return "airo-web", nil
 	}
-	if err := switchProject(context.Background(), &bytes.Buffer{}, access, "", storeFor, list, "", ask); err != nil {
+	if err := switchProject(context.Background(), &bytes.Buffer{}, access, "", storeFor, list, "", ask, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := projectOf(t, access, "airo"); got != "airo-web" {
@@ -157,7 +157,7 @@ func TestSwitchProjectAsks(t *testing.T) {
 	// Leaving the picker changes nothing.
 	var out bytes.Buffer
 	none := func([]string, int) (string, error) { return "", nil }
-	if err := switchProject(context.Background(), &out, access, "", storeFor, list, "", none); err != nil {
+	if err := switchProject(context.Background(), &out, access, "", storeFor, list, "", none, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := projectOf(t, access, "airo"); got != "airo-web" || out.Len() != 0 {
@@ -180,7 +180,7 @@ func TestCreateProject(t *testing.T) {
 		}
 		return projectsOf("airo-default", "airo-web")(ctx)
 	}
-	if err := createProject(context.Background(), &out, "airo-web", create, list, time.Minute); err != nil {
+	if err := createProject(context.Background(), &out, "airo-web", create, list, time.Minute, "airo project airo-web"); err != nil {
 		t.Fatal(err)
 	}
 	if created != "airo-web" || looks != 2 {
@@ -192,7 +192,7 @@ func TestCreateProject(t *testing.T) {
 
 	// A cluster that does not list it in time.
 	out.Reset()
-	if err := createProject(context.Background(), &out, "airo-web", create, projectsOf("airo-default"), 0); err != nil {
+	if err := createProject(context.Background(), &out, "airo-web", create, projectsOf("airo-default"), 0, "airo project airo-web"); err != nil {
 		t.Fatal(err)
 	}
 	if want := "Created project airo-web\n  the platform does not list it yet: in a moment, work in it with airo project airo-web\n"; out.String() != want {
@@ -211,7 +211,7 @@ func TestCreateProject(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			create := func(context.Context, string) error { return tc.err }
-			err := createProject(context.Background(), &bytes.Buffer{}, "airo-web", create, projectsOf(), 0)
+			err := createProject(context.Background(), &bytes.Buffer{}, "airo-web", create, projectsOf(), 0, "airo project airo-web")
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("error = %v, want it to contain %q", err, tc.want)
 			}
@@ -242,7 +242,7 @@ func TestSwitchAfterProjectDeletion(t *testing.T) {
 
 	t.Run("the current one goes back to the previous", func(t *testing.T) {
 		access, storeFor, _ := projectFixture(t)
-		if err := switchProject(ctx, &bytes.Buffer{}, access, "", storeFor, list, "airo-test", nil); err != nil {
+		if err := switchProject(ctx, &bytes.Buffer{}, access, "", storeFor, list, "airo-test", nil, ""); err != nil {
 			t.Fatal(err)
 		}
 		var out bytes.Buffer
@@ -256,7 +256,7 @@ func TestSwitchAfterProjectDeletion(t *testing.T) {
 			t.Errorf("the project is %q, want airo-default", got)
 		}
 		// "-" does not lead back to the deleted project.
-		err := switchProject(ctx, &bytes.Buffer{}, access, "", storeFor, list, "-", nil)
+		err := switchProject(ctx, &bytes.Buffer{}, access, "", storeFor, list, "-", nil, "")
 		if err == nil || !strings.Contains(err.Error(), "remembers no previous project") {
 			t.Errorf("airo project - after the delete: %v, want nothing remembered", err)
 		}

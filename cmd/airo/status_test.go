@@ -141,19 +141,18 @@ func TestStatusAndWhoami(t *testing.T) {
 		tenant  string
 		groups  string
 		project string
-		context string
 		server  string
 	}{
-		{name: "status", args: []string{"status"}, user: "auth0:abc123", tenant: "acme", project: "acme-web", context: "customer"},
+		{name: "status", args: []string{"status"}, user: "auth0:abc123", tenant: "none", project: "acme-web"},
 		{name: "whoami", args: []string{"whoami"}, user: "auth0:abc123", tenant: "acme", groups: "customer:acme, system:authenticated"},
-		{name: "project override", args: []string{"status", "-n", "other-team"}, user: "auth0:abc123", tenant: "acme", project: "other-team", context: "customer"},
-		{name: "context override and default project", args: []string{"status", "--context", "admin"}, user: "auth0:admin", tenant: "none", project: "default", context: "admin"},
+		{name: "project override", args: []string{"status", "-n", "other-team"}, user: "auth0:abc123", tenant: "none", project: "other-team"},
+		{name: "context override and default project", args: []string{"status", "--context", "admin"}, user: "auth0:admin", tenant: "none", project: "default"},
 		{name: "admin identity", args: []string{"whoami", "--context", "admin"}, user: "auth0:admin", tenant: "none", groups: "platform-admins"},
 		{name: "several tenants", args: []string{"whoami", "--context", "multi"}, user: "auth0:abc123", tenant: "acme, other", groups: "customer:acme, customer:other, customer:acme, customer:, system:authenticated"},
 		{name: "no groups", args: []string{"whoami", "--context", "empty"}, user: "auth0:abc123", tenant: "none", groups: "none"},
-		{name: "server override", args: []string{"status", "--server", override.URL}, user: "auth0:abc123", tenant: "acme", project: "acme-web", context: "customer", server: override.URL},
+		{name: "server override", args: []string{"status", "--server", override.URL}, user: "auth0:abc123", tenant: "none", project: "acme-web", server: override.URL},
 		{name: "whoami impersonation", args: []string{"whoami", "--as", "teammate", "--as-group", "customer:other", "--as-group", "readers"}, user: "teammate", tenant: "other", groups: "customer:other, readers"},
-		{name: "status impersonation", args: []string{"status", "--as", "teammate", "--as-group", "customer:other"}, user: "teammate", tenant: "other", project: "acme-web", context: "customer"},
+		{name: "status impersonation", args: []string{"status", "--as", "teammate", "--as-group", "customer:other"}, user: "teammate", tenant: "none", project: "acme-web"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			before := calls.Load() + overrideCalls.Load()
@@ -163,7 +162,7 @@ func TestStatusAndWhoami(t *testing.T) {
 			}
 			want := map[string]string{"User": tt.user, "Tenant": tt.tenant}
 			if tt.args[0] == "status" {
-				want["Project"], want["Context"], want["Connection"] = tt.project, tt.context, "Connected"
+				want["Project"], want["Connection"] = tt.project, "Connected"
 				want["Server"] = server.URL
 				if tt.server != "" {
 					want["Server"] = tt.server
@@ -219,8 +218,8 @@ func TestIdentityFailures(t *testing.T) {
 					continue
 				}
 				want := map[string]string{
-					"User": "unknown", "Tenant": "unknown", "Project": "acme-web",
-					"Context": "customer", "Server": server.URL, "Connection": "Unverified",
+					"User": "unknown", "Tenant": "none", "Project": "acme-web",
+					"Server": server.URL, "Connection": "Unverified",
 				}
 				if got := outputFields(t, output); !reflect.DeepEqual(got, want) {
 					t.Errorf("failed status output = %v, want %v", got, want)

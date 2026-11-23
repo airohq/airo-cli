@@ -238,6 +238,14 @@ func TestRunSignsInTwoPeople(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/apis/capsule.clastix.io/v1beta2/tenants/acme":
+			fmt.Fprint(w, `{"apiVersion":"capsule.clastix.io/v1beta2","kind":"Tenant","metadata":{"name":"acme"}}`)
+			return
+		case "/api/v1/namespaces/acme-default", "/api/v1/namespaces/acme-web":
+			fmt.Fprintf(w, `{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q,"labels":{"capsule.clastix.io/tenant":"acme"}}}`, filepath.Base(r.URL.Path))
+			return
+		}
 		fmt.Fprintf(w, `{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","status":{"userInfo":%s}}`, user)
 	}))
 	t.Cleanup(api.Close)
@@ -250,7 +258,7 @@ func TestRunSignsInTwoPeople(t *testing.T) {
 		flags.Context = &name
 		flags.Namespace = &namespace
 		var out bytes.Buffer
-		if err := run(context.Background(), &out, &bytes.Buffer{}, flags, p); err != nil {
+		if err := run(context.Background(), nil, &out, &bytes.Buffer{}, flags, p, ""); err != nil {
 			t.Fatalf("login: %v", err)
 		}
 		cfg, err := clientcmd.LoadFromFile(kubeconfig)
@@ -267,10 +275,10 @@ func TestRunSignsInTwoPeople(t *testing.T) {
 	}
 
 	out, cfg = login("customer", "", platform{})
-	if !strings.Contains(out, "Signed in as auth0:customer") || cfg.CurrentContext != "customer" {
+	if !strings.Contains(out, "Signed in as auth0:customer") || cfg.CurrentContext != "airo/customer/acme" {
 		t.Errorf("second login: %scurrent context %q", out, cfg.CurrentContext)
 	}
-	if got := cfg.Contexts["customer"]; got.Cluster != "airo" || got.Namespace != "acme-default" {
+	if got := cfg.Contexts[cfg.CurrentContext]; got.Cluster != "airo" || got.Namespace != "acme-default" {
 		t.Errorf("second login: context = %+v, want the first one's cluster and the namespace acme-default", got)
 	}
 
@@ -280,16 +288,16 @@ func TestRunSignsInTwoPeople(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, _, err := o.token(context.Background(), &bytes.Buffer{}, false); err != nil || got != want {
+		if got, _, err := o.token(context.Background(), &bytes.Buffer{}); err != nil || got != want {
 			t.Errorf("context %s: the cached token is not its own: %v", name, err)
 		}
 	}
 
-	if _, cfg = login("customer", "acme-web", platform{}); cfg.Contexts["customer"].Namespace != "acme-web" {
-		t.Errorf("login -n: namespace = %q, want acme-web", cfg.Contexts["customer"].Namespace)
+	if _, cfg = login("customer", "acme-web", platform{}); cfg.Contexts[cfg.CurrentContext].Namespace != "acme-web" {
+		t.Errorf("login -n: namespace = %q, want acme-web", cfg.Contexts[cfg.CurrentContext].Namespace)
 	}
-	if _, cfg = login("", "", platform{}); cfg.CurrentContext != "customer" || cfg.Contexts["customer"].Namespace != "acme-web" {
-		t.Errorf("login again: context %q, namespace %q; want the chosen acme-web to stay", cfg.CurrentContext, cfg.Contexts["customer"].Namespace)
+	if _, cfg = login("", "", platform{}); cfg.CurrentContext != "airo/customer/acme" || cfg.Contexts[cfg.CurrentContext].Namespace != "acme-web" {
+		t.Errorf("login again: context %q, namespace %q; want the chosen acme-web to stay", cfg.CurrentContext, cfg.Contexts[cfg.CurrentContext].Namespace)
 	}
 }
 
@@ -311,7 +319,7 @@ func TestTokenUsesTheCacheAndRefreshes(t *testing.T) {
 	if err := save(path, tokens{IDToken: valid, RefreshToken: "old-refresh"}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _, err := o.token(context.Background(), &bytes.Buffer{}, false); err != nil || got != valid {
+	if got, _, err := o.token(context.Background(), &bytes.Buffer{}); err != nil || got != valid {
 		t.Fatalf("token = %q, %v; want the cached one", got, err)
 	}
 
@@ -319,7 +327,7 @@ func TestTokenUsesTheCacheAndRefreshes(t *testing.T) {
 	if err := save(path, tokens{IDToken: jwt(time.Now().Add(-time.Minute)), RefreshToken: "old-refresh"}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _, err := o.token(context.Background(), &bytes.Buffer{}, false); err != nil || got != fresh {
+	if got, _, err := o.token(context.Background(), &bytes.Buffer{}); err != nil || got != fresh {
 		t.Fatalf("token = %q, %v; want the refreshed one", got, err)
 	}
 	if got := load(path); got.IDToken != fresh || got.RefreshToken != "new-refresh" {
@@ -327,5 +335,28 @@ func TestTokenUsesTheCacheAndRefreshes(t *testing.T) {
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
 		t.Errorf("cache file mode = %v, %v; want 0600", info.Mode(), err)
+	}
+}
+
+func TestChooseLoginTenant(t *testing.T) {
+	for _, tt := range []struct {
+		saved       string
+		memberships []string
+		want        string
+		wantError   bool
+	}{
+		{"", nil, "", false},
+		{"", []string{"acme"}, "acme", false},
+		{"beta", []string{"acme", "beta"}, "beta", false},
+		{"removed", []string{"acme"}, "acme", false},
+		{"", []string{"acme", "beta"}, "", true},
+	} {
+		got, err := chooseLoginTenant(context.Background(), nil, &bytes.Buffer{}, tt.saved, tt.memberships)
+		if got != tt.want || (err != nil) != tt.wantError {
+			t.Errorf("saved %q, memberships %v: got %q, %v", tt.saved, tt.memberships, got, err)
+		}
+		if tt.wantError && !strings.Contains(err.Error(), "--tenant NAME: acme, beta") {
+			t.Errorf("missing noninteractive choices: %v", err)
+		}
 	}
 }

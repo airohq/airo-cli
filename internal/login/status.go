@@ -18,23 +18,18 @@ import (
 )
 
 // NewStatusCommand returns the status command.
-func NewStatusCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
+func NewStatusCommand(flags *genericclioptions.ConfigFlags, selection *Selection) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show your user, tenant, project, and connection status",
-		Long: `Status shows your user and tenant as the Kubernetes API sees them, along
-with the project, context, and server selected for this command. The project
-is currently the Kubernetes namespace.
-
-If the identity check fails, the selected project, context, and server are
-still shown, and the command exits with an error. Connected means the API
-answered the identity check; it does not check access to the project.`,
+		Long: `Status shows the tenant, project and server selected for this command,
+and checks the signed-in identity.`,
 		Example: `  airo status
-  airo status --context customer
-  airo status -n acme-web`,
+  airo status --tenant acme
+  airo status --project acme-web`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return status(cmd.Context(), cmd.OutOrStdout(), flags)
+			return status(cmd.Context(), cmd.OutOrStdout(), flags, selection)
 		},
 	}
 }
@@ -48,9 +43,8 @@ func NewWhoamiCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 like kubectl auth whoami. Tenant names come from customer:<tenant> groups.
 All memberships are shown when there is more than one; none is shown when
 there is no customer group, such as for a platform admin.`,
-		Example: `  airo whoami
-  airo whoami --context customer`,
-		Args: cobra.NoArgs,
+		Example: `  airo whoami`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			loader, err := identityLoader(flags)
 			if err != nil {
@@ -71,12 +65,8 @@ there is no customer group, such as for a platform admin.`,
 	}
 }
 
-func status(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlags) error {
+func status(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlags, selection *Selection) error {
 	loader, err := identityLoader(flags)
-	if err != nil {
-		return err
-	}
-	raw, err := loader.RawConfig()
 	if err != nil {
 		return err
 	}
@@ -88,23 +78,20 @@ func status(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigF
 	if err != nil {
 		return err
 	}
-	name := raw.CurrentContext
-	if *flags.Context != "" {
-		name = *flags.Context
-	}
-	if name == "" {
-		name = "none"
-	}
-
-	username, tenant, connection := "unknown", "unknown", "Unverified"
+	username, tenant, connection := "unknown", "none", "Unverified"
 	user, checkErr := currentUser(ctx, cfg)
 	if checkErr == nil {
 		username = user.Username
-		tenant = namesOrNone(tenantsOf(user.Groups))
 		connection = "Connected"
 	}
-	_, err = fmt.Fprintf(out, "User:        %s\nTenant:      %s\nProject:     %s\nContext:     %s\nServer:      %s\nConnection:  %s\n",
-		username, tenant, project, name, cfg.Host, connection)
+	if selection.Tenant != "" {
+		tenant, project = selection.Tenant, selection.project
+		if project == "" {
+			project = "none"
+		}
+	}
+	_, err = fmt.Fprintf(out, "User:        %s\nTenant:      %s\nProject:     %s\nServer:      %s\nConnection:  %s\n",
+		username, tenant, project, cfg.Host, connection)
 	return errors.Join(checkErr, err)
 }
 
@@ -117,7 +104,7 @@ func identityLoader(flags *genericclioptions.ConfigFlags) (clientcmd.ClientConfi
 		return nil, err
 	}
 	if raw.CurrentContext == "" && *flags.Context == "" && *flags.APIServer == "" {
-		return nil, errors.New("the kubeconfig has no current context: sign in with airo login, or select one with --context")
+		return nil, errors.New("no sign-in selected: sign in with airo login")
 	}
 	return loader, nil
 }

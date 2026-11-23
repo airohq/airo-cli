@@ -1,6 +1,7 @@
 package generic
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -17,7 +18,7 @@ import (
 const fieldManager = "airo"
 
 // NewApplyCommand returns the apply command.
-func NewApplyCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
+func NewApplyCommand(flags *genericclioptions.ConfigFlags, checkProject func(context.Context, *genericclioptions.ConfigFlags) error) *cobra.Command {
 	var files []string
 	cmd := &cobra.Command{
 		Use:   "apply -f FILE",
@@ -34,7 +35,7 @@ context's namespace.`,
 			if err != nil {
 				return err
 			}
-			r := resource.NewBuilder(flags).
+			r := resource.NewBuilder(newManifestClient(cmd.Context(), flags, checkProject)).
 				Unstructured().
 				NamespaceParam(ns).DefaultNamespace().
 				FilenameParam(enforce, &resource.FilenameOptions{Filenames: files}).
