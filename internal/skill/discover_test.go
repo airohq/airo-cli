@@ -74,7 +74,8 @@ func TestPinFindsASkillInAGitHubRepository(t *testing.T) {
 		{Skill{Git: repo, Find: "frontend-design"}, "frontend-design", "skills/frontend", 1},
 		{Skill{Git: repo, Find: "Frontend Design"}, "frontend-design", "skills/frontend", 1},
 		{Skill{Git: repo, Find: "pdf"}, "pdf", "skills/pdf", 1},
-		{Skill{Name: "docs", Git: repo, Find: "pdf"}, "docs", "skills/pdf", 1},
+		// skills.sh may name a skill by its directory, not its SKILL.md.
+		{Skill{Git: repo, Find: "frontend"}, "frontend-design", "skills/frontend", 1}, {Skill{Name: "docs", Git: repo, Find: "pdf"}, "docs", "skills/pdf", 1},
 		{Skill{Git: repo, Find: "kubernetes-resources"}, "kubernetes-resources", "plugins/k8s/skills/kubernetes-resources", 1},
 		// A path that holds a SKILL.md needs no listing.
 		{Skill{Git: repo, Path: "skills/pdf"}, "pdf", "skills/pdf", 0},
@@ -119,11 +120,12 @@ const srvlessRepo = "https://git.example.com/org/skills"
 
 func TestFrontmatterName(t *testing.T) {
 	for in, want := range map[string]string{
-		"---\nname: pdf\n---\n":               "pdf",
-		"\ufeff---\r\nname: 'a b'\r\n---\r\n": "a b",
-		"---\n---\nname: no\n":                "",
-		"# no frontmatter\nname: no\n":        "",
-		"---\nname: [broken\n---\n":           "",
+		"---\nname: pdf\n---\n":                    "pdf",
+		"\ufeff---\r\nname: 'a b'\r\n---\r\n":      "a b",
+		"---\n---\nname: no\n":                     "",
+		"# no frontmatter\nname: no\n":             "",
+		"---\nname: [broken\n---\n":                "",
+		"---\nname: \"e\\e[31mvil\\u202e\"\n---\n": "e[31mvil",
 	} {
 		if got := frontmatterName([]byte(in)); got != want {
 			t.Errorf("frontmatterName(%q) = %q, want %q", in, got, want)

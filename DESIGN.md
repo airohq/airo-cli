@@ -489,3 +489,10 @@ conditions:
   token.
 - **The caller is the person signed in with `airo login`.** No self-declared
   identity.
+
+**Public services outside the platform may have a built-in address** when
+the call carries no credentials and holds nothing of the project. Pinning a
+skill reads its Git host or registry, and `airo agent skill search` asks a
+public directory of skills such as skills.sh. Such a call sends only what
+the person typed, such as a source or search words, and an answer from it
+is data: text shown on the terminal is stripped of control characters.

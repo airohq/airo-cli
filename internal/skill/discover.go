@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
 
 	"sigs.k8s.io/yaml"
 )
@@ -97,6 +98,12 @@ func (r Resolver) locate(ctx context.Context, p Pinned) (Pinned, error) {
 			if SameName(skills[i].Name, p.Find) {
 				chosen = &skills[i]
 				break
+			}
+		}
+		// A registry such as skills.sh may name a skill by its directory.
+		for i := range skills {
+			if chosen == nil && SameName(path.Base(skills[i].Path), p.Find) {
+				chosen = &skills[i]
 			}
 		}
 		if chosen == nil {
@@ -245,6 +252,17 @@ func (r Resolver) found(ctx context.Context, owner, repo, commit, dir string) (F
 	return f, nil
 }
 
+// printable removes what could steer a terminal, since a skill's name and
+// path come from whoever published it.
+func printable(s string) string {
+	return strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s))
+}
+
 // frontmatterName returns the name in a SKILL.md's YAML frontmatter.
 func frontmatterName(data []byte) string {
 	text := strings.ReplaceAll(strings.TrimPrefix(string(data), "\ufeff"), "\r\n", "\n")
@@ -262,7 +280,7 @@ func frontmatterName(data []byte) string {
 	if yaml.Unmarshal([]byte(body[:max(end-1, 0)]), &front) != nil {
 		return ""
 	}
-	return strings.TrimSpace(front.Name)
+	return printable(front.Name)
 }
 
 // skillDirs lists the directories under dir that hold a SKILL.md, the
@@ -305,7 +323,7 @@ func (r Resolver) skillDirs(ctx context.Context, owner, repo, commit, dir string
 		if d == "." {
 			d = ""
 		}
-		if rel, ok := under(d, dir); ok && keep(rel) {
+		if rel, ok := under(d, dir); ok && keep(rel) && printable(d) == d {
 			dirs = append(dirs, d)
 		}
 	}

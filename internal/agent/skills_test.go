@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/airohq/airo-cli/internal/registry"
 	"github.com/airohq/airo-cli/internal/skill"
 )
 
@@ -342,14 +343,91 @@ func TestAddPutsSeveralSkillsInOneChange(t *testing.T) {
 func TestSearchListsTheSkillsOfASource(t *testing.T) {
 	fakeRepo(t)
 	var out, errOut bytes.Buffer
-	if err := searchSource(context.Background(), &out, &errOut, "org/repo"); err != nil {
+	if err := searchSource(context.Background(), &out, &errOut, "org/repo", ""); err != nil {
 		t.Fatal(err)
 	}
 	want := "NAME              PATH\ndocx              skills/docx\nfrontend-design   skills/frontend\npdf               skills/pdf\n"
 	if out.String() != want || !strings.Contains(errOut.String(), "Skills in https://github.com/org/repo at "+commit1) {
 		t.Errorf("search printed %q and %q, want %q", &out, &errOut, want)
 	}
-	if err := searchSource(context.Background(), &out, &errOut, "./skills"); err == nil || !strings.Contains(err.Error(), "local directory") {
+	if err := searchSource(context.Background(), &out, &errOut, "./skills", ""); err == nil || !strings.Contains(err.Error(), "local directory") {
 		t.Errorf("search = %v, want an error for a local directory", err)
+	}
+	out.Reset()
+	if err := searchSource(context.Background(), &out, &errOut, "org/repo", "FRONT design"); err != nil || strings.Contains(out.String(), "pdf") || !strings.Contains(out.String(), "frontend-design") {
+		t.Errorf("search with words printed %q, %v, want only frontend-design", &out, err)
+	}
+	if err := searchSource(context.Background(), &out, &errOut, "org/repo", "xlsx"); err == nil || !strings.Contains(err.Error(), `no skill named like "xlsx"`) {
+		t.Errorf("search = %v, want an error for words no skill has", err)
+	}
+}
+
+// fakeRegistry answers every search with its results.
+type fakeRegistry struct {
+	results []registry.Result
+	asked   []string
+}
+
+func (f *fakeRegistry) Name() string { return "fake.sh" }
+
+func (f *fakeRegistry) Search(_ context.Context, query string, o registry.Options) ([]registry.Result, error) {
+	f.asked = append(f.asked, query+"|"+o.Owner)
+	return f.results, nil
+}
+
+func useRegistry(t *testing.T, results ...registry.Result) *fakeRegistry {
+	t.Helper()
+	old := searchIn
+	t.Cleanup(func() { searchIn = old })
+	f := &fakeRegistry{results: results}
+	searchIn = f
+	return f
+}
+
+func TestSearchPrintsWhatAddTakes(t *testing.T) {
+	f := useRegistry(t,
+		registry.Result{Name: "pdf", Repository: "anthropics/skills", Skill: "pdf", Installs: 235455},
+		registry.Result{Name: "Paddle billing", Repository: "developer.paddle.com", Skill: "paddle-billing", Installs: 10},
+		registry.Result{Name: "PDF OCR", Repository: "office/skills", Skill: "pdf-ocr", Installs: 1_234_567},
+		registry.Result{Name: "pdf-tiny", Repository: "me/skills", Skill: "pdf-tiny", Installs: -1},
+	)
+	var out, errOut bytes.Buffer
+	if err := searchRegistry(context.Background(), &out, &errOut, "pdf", registry.Options{Owner: "anthropics"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "NAME       INSTALLS   SOURCE\n" +
+		"pdf        235K       anthropics/skills@pdf\n" +
+		"PDF OCR    1.2M       office/skills@pdf-ocr\n" +
+		"pdf-tiny   -          me/skills@pdf-tiny\n"
+	if out.String() != want {
+		t.Errorf("search printed\n%s\nwant\n%s", &out, want)
+	}
+	if !strings.Contains(errOut.String(), "Left out 1 skills that fake.sh found on websites") {
+		t.Errorf("search said %q, want how many it left out", &errOut)
+	}
+	if !slices.Equal(f.asked, []string{"pdf|anthropics"}) {
+		t.Errorf("asked %v", f.asked)
+	}
+
+	useRegistry(t, registry.Result{Name: "Paddle", Repository: "developer.paddle.com", Skill: "paddle"})
+	if err := searchRegistry(context.Background(), &out, &errOut, "paddle", registry.Options{}); err == nil || !strings.Contains(err.Error(), `fake.sh has no skill in a GitHub repository for "paddle"`) {
+		t.Errorf("search = %v, want an error when nothing can be added", err)
+	}
+}
+
+func TestWizardSearchesWhatIsNoSource(t *testing.T) {
+	for answer, want := range map[string]bool{
+		"pdf":                          true,
+		"frontend design":              true,
+		"next.js":                      true,
+		"anthropics/skills@pdf":        false,
+		"https://github.com/org/repo":  false,
+		"github:org/repo":              false,
+		"./skills/pdf":                 false,
+		"oci://ghcr.io/org/skills:1.0": false,
+	} {
+		if got := isQuery(answer); got != want {
+			t.Errorf("isQuery(%q) = %v, want %v", answer, got, want)
+		}
 	}
 }

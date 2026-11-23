@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -25,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/airohq/airo-cli/internal/picker"
+	"github.com/airohq/airo-cli/internal/registry"
 	"github.com/airohq/airo-cli/internal/skill"
 	"github.com/airohq/airo-cli/internal/ui"
 	"github.com/airohq/airo-cli/internal/wizard"
@@ -415,12 +417,19 @@ func addSkill(ctx context.Context, out io.Writer, c client.Client, ns, agent, ar
 	return addPinned(ctx, out, c, ns, agent, pinned, timeout)
 }
 
-// askSkills asks for a skill source until its skills pin.
+// askSource asks for a skill source, or words to search for one, until its
+// skills pin.
 func askSource(ctx context.Context, w *wizard.Wizard, o addOptions) ([]skill.Pinned, error) {
 	for {
-		answer, err := w.Required("Skill source")
+		answer, err := w.Required("Skill source, or words to search for")
 		if err != nil {
 			return nil, err
+		}
+		if isQuery(answer) {
+			if answer, err = pickResult(ctx, w, answer); err != nil {
+				w.Problem(err)
+				continue
+			}
 		}
 		s, err := skill.Parse(answer)
 		if err != nil {
@@ -464,8 +473,94 @@ func addPinned(ctx context.Context, out io.Writer, c client.Client, ns, agent st
 	return finish(ctx, out, c, a, timeout)
 }
 
-// searchSource prints the skills a source holds.
-func searchSource(ctx context.Context, out, errOut io.Writer, arg string) error {
+// isQuery says whether an answer to "Skill source" is words to search for:
+// what no source is, since a source has a slash or a colon.
+func isQuery(answer string) bool {
+	_, err := skill.Parse(answer)
+	return err != nil && !strings.ContainsAny(answer, "/:")
+}
+
+// pickResult searches the registry and returns the source of the skill the
+// person picks.
+func pickResult(ctx context.Context, w *wizard.Wizard, query string) (string, error) {
+	results, _, err := searchGitHub(ctx, query, registry.Options{Limit: searchLimit})
+	if err != nil {
+		return "", err
+	}
+	labels := make([]string, len(results))
+	for i, r := range results {
+		labels[i] = fmt.Sprintf("%s  (%s installs)", r.Source(), installs(r.Installs))
+	}
+	label, err := w.Pick("Skill", labels)
+	if err != nil {
+		return "", err
+	}
+	return results[slices.Index(labels, label)].Source(), nil
+}
+
+// searchIn is the registry that search asks. Tests replace it.
+var searchIn registry.Registry = registry.SkillsSH{Client: &http.Client{Timeout: 30 * time.Second}}
+
+// searchLimit is how many skills search shows by default.
+const searchLimit = 25
+
+// searchGitHub searches the registry for skills airo can add, and counts
+// the others, which live on websites.
+func searchGitHub(ctx context.Context, query string, o registry.Options) (results []registry.Result, others int, err error) {
+	all, err := searchIn.Search(ctx, query, o)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, r := range all {
+		if r.OnGitHub() {
+			results = append(results, r)
+		} else {
+			others++
+		}
+	}
+	if len(results) == 0 {
+		return nil, others, fmt.Errorf("%s has no skill in a GitHub repository for %q", searchIn.Name(), query)
+	}
+	return results, others, nil
+}
+
+// searchRegistry prints the skills the registry finds for the query.
+func searchRegistry(ctx context.Context, out, errOut io.Writer, query string, o registry.Options) error {
+	results, others, err := searchGitHub(ctx, query, o)
+	if err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tINSTALLS\tSOURCE")
+	for _, r := range results {
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", r.Name, installs(r.Installs), r.Source())
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if others > 0 {
+		fmt.Fprintf(errOut, "Left out %d skills that %s found on websites, which airo cannot add yet.\n", others, searchIn.Name())
+	}
+	fmt.Fprintln(errOut, "Add one with airo agent skill add SOURCE --agent NAME")
+	return nil
+}
+
+// installs shows a count of installs briefly, such as 235K.
+func installs(n int64) string {
+	switch {
+	case n < 0:
+		return "-"
+	case n >= 1_000_000:
+		return strconv.FormatFloat(float64(n)/1e6, 'f', 1, 64) + "M"
+	case n >= 10_000:
+		return strconv.FormatInt(n/1000, 10) + "K"
+	}
+	return strconv.FormatInt(n, 10)
+}
+
+// searchSource prints the skills a source holds whose names have every word
+// of the query.
+func searchSource(ctx context.Context, out, errOut io.Writer, arg, query string) error {
 	s, err := skill.Parse(arg)
 	if err != nil {
 		return err
@@ -474,16 +569,35 @@ func searchSource(ctx context.Context, out, errOut io.Writer, arg string) error 
 	if err != nil {
 		return err
 	}
-	if len(found) == 0 {
+	var matching []skill.Found
+	for _, f := range found {
+		if hasWords(f.Name, query) {
+			matching = append(matching, f)
+		}
+	}
+	switch {
+	case len(found) == 0:
 		return fmt.Errorf("%s has no SKILL.md", at.Location())
+	case len(matching) == 0:
+		return fmt.Errorf("%s has no skill named like %q", at.Location(), query)
 	}
 	fmt.Fprintf(errOut, "Skills in %s at %s\n", at.Location(), at.Commit)
 	tw := tabwriter.NewWriter(out, 0, 0, 3, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tPATH")
-	for _, f := range found {
+	for _, f := range matching {
 		fmt.Fprintf(tw, "%s\t%s\n", f.Name, cmp.Or(f.Path, "."))
 	}
 	return tw.Flush()
+}
+
+// hasWords says whether the name has every word of the query, without case.
+func hasWords(name, query string) bool {
+	for _, word := range strings.Fields(strings.ToLower(query)) {
+		if !strings.Contains(strings.ToLower(name), word) {
+			return false
+		}
+	}
+	return true
 }
 
 // upgradeSkill pins the skill again: at version when it is given, or else
@@ -871,22 +985,43 @@ commit, image tag or digest, and later upgrades follow it.`,
 		verb.Flags().StringVarP(&agent, "agent", "a", "", "name of the Agent to change; asked on a terminal when not given")
 	}
 	// search changes no agent, so it has no --agent.
+	var source string
+	var so registry.Options
 	search := &cobra.Command{
-		Use:   "search SOURCE",
-		Short: "List the skills a source holds, to add with airo agent skill add",
-		Long: `Search lists the skills in a GitHub repository, or under a path of it, by
-the names in their SKILL.md files. It takes the sources of add, and adds
-nothing. Add one with airo agent skill add SOURCE --skill NAME.`,
-		Example: `  airo agent skills search anthropics/skills
-  airo agent skills search https://github.com/openai/skills
-  airo agent skills search anthropics/skills#main`,
-		Args: cobra.ExactArgs(1),
+		Use:   "search QUERY",
+		Short: "Search for skills to add with airo agent skill add",
+		Long: `Search asks ` + searchIn.Name() + `, the directory of skills that npx skills find
+searches, for skills that match every word of QUERY, and prints them with
+the SOURCE that airo agent skill add takes. It adds nothing.
+
+--owner keeps the skills of one GitHub owner. --source lists the skills in
+a GitHub repository instead, or under a path of it, by the names in their
+SKILL.md files: all of them, or those whose names have the words of QUERY.
+It takes the sources of add.`,
+		Example: `  airo agent skills search pdf
+  airo agent skills search "frontend design" --owner anthropics
+  airo agent skills search --source anthropics/skills
+  airo agent skills search security --source https://github.com/openai/skills`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			query := strings.Join(args, " ")
+			switch {
+			case source != "" && so.Owner != "":
+				return errors.New("give --owner or --source, not both")
+			case source == "" && query == "":
+				return errors.New("give the words to search for, or --source to list the skills of a repository")
+			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return searchSource(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0])
+			if source != "" {
+				return searchSource(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), source, query)
+			}
+			return searchRegistry(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), query, so)
 		},
 	}
+	search.Flags().StringVar(&so.Owner, "owner", "", "keep the skills of this GitHub owner, such as anthropics")
+	search.Flags().StringVar(&source, "source", "", "list the skills of this source, such as OWNER/REPO, instead of searching "+searchIn.Name())
+	search.Flags().IntVar(&so.Limit, "limit", searchLimit, "the most skills to show")
 	cmd.AddCommand(list, search, add, upgrade, remove)
 	return cmd
 }

@@ -645,19 +645,42 @@ listing them.
 | `--rename NAME` | Names the one skill added, as `NAME=SOURCE` does |
 | `-y` | Accepted, so a copied command works. `airo` asks only for what is missing |
 
-**`airo agent skill search SOURCE` lists the skills a source holds**, by the
-names in their `SKILL.md` files, and adds none. It needs no agent.
+**`airo agent skill search QUERY` finds skills to add.** It asks
+[skills.sh](https://skills.sh), the directory `npx skills find` searches,
+for the skills that match every word, and prints the `SOURCE` that `add`
+takes. It adds nothing, and needs no agent.
 
 ```sh
-airo agent skills search https://github.com/openai/skills
+airo agent skills search frontend design
 ```
 
 ```text
-NAME                      PATH
-aspnet-core               skills/.curated/aspnet-core
-security-best-practices   skills/.curated/security-best-practices
+NAME                       INSTALLS   SOURCE
+frontend-design            1.2M       anthropics/skills@frontend-design
+design-taste-frontend      813K       leonxlnx/taste-skill@design-taste-frontend
 ...
 ```
+
+| Flag of `search` | Does |
+| --- | --- |
+| `--owner OWNER` | Keeps the skills of one GitHub owner, such as `anthropics` |
+| `--source SOURCE` | Lists the skills in a repository instead, or under a path of it, by the names in their `SKILL.md` files. With a QUERY, only those whose names have its words |
+| `--limit N` | Shows at most N skills, 25 by default |
+
+```sh
+airo agent skills search --source anthropics/skills
+airo agent skills search security --source https://github.com/openai/skills
+```
+
+A query of a few words that finds few skills is asked again without each
+word, as `npx skills find` does. skills.sh also lists skills that websites
+publish rather than GitHub repositories. `airo` cannot add those yet, so
+it leaves them out and says how many. skills.sh limits how often an address
+may search.
+
+**The wizard of `add` searches too.** A bare `airo agent skill add` asks
+for a skill's source, or words to search for: words show the matching
+skills to pick from.
 
 Finding a skill by name works only in a GitHub repository. On another host,
 give the skill's directory. A local directory does not work, because the
