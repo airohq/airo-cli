@@ -17,7 +17,7 @@ require (
 	github.com/moby/moby/client v0.6.3
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.1.0
-	github.com/yuin/goldmark v1.7.17
+	github.com/yuin/goldmark v1.8.7
 	golang.org/x/oauth2 v0.38.0
 	golang.org/x/term v0.48.0
 	k8s.io/api v0.37.2
