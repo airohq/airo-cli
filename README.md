@@ -825,12 +825,18 @@ Open the link from Claude Code in your browser and paste its authorization
 code in the serving terminal when prompted. The sandbox keeps the selected
 provider's credentials in a separate volume on the container engine. Later
 runs on the same machine and engine reuse the login, including after a
-temporary Agent's workspace is removed. To forget it locally, stop the
-workers and run `docker volume rm VOLUME` with the name printed at sign-in.
+temporary Agent's workspace is removed, and keep the tokens Claude Code
+refreshes during turns. When the saved login has expired or was signed out,
+the next `serve` or `connect` asks you to sign in again. A turn that fails
+because Claude is no longer signed in says so; restart the command in a
+terminal to sign in. To forget the login locally, stop the workers and run
+`docker volume rm VOLUME` with the name printed at sign-in.
 
 For unattended use, sign in once interactively or export a credential in
 the serving shell. Codex accepts `CODEX_API_KEY` or `OPENAI_API_KEY`.
 Claude Code accepts `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`.
+`claude setup-token` prints a `CLAUDE_CODE_OAUTH_TOKEN` that lasts a year and
+needs no refresh, but only makes model requests.
 An exported credential takes precedence over a saved login. Custom images
 handle their own sign-in.
 Add `-v` or `--verbose` to see the image, credential variable names, turn

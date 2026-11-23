@@ -7,7 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.1.2
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.1.1
-	github.com/airohq/kagent-remote-harness/runner v0.6.0
+	github.com/airohq/kagent-remote-harness/runner v0.7.0
 	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/andydunstall/piko v0.10.1
 	github.com/charmbracelet/colorprofile v0.4.3
