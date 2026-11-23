@@ -47,9 +47,10 @@ resource's noun**: `airo agent skill add SOURCE`. Such a part, like a skill
 in an Agent, is not a kind in the cluster.
 
 - **The resource is a flag named for the outer noun**, with its short form:
-  `--agent` or `-a`. It is resolved as any missing choice is ([Default
-  task](#default-task)). It is never a second argument, because everything
-  but the one argument is a flag.
+  `--agent` or `-a`. It has no default, because the command changes the
+  resource: without the flag, airo asks on a terminal, even when the project
+  has one, and fails elsewhere. It is never a second argument, because
+  everything but the one argument is a flag.
 - **Its verbs are `list`, `add` and `remove`**, not `create` and `delete`,
   because they change the outer resource and make or delete none. A verb of
   its own may follow, such as `upgrade`, which moves a pinned version to a

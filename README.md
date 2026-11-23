@@ -592,8 +592,10 @@ agent, or change it with `airo apply -f`. Tools, an AgentTemplate
 ### Skills
 
 **`airo agent skill` lists, adds, upgrades and removes an agent's skills.**
-Without `--agent` (`-a`), it takes the project's only agent, then the one
-marked as default, then asks, as `airo chat` does.
+Each verb acts on the agent named with `--agent` (`-a`). Unlike `airo chat`,
+it has no default agent, because the verbs change the agent: without
+`--agent`, `airo` asks on a terminal and fails elsewhere. A bare
+`airo agent skill add` asks for the skill's source, then for the agent.
 
 ```sh
 airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf -a reviewer

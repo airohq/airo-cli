@@ -29,12 +29,18 @@ type Wizard struct {
 // New returns nil when input, results or questions are redirected. The
 // heading appears only if the command actually needs to ask a question.
 func New(cmd *cobra.Command, kind, project string) *Wizard {
+	return WithHeader(cmd, fmt.Sprintf("Creating %s in project %s", kind, ui.Text(project)))
+}
+
+// WithHeader is New for a task other than creating a resource, such as
+// adding a skill to an agent.
+func WithHeader(cmd *cobra.Command, header string) *Wizard {
 	in, out := cmd.InOrStdin(), cmd.ErrOrStderr()
 	if !ui.Interactive(in, cmd.OutOrStdout()) || !ui.IsTerminal(out) {
 		return nil
 	}
 	return &Wizard{ctx: cmd.Context(), in: in, out: out, lines: bufio.NewReader(in),
-		header: fmt.Sprintf("Creating %s in project %s", kind, ui.Text(project)), palette: ui.NewPalette(out)}
+		header: header, palette: ui.NewPalette(out)}
 }
 
 var errCanceled = errors.New("creation canceled")

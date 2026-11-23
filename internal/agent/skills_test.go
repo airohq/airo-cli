@@ -194,3 +194,29 @@ func TestSkillCommandsRefuseATemplateAgent(t *testing.T) {
 		t.Errorf("list = %v, want an error for a missing agent", err)
 	}
 }
+
+func TestSkillCommandsTakeNoDefaultAgent(t *testing.T) {
+	ctx := context.Background()
+	only := resource(agentGVK, "only", map[string]any{})
+	only.SetAnnotations(map[string]string{defaultAnnotation: "true"})
+	c := fake.NewClientBuilder().WithObjects(only).Build()
+
+	// Without anybody to ask, even the only agent, marked as default, is
+	// not taken.
+	if _, err := pickToChange(ctx, c, "team", "", nil); err == nil || !strings.Contains(err.Error(), "--agent: project team has only") {
+		t.Errorf("pick = %v, want an error that names the agents", err)
+	}
+	var asked []string
+	ask := func(names []string) (string, error) { asked = names; return names[0], nil }
+	if name, err := pickToChange(ctx, c, "team", "", ask); err != nil || name != "only" || len(asked) != 1 {
+		t.Errorf("pick = %q, %v after asking %v, want the agent the person picks", name, err, asked)
+	}
+	asked = nil
+	if name, err := pickToChange(ctx, c, "team", "named", ask); err != nil || name != "named" || asked != nil {
+		t.Errorf("pick = %q, %v after asking %v, want the agent named without asking", name, err, asked)
+	}
+	empty := fake.NewClientBuilder().Build()
+	if _, err := pickToChange(ctx, empty, "team", "", ask); err == nil || !strings.Contains(err.Error(), "has no agent") {
+		t.Errorf("pick = %v, want an error for a project without agents", err)
+	}
+}

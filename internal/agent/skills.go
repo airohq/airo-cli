@@ -296,10 +296,32 @@ func addSkill(ctx context.Context, out io.Writer, c client.Client, ns, agent, ar
 	if err != nil {
 		return err
 	}
+	return addPinned(ctx, out, c, ns, agent, p, timeout)
+}
+
+// askSkill asks for a skill source until one pins.
+func askSkill(ctx context.Context, w *wizard.Wizard) (skill.Pinned, error) {
+	for {
+		answer, err := w.Required("Skill source")
+		if err != nil {
+			return skill.Pinned{}, err
+		}
+		p, err := parseAndPin(ctx, answer, nil)
+		if err != nil {
+			w.Problem(err)
+			continue
+		}
+		w.Note(fmt.Sprintf("  %s at %s", p.Name, p.Pin()))
+		return p, nil
+	}
+}
+
+// addPinned adds a pinned skill to the Agent.
+func addPinned(ctx context.Context, out io.Writer, c client.Client, ns, agent string, p skill.Pinned, timeout time.Duration) error {
 	a, err := changeSkills(ctx, c, ns, agent, func(a *unstructured.Unstructured, entries []any) ([]any, error) {
 		for _, entry := range entries {
 			if entryName(entry) == p.Name {
-				return nil, fmt.Errorf("agent %s has a skill named %s: upgrade it with airo agent skill upgrade %s, or name the new one with NAME=SOURCE", agent, p.Name, p.Name)
+				return nil, fmt.Errorf("agent %s has a skill named %s: upgrade it with airo agent skill upgrade %s --agent %s, or name the new one with NAME=SOURCE", agent, p.Name, p.Name, agent)
 			}
 		}
 		v := versions(a)
@@ -420,18 +442,59 @@ type skillTarget struct {
 	ns, agent string
 }
 
-// target resolves --agent as airo chat does: the one named, the project's
-// only one, the one marked as default, or the one the person picks.
-func target(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.ConfigFlags, agent string) (skillTarget, error) {
+// pickToChange returns the Agent a skill command changes: the one named, or
+// else the one ask returns. Unlike airo chat, it takes no default, not even
+// the project's only agent, because the command changes the Agent. ask is
+// nil when there is nobody to ask.
+func pickToChange(ctx context.Context, c client.Client, ns, name string, ask func([]string) (string, error)) (string, error) {
+	if name != "" {
+		return name, nil
+	}
+	names, err := agentNames(ctx, c, ns)
+	if err != nil {
+		return "", err
+	}
+	if ask != nil {
+		return ask(names)
+	}
+	return "", fmt.Errorf("name the agent to change with --agent: project %s has %s", ns, strings.Join(names, ", "))
+}
+
+// agentNames returns the names of the project's Agents, sorted, or an error
+// when it has none.
+func agentNames(ctx context.Context, c client.Client, ns string) ([]string, error) {
+	items, err := list(ctx, c, ns, agents)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for i := range items {
+		names = append(names, items[i].GetName())
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("project %s has no agent: make one with airo agent create", ns)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// connect returns a client and the project of the kubeconfig.
+func connect(flags *genericclioptions.ConfigFlags) (client.Client, string, error) {
 	ns, _, err := flags.ToRawKubeConfigLoader().Namespace()
 	if err != nil {
-		return skillTarget{}, err
+		return nil, "", err
 	}
 	cfg, err := flags.ToRESTConfig()
 	if err != nil {
-		return skillTarget{}, err
+		return nil, "", err
 	}
 	c, err := client.New(cfg, client.Options{})
+	return c, ns, err
+}
+
+// target resolves --agent: the one named, or the one the person picks.
+func target(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.ConfigFlags, agent string) (skillTarget, error) {
+	c, ns, err := connect(flags)
 	if err != nil {
 		return skillTarget{}, err
 	}
@@ -446,8 +509,44 @@ func target(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.Co
 			return name, err
 		}
 	}
-	agent, err = pick(ctx, c, ns, agent, ask)
+	agent, err = pickToChange(ctx, c, ns, agent, ask)
 	return skillTarget{c: c, ns: ns, agent: agent}, err
+}
+
+// addWizard asks for the source of a skill, then for the Agent unless agent
+// names it, and adds the skill.
+func addWizard(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, agent string) error {
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	c, ns, err := connect(flags)
+	if err != nil {
+		return err
+	}
+	header := fmt.Sprintf("Adding a skill to an agent in project %s", ui.Text(ns))
+	if agent != "" {
+		header = fmt.Sprintf("Adding a skill to agent %s/%s", ui.Text(ns), ui.Text(agent))
+	}
+	w := wizard.WithHeader(cmd, header)
+	if w == nil {
+		return errors.New("provide SOURCE as an argument when running without a terminal")
+	}
+	var names []string
+	if agent == "" {
+		// A project without agents fails before anything is asked.
+		if names, err = agentNames(ctx, c, ns); err != nil {
+			return err
+		}
+	}
+	p, err := askSkill(ctx, w)
+	if err != nil {
+		return err
+	}
+	if agent == "" {
+		if agent, err = w.Pick("Agent", names); err != nil {
+			return err
+		}
+	}
+	return addPinned(ctx, cmd.OutOrStdout(), c, ns, agent, p, readyTimeout)
 }
 
 func newSkillCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
@@ -472,14 +571,15 @@ The Agent holds only immutable versions: airo pins a branch or a tag to its
 commit, and an image tag to its digest. Upgrade pins the skill again, at the
 version it was added with, or at --version.
 
-Without --agent, airo takes the project's only agent, then the one with the
-annotation ` + defaultAnnotation + `: "true", then asks.`,
-		Example: `  airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf -a reviewer
-  airo agent skill add docs=https://git.example.com/team/skills//docs@v1.2
-  airo agent skill list
-  airo agent skill upgrade pdf
-  airo agent skill upgrade docs --version v1.3
-  airo agent skill remove pdf`,
+Every verb acts on the Agent named with --agent (-a). Unlike airo chat, it
+has no default agent, because the verbs change the Agent: without --agent,
+airo asks on a terminal and fails elsewhere.`,
+		Example: `  airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf --agent reviewer
+  airo agent skill add docs=https://git.example.com/team/skills//docs@v1.2 -a reviewer
+  airo agent skill list -a reviewer
+  airo agent skill upgrade pdf -a reviewer
+  airo agent skill upgrade docs --version v1.3 -a reviewer
+  airo agent skill remove pdf -a reviewer`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
@@ -487,7 +587,6 @@ annotation ` + defaultAnnotation + `: "true", then asks.`,
 			return fmt.Errorf("unknown skill verb %q: see airo agent skill --help for verbs", args[0])
 		},
 	}
-	cmd.PersistentFlags().StringVarP(&agent, "agent", "a", "", "name of the Agent (default: the project's only one, or its default)")
 
 	// run resolves the Agent, then runs the verb until Ctrl-C.
 	run := func(cmd *cobra.Command, verb func(ctx context.Context, t skillTarget) error) error {
@@ -501,7 +600,7 @@ annotation ` + defaultAnnotation + `: "true", then asks.`,
 	}
 
 	list := &cobra.Command{
-		Use:   "list",
+		Use:   "list --agent NAME",
 		Short: "List the agent's skills",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -511,10 +610,16 @@ annotation ` + defaultAnnotation + `: "true", then asks.`,
 		},
 	}
 	add := &cobra.Command{
-		Use:   "add SOURCE",
+		Use:   "add SOURCE --agent NAME",
 		Short: "Add a skill to the agent, pinned to its current version",
-		Args:  cobra.ExactArgs(1),
+		Long: `Add pins a skill's source to an immutable version and adds it to the
+Agent. Without SOURCE, airo asks for the source on a terminal, and then for
+the agent unless --agent names it.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return addWizard(cmd, flags, agent)
+			}
 			// A source airo cannot read fails before the cluster is asked.
 			if _, err := skill.Parse(args[0]); err != nil {
 				return err
@@ -526,7 +631,7 @@ annotation ` + defaultAnnotation + `: "true", then asks.`,
 	}
 	var version string
 	upgrade := &cobra.Command{
-		Use:   "upgrade NAME",
+		Use:   "upgrade SKILL --agent NAME",
 		Short: "Pin a skill to the newest commit of its version, or to --version",
 		Long: `Upgrade pins the skill again. Without --version it resolves the version the
 skill was added with: a branch moves to its newest commit, and a skill added
@@ -542,7 +647,7 @@ commit, image tag or digest, and later upgrades follow it.`,
 	}
 	upgrade.Flags().StringVar(&version, "version", "", "the branch, tag, commit, image tag or digest to pin the skill to")
 	remove := &cobra.Command{
-		Use:   "remove NAME",
+		Use:   "remove SKILL --agent NAME",
 		Short: "Remove a skill from the agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -550,6 +655,10 @@ commit, image tag or digest, and later upgrades follow it.`,
 				return removeSkill(ctx, cmd.OutOrStdout(), t.c, t.ns, t.agent, args[0], readyTimeout)
 			})
 		},
+	}
+	// Each verb holds --agent itself, so that its help lists the flag.
+	for _, verb := range []*cobra.Command{list, add, upgrade, remove} {
+		verb.Flags().StringVarP(&agent, "agent", "a", "", "name of the Agent to change; asked on a terminal when not given")
 	}
 	cmd.AddCommand(list, add, upgrade, remove)
 	return cmd
