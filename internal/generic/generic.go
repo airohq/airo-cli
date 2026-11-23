@@ -26,16 +26,31 @@ func AddResourceHandler(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 	runDelete := deleteRunner(cmd, flags, nil)
 	runEdit := editRunner(cmd, flags)
 	cmd.Args = cobra.ArbitraryArgs
+	// airo KIND -h shows the kind's verbs, as airo agent -h shows its own,
+	// not the help of airo.
+	rootHelp := cmd.HelpFunc()
+	cmd.SetHelpFunc(func(c *cobra.Command, args []string) {
+		words := c.Flags().Args()
+		if c != cmd || len(words) == 0 {
+			rootHelp(c, args)
+			return
+		}
+		if shown, err := showKindHelp(cmd, flags, words); !shown {
+			fmt.Fprintf(c.ErrOrStderr(), "Error: %v\n\n", err)
+			rootHelp(c, args)
+		} else if err != nil {
+			fmt.Fprintf(c.ErrOrStderr(), "Error: %v\n", err)
+		}
+	})
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return cmd.Help()
 		}
 		kind := args[0]
 		if len(args) == 1 {
-			if _, err := mapping(flags, kind); err != nil {
-				return err
-			}
-			return fmt.Errorf("airo %s needs a verb: %s", kind, Verbs)
+			// Without a verb, a kind shows its verbs, as airo agent does.
+			_, err := showKindHelp(cmd, flags, args)
+			return err
 		}
 		switch args[1] {
 		case "list":

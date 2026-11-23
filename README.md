@@ -289,6 +289,8 @@ A value of `"true"` shows as enabled. Any other value shows as disabled.
 
 **Every kind of resource in the cluster is a noun with `list`, `get`, `describe`, `edit` and
 `delete`**, including custom resources added after this CLI was built.
+`airo RESOURCE` or `airo RESOURCE -h`, such as `airo configmap -h`, shows
+those verbs for the kind, as `airo agent -h` shows the agent's.
 `airo RESOURCE list` and `airo RESOURCE get` both run the equivalent of
 `kubectl get RESOURCE`. Add a name to `get` to show one object. Both verbs
 use kubectl's Go library for discovery, server-provided columns, pagination,
