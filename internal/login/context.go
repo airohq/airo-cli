@@ -28,6 +28,7 @@ const previousArg = "-"
 func NewContextCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "context [NAME|-]",
+		Hidden:  true,
 		Aliases: []string{"contexts", "ctx"},
 		Short:   "Switch between your sign-ins",
 		Long: `Context makes another sign-in the current context of your kubeconfig, for
@@ -132,7 +133,7 @@ and a new sign-in is made with airo login.`,
 			name := *flags.Context
 			if len(args) == 1 {
 				if name != "" && name != args[0] {
-					return fmt.Errorf("name one context: got %s and --context %s", args[0], name)
+					return fmt.Errorf("name one context: got %s and the selected sign-in %s", args[0], name)
 				}
 				name = args[0]
 			}
@@ -205,7 +206,9 @@ func setContext(out io.Writer, access clientcmd.ConfigAccess, name string, p pla
 			o.clientID = p.clientID
 		}
 		// As airo login does, this takes over an entry that ran kubelogin.
-		o.session = name
+		if o.session == "" {
+			o.session = kctx.AuthInfo
+		}
 		cfg.AuthInfos[kctx.AuthInfo] = execUser(o, cfg.AuthInfos[kctx.AuthInfo].LocationOfOrigin)
 	}
 	if namespace != "" {

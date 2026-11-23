@@ -21,19 +21,52 @@ import (
 var tenantResource = schema.GroupVersionResource{Group: "capsule.clastix.io", Version: "v1beta2", Resource: "tenants"}
 
 // NewTenantCommand shows tenant-wide solutions and capabilities.
-func NewTenantCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
+func NewTenantCommand(flags *genericclioptions.ConfigFlags, selection *Selection) *cobra.Command {
 	var name string
 	cmd := &cobra.Command{
-		Use:     "tenant",
+		Use:     "tenant [NAME]",
 		Aliases: []string{"tenants"},
-		Short:   "Show your tenant and its solutions and capabilities",
-		Example: "  airo tenant\n  airo tenant --name acme",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return showTenant(cmd.Context(), cmd.OutOrStdout(), flags, name)
+		Short:   "Switch tenants or show the selected tenant’s solutions and capabilities",
+		Example: "  airo tenant\n  airo tenant acme",
+		Args:    cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if name != "" {
+				if len(args) != 0 {
+					return fmt.Errorf("use --name to inspect a tenant or a positional name to switch tenants")
+				}
+				return showTenant(cmd.Context(), cmd.OutOrStdout(), flags, name)
+			}
+			if len(args) == 0 {
+				return showTenant(cmd.Context(), cmd.OutOrStdout(), flags, selection.Tenant)
+			}
+			if cmd.Flags().Changed("tenant") && selection.Tenant != args[0] {
+				return fmt.Errorf("choose one tenant: got %s and %s", args[0], selection.Tenant)
+			}
+			access := flags.ToRawKubeConfigLoader().ConfigAccess()
+			cfg, err := access.GetStartingConfig()
+			if err != nil {
+				return err
+			}
+			edit := configEdit{access, cfg.DeepCopy()}
+			base := selectedContext(cfg, flags)
+			if _, err := oidcOf(cfg, base); err != nil {
+				return contextError(base, err)
+			}
+			rc, err := flags.ToRESTConfig()
+			if err != nil {
+				return err
+			}
+			if err := selectTenant(cmd.Context(), cfg, base, args[0], *flags.Namespace, rc); err != nil {
+				return err
+			}
+			if err := edit.save(cfg); err != nil {
+				return err
+			}
+			writeSelection(cmd.OutOrStdout(), args[0], cfg.Contexts[cfg.CurrentContext].Namespace)
+			return nil
 		},
 	}
-	cmd.Flags().StringVar(&name, "name", "", "name of the tenant to inspect (defaults to your tenant membership)")
+	cmd.Flags().StringVar(&name, "name", "", "name of the tenant to inspect (defaults to the selected tenant)")
 	verbs := generic.Commands(flags, cmd.Name())
 	for _, verb := range verbs {
 		if verb.Name() == "list" {

@@ -19,7 +19,7 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 			[]string{"Usage:\n  airo [resource] [verb] [options]\n", "  airo login", "  airo project list", "  airo agent list",
 				"Resource Commands:", "  agent ", "  session ", "  tunnel ",
 				"Authentication Commands:", "  login ", "  whoami ",
-				"Configuration Commands:", "  context ", "  project ", "  status ",
+				"Configuration Commands:", "  project ", "  status ", "  tenant ",
 				"Advanced Commands:", "  apply ", "  completion ",
 				"Other Commands:", "  chat ", "  help ", "  options ", "  version ", "airo options"},
 			[]string{"--kubeconfig", "modelconfig", "credential", "airo [command]\n"},
@@ -83,8 +83,8 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 		},
 		{
 			[]string{"options"},
-			[]string{"--context", "--kubeconfig", "--namespace"},
-			[]string{"--output", "--all-namespaces"},
+			[]string{"--kubeconfig", "--project", "--tenant"},
+			[]string{"--output", "--all-namespaces", "--namespace", "--context"},
 		},
 	} {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {

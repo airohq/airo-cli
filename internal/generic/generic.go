@@ -190,3 +190,12 @@ func mapping(flags *genericclioptions.ConfigFlags, kind string) (*meta.RESTMappi
 	}
 	return mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 }
+
+// Namespaced reports whether a generic resource command needs a project.
+func Namespaced(flags *genericclioptions.ConfigFlags, kind string) (bool, error) {
+	m, err := mapping(flags, kind)
+	if err != nil {
+		return false, err
+	}
+	return m.Scope.Name() == meta.RESTScopeNameNamespace, nil
+}

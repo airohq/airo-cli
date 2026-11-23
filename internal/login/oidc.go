@@ -40,45 +40,48 @@ type tokens struct {
 const expirySkew = time.Minute
 
 // token returns an ID token and its expiry: the cached one, a refreshed one,
-// or a new one after the person signs in. fresh skips the cache, to pick up
-// new groups.
-func (o oidc) token(ctx context.Context, prompt io.Writer, fresh bool) (string, time.Time, error) {
+// or a new one after the person signs in.
+func (o oidc) token(ctx context.Context, prompt io.Writer) (string, time.Time, error) {
 	path, err := o.cachePath()
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	cached := tokens{}
-	if !fresh {
-		cached = load(path)
-		if exp, err := expiry(cached.IDToken); err == nil && time.Until(exp) > expirySkew {
-			return cached.IDToken, exp, nil
-		}
+	cached := load(path)
+	if exp, err := expiry(cached.IDToken); err == nil && time.Until(exp) > expirySkew {
+		return cached.IDToken, exp, nil
 	}
-	cfg, err := o.config(ctx)
+	token, exp, err := o.authenticate(ctx, prompt, cached.RefreshToken)
 	if err != nil {
 		return "", time.Time{}, err
 	}
+	return token.IDToken, exp, save(path, token)
+}
+
+// authenticate leaves the sign-in cache untouched until the caller has
+// verified the identity and the tenant selected for it.
+func (o oidc) authenticate(ctx context.Context, prompt io.Writer, refresh string) (tokens, time.Time, error) {
+	cfg, err := o.config(ctx)
+	if err != nil {
+		return tokens{}, time.Time{}, err
+	}
 
 	var tok *oauth2.Token
-	if cached.RefreshToken != "" {
+	if refresh != "" {
 		// A refused refresh token, such as one older than its lifetime,
 		// falls through to signing in.
-		tok, _ = cfg.TokenSource(ctx, &oauth2.Token{RefreshToken: cached.RefreshToken}).Token()
+		tok, _ = cfg.TokenSource(ctx, &oauth2.Token{RefreshToken: refresh}).Token()
 	}
 	if tok == nil {
 		if tok, err = signIn(ctx, cfg, prompt); err != nil {
-			return "", time.Time{}, err
+			return tokens{}, time.Time{}, err
 		}
 	}
 	id, _ := tok.Extra("id_token").(string)
 	exp, err := expiry(id)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("%s gave no usable ID token: %w", o.issuer, err)
+		return tokens{}, time.Time{}, fmt.Errorf("%s gave no usable ID token: %w", o.issuer, err)
 	}
-	if err := save(path, tokens{IDToken: id, RefreshToken: tok.RefreshToken}); err != nil {
-		return "", time.Time{}, err
-	}
-	return id, exp, nil
+	return tokens{IDToken: id, RefreshToken: tok.RefreshToken}, exp, nil
 }
 
 // signIn runs the device flow: the person confirms a code in the browser, so

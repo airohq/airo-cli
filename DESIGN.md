@@ -36,7 +36,7 @@ such as `airo login`, has one name.
 **A noun that is not a kind in the cluster has only hand-written verbs.**
 `airo session` is one: a session lives in the agents' API. It has `list`,
 because people expect it, and no `get` or `delete`. Without a verb it prints
-the help. `airo context` is another: a context lives in the kubeconfig.
+the help.
 
 **A noun that is the platform's word for a kind has its own verbs too.**
 `airo project` is one: a project is a Namespace, and `airo namespace list`
@@ -59,8 +59,7 @@ in an Agent, is not a kind in the cluster.
 - **It changes only the part it names.** The resource's other fields stay,
   also those this airo does not know.
 
-**A noun gets a short form when people already know one**, such as `airo
-ctx` for `airo context`. Add it as an alias when you add the noun.
+**A noun gets a short form when people already know one**, as with familiar kubectl resource names.
 
 - **Take the short form people use elsewhere**, such as kubectl's short
   names and `kubectx`. Do not invent one.
@@ -92,11 +91,10 @@ tunnel 3000` serves a local port. A bare `airo agent` shows its resource command
 - **Its argument is what the task acts on.** In `airo tunnel 3000 --name my-app`,
   the argument gives the port and the flag names the tunnel.
 - **A noun whose task is to switch to one of its own is the exception.**
-  `airo context customer` takes the context's name, because the name is all
-  the task needs. `-` switches back to the previous one, as in `cd -`.
-  `airo project acme-web` is the same for the project the commands work in.
-- **A verb wins over an argument.** `airo context list` lists contexts.
-  A context named `list` is selected with `airo context -- list`.
+  `airo tenant acme` selects the tenant, and `airo project acme-web` selects
+  the project. `airo project -` restores the previous project in that tenant.
+- **A verb wins over an argument.** `airo tenant list` lists tenants.
+  A tenant named `list` is selected with `airo tenant -- list`.
 - **Free-form prompts belong to `airo chat`.** `airo chat list` sends the
   word `list`. `airo agent list` lists agents, and an unknown agent verb
   returns an error.
@@ -131,20 +129,19 @@ tunnel 3000` serves a local port. A bare `airo agent` shows its resource command
   the shortest form does something useful.
 - **A flag is named for what the person gets**, such as `--public` and
   `--no-auth`. The README names the field it sets.
-- **kubectl's flags mean the same here**: `-n`, `--context`, `--kubeconfig`,
-  and `-o yaml` on `get`, `list` and `view`.
+- **Name the working scope with `--tenant` and `--project`.** A tenant
+  selection belongs to one platform and sign-in. Each tenant remembers its
+  project as the namespace of its kubeconfig context. Resource commands
+  accept either override for one invocation. The cluster decides access.
+- **Switch persistently with `airo tenant NAME` or `airo project NAME`.**
+  Login stores explicit choices. On a first login, resolve a sole membership
+  automatically and ask when several are available. Scripts pass `--tenant`.
 - **Use `--name` when a flag names the command's own resource.** For example,
   `airo tenant --name phasi` selects the tenant named `phasi`.
 - **When a flag refers to another resource by name, use the target resource's
   singular noun as the flag.** In `airo agent create --harness claude`,
   `--harness` selects the harness named `claude`. Use the same flag wherever
   another command refers to that resource.
-- **`airo login` keeps what its flags say**: `--server`, `--context` and `-n`
-  choose for one command elsewhere, and `airo login` writes them into the
-  kubeconfig for every later command.
-- **`airo context set` keeps them too, without signing in.** It takes
-  `airo login`'s flags and changes an existing sign-in, as `kubectl config
-  set-context` and `set-cluster` do. Only `airo login` makes a sign-in.
 
 ## Output
 
