@@ -7,6 +7,14 @@
 //	https://HOST/REPO[//PATH][@VERSION]           any Git host over HTTP(S)
 //	oci://IMAGE[:TAG|@sha256:DIGEST][//PATH]      an OCI image
 //
+// or as the npx skills command takes it, from the skills CLI's source parser
+// (github.com/vercel-labs/skills, src/source-parser.ts, 2026-11):
+//
+//	OWNER/REPO[/PATH][@SKILL|@VERSION]   a GitHub repository
+//	OWNER/REPO#REF[@SKILL]               at a branch, a tag or a commit
+//	github:OWNER/REPO, gitlab:OWNER/REPO the same on GitHub or GitLab
+//	git@HOST:OWNER/REPO                  a repository by its SSH address
+//
 // with an optional NAME= in front. The cluster fetches skills without
 // credentials, so a source must be public, or an image the cluster can pull.
 package skill
@@ -34,6 +42,10 @@ type Skill struct {
 	// image tag or a digest. Empty follows the default branch, or the image
 	// tag latest.
 	Version string
+	// Find is the name of a skill in a GitHub repository, as npx skills
+	// takes it in OWNER/REPO@SKILL and --skill. Pinning finds the
+	// directory whose SKILL.md has the name, and sets Path.
+	Find string
 
 	// tree is the rest of a GitHub page's URL: a ref and a path, which only
 	// the repository's refs can tell apart, since a branch may have a slash.
@@ -110,8 +122,64 @@ func Parse(arg string) (Skill, error) {
 		return parseOCI(s, strings.TrimPrefix(arg, "oci://"))
 	case strings.HasPrefix(arg, "https://"), strings.HasPrefix(arg, "http://"):
 		return parseGit(s, arg)
+	case strings.HasPrefix(arg, "github:"):
+		return parseShorthand(s, strings.TrimPrefix(arg, "github:"), "github.com")
+	case strings.HasPrefix(arg, "gitlab:"):
+		return parseShorthand(s, strings.TrimPrefix(arg, "gitlab:"), "gitlab.com")
+	case sshAddress.MatchString(arg):
+		// The cluster fetches without credentials, so over HTTPS.
+		m := sshAddress.FindStringSubmatch(arg)
+		return parseGit(s, "https://"+m[1]+"/"+m[2])
+	case strings.HasPrefix(arg, ".") || strings.HasPrefix(arg, "/") || strings.HasPrefix(arg, "~"):
+		return s, fmt.Errorf("the skill source %q is a local directory, which the cluster cannot fetch: push it to a public Git repository and give its URL", arg)
+	case strings.Contains(arg, "/") && !strings.Contains(arg, ":"):
+		return parseShorthand(s, arg, "github.com")
 	}
-	return s, fmt.Errorf("cannot read the skill source %q: give a Git repository such as https://github.com/OWNER/REPO/tree/main/PATH or https://HOST/REPO//PATH@VERSION, or an image such as oci://IMAGE:TAG", arg)
+	return s, fmt.Errorf("cannot read the skill source %q: give a GitHub repository such as OWNER/REPO@SKILL, a Git repository such as https://github.com/OWNER/REPO/tree/main/PATH or https://HOST/REPO//PATH@VERSION, or an image such as oci://IMAGE:TAG", arg)
+}
+
+// sshAddress is git@HOST:PATH, as a Git host shows a repository's SSH
+// address.
+var sshAddress = regexp.MustCompile(`^git@([^:/]+):([^:]+)$`)
+
+// versionPin is what npx skills reads as a version in OWNER/REPO@X, rather
+// than a skill's name: a semantic version or a full commit.
+var versionPin = regexp.MustCompile(`^v?\d+(\.\d+)+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+
+// parseShorthand reads OWNER/REPO[/PATH][#REF][@SKILL|@VERSION] on host.
+func parseShorthand(s Skill, arg, host string) (Skill, error) {
+	repo, fragment, hasRef := strings.Cut(arg, "#")
+	var at string
+	var hasAt bool
+	if hasRef {
+		// #@SKILL takes the default branch.
+		s.Version, at, hasAt = strings.Cut(fragment, "@")
+		s.Find = at
+	} else if repo, at, hasAt = strings.Cut(repo, "@"); hasAt {
+		if versionPin.MatchString(at) || isCommit(at) {
+			s.Version = at
+		} else {
+			s.Find = at
+		}
+	}
+	switch {
+	case hasAt && at == "":
+		return s, fmt.Errorf("the skill source %q has nothing after @", arg)
+	case hasRef && s.Version == "" && s.Find == "":
+		return s, fmt.Errorf("the skill source %q has nothing after #", arg)
+	}
+	parts := strings.SplitN(repo, "/", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(repo, " \t?") {
+		return s, fmt.Errorf("cannot read the skill source %q: give OWNER/REPO", arg)
+	}
+	s.Git = "https://" + host + "/" + parts[0] + "/" + strings.TrimSuffix(parts[1], ".git")
+	if len(parts) == 3 {
+		var err error
+		if s.Path, err = cleanPath(parts[2]); err != nil {
+			return s, err
+		}
+	}
+	return s, nil
 }
 
 func parseGit(s Skill, arg string) (Skill, error) {
@@ -121,8 +189,18 @@ func parseGit(s Skill, arg string) (Skill, error) {
 		return s, fmt.Errorf("cannot read the skill source %q as a URL", arg)
 	case u.User != nil:
 		return s, fmt.Errorf("the skill source %s has credentials: remove them, the cluster fetches skills from public repositories without them", u.Redacted())
-	case u.RawQuery != "" || u.Fragment != "":
-		return s, fmt.Errorf("the skill source %q has a query or a fragment: give the repository's URL", arg)
+	case u.RawQuery != "":
+		return s, fmt.Errorf("the skill source %q has a query: give the repository's URL", arg)
+	case u.Fragment != "":
+		// #REF[@SKILL], as npx skills takes it after a repository's URL.
+		arg, _, _ = strings.Cut(arg, "#")
+		if strings.Contains(arg, "@") || strings.Contains(u.Path, "/tree/") || strings.Contains(u.Path, "/blob/") || strings.Contains(u.Path, "//") {
+			return s, fmt.Errorf("the skill source %q has a version twice: give it after # or in the URL", u.Redacted())
+		}
+		s.Version, s.Find, _ = strings.Cut(u.Fragment, "@")
+		if s.Version == "" && s.Find == "" {
+			return s, fmt.Errorf("the skill source %q has no branch, tag or commit after #", u.Redacted())
+		}
 	}
 	scheme, rest, _ := strings.Cut(arg, "://")
 

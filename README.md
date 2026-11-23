@@ -598,6 +598,7 @@ it has no default agent, because the verbs change the agent: without
 `airo agent skill add` asks for the skill's source, then for the agent.
 
 ```sh
+airo agent skill add anthropics/skills@frontend-design -a reviewer
 airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf -a reviewer
 airo agent skill add docs=https://git.example.com/team/skills//docs@v1.2 -a reviewer
 airo agent skill list -a reviewer
@@ -612,16 +613,49 @@ pdf    default   https://github.com/anthropics/skills//skills/pdf@e4bb5d960d8712
 docs   v1.2      https://git.example.com/team/skills//docs@0c5b6f0d2e8a4b7c9d1e3f5a7b9c0d2e4f6a8b0c
 ```
 
-A source is a Git repository or an OCI image, the same for `--skill`:
+A source is a Git repository or an OCI image, the same for `--skill` of
+`airo agent create`:
 
 | Source | Example |
 | --- | --- |
+| A GitHub repository | `OWNER/REPO[/PATH][@SKILL\|@VERSION]`, `OWNER/REPO#REF[@SKILL]`, `github:OWNER/REPO` |
 | A GitHub page | `https://github.com/OWNER/REPO/tree/REF/PATH`, or a `SKILL.md`'s `blob` page |
-| Any Git host | `https://HOST/REPO[//PATH][@VERSION]` |
+| Any Git host | `https://HOST/REPO[//PATH][@VERSION]`, `gitlab:OWNER/REPO`, `git@HOST:OWNER/REPO` |
 | An OCI image | `oci://IMAGE[:TAG\|@sha256:DIGEST][//PATH]` |
 
-`NAME=SOURCE` names the skill. Otherwise the name is the path's last
-directory, or the repository's name. A skill's directory has a `SKILL.md`.
+**`add` takes the commands of `npx skills add`.** A skill's page often shows
+one: replace `npx` with `airo agent`.
+
+```sh
+npx skills add https://github.com/TheBushidoCollective/han --skill kubernetes-resources
+airo agent skills add https://github.com/TheBushidoCollective/han --skill kubernetes-resources -a reviewer
+```
+
+In a GitHub repository, `airo` finds a skill by the `name` in its
+`SKILL.md`, as `npx skills` does. `OWNER/REPO@SKILL` and `--skill SKILL`
+name one. A version such as `@v1.2.3`, or a full commit, pins the repository
+instead, and `#REF` names any branch, tag or commit. A source that holds
+several skills asks which one to add on a terminal, and fails elsewhere,
+listing them.
+
+| Flag of `add` | Does |
+| --- | --- |
+| `--skill NAME` | Adds the skill of that name. Repeat for more, or give `'*'` for all. No `-s`, which is kubectl's `--server` |
+| `--all` | Adds every skill of the source |
+| `--list`, `-l` | Lists the skills of the source, and adds none |
+| `--rename NAME` | Names the one skill added, as `NAME=SOURCE` does |
+| `-y` | Accepted, so a copied command works. `airo` asks only for what is missing |
+
+Finding a skill by name works only in a GitHub repository. On another host,
+give the skill's directory. A local directory does not work, because the
+cluster fetches the skill. GitHub limits how often `airo` may list a
+repository's files without signing in. A source with the skill's directory
+needs no listing.
+
+`NAME=SOURCE` or `--rename` names the skill in the agent. Otherwise the name
+is the one in its `SKILL.md`, the path's last directory, or the
+repository's name. The verbs take the aliases of `npx skills` too: `ls`,
+`rm` and `update`.
 
 **The Agent holds only immutable versions**, so `airo` pins a branch or a
 tag to its commit, and an image tag to its digest, before it writes the

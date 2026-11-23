@@ -2,7 +2,10 @@ package agent
 
 import (
 	"bytes"
+	"cmp"
 	"context"
+	"errors"
+	"slices"
 	"path"
 	"strings"
 	"testing"
@@ -109,13 +112,13 @@ func TestSkillAddUpgradeRemove(t *testing.T) {
 	ctx := context.Background()
 	var out bytes.Buffer
 
-	if err := ignoreNoStatus(addSkill(ctx, &out, c, "team", "my-agent", repo+"//skills/pdf", 0)); err != nil {
+	if err := ignoreNoStatus(addSkill(ctx, &out, c, "team", "my-agent", repo+"//skills/pdf", addOptions{}, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := ignoreNoStatus(addSkill(ctx, &out, c, "team", "my-agent", "docs="+repo+"//skills/docs@v1", 0)); err != nil {
+	if err := ignoreNoStatus(addSkill(ctx, &out, c, "team", "my-agent", "docs="+repo+"//skills/docs@v1", addOptions{}, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := addSkill(ctx, &out, c, "team", "my-agent", repo+"//other/pdf", 0); err == nil || !strings.Contains(err.Error(), "has a skill named pdf") {
+	if err := addSkill(ctx, &out, c, "team", "my-agent", repo+"//other/pdf", addOptions{}, 0); err == nil || !strings.Contains(err.Error(), "has a skill named pdf") {
 		t.Errorf("add = %v, want an error for a name the agent has", err)
 	}
 	entries, v := skillsOf(t, c)
@@ -186,7 +189,7 @@ func TestSkillCommandsRefuseATemplateAgent(t *testing.T) {
 	fakePin(t, map[string]string{"": commit1})
 	a := resource(agentGVK, "my-agent", map[string]any{"template": map[string]any{"ref": map[string]any{"name": "shared"}}})
 	c := fake.NewClientBuilder().WithObjects(a).Build()
-	err := addSkill(context.Background(), &bytes.Buffer{}, c, "team", "my-agent", repo+"//pdf", 0)
+	err := addSkill(context.Background(), &bytes.Buffer{}, c, "team", "my-agent", repo+"//pdf", addOptions{}, 0)
 	if err == nil || !strings.Contains(err.Error(), "AgentTemplate shared") {
 		t.Errorf("add = %v, want an error for an agent with a template", err)
 	}
@@ -218,5 +221,120 @@ func TestSkillCommandsTakeNoDefaultAgent(t *testing.T) {
 	empty := fake.NewClientBuilder().Build()
 	if _, err := pickToChange(ctx, empty, "team", "", ask); err == nil || !strings.Contains(err.Error(), "has no agent") {
 		t.Errorf("pick = %v, want an error for a project without agents", err)
+	}
+}
+
+// fakeRepo stands for a GitHub repository with the skills docx,
+// frontend-design and pdf, which pin at commit1.
+func fakeRepo(t *testing.T) {
+	t.Helper()
+	oldPin, oldList := pin, skillsIn
+	t.Cleanup(func() { pin, skillsIn = oldPin, oldList })
+	found := []skill.Found{{Name: "docx", Path: "skills/docx"}, {Name: "frontend-design", Path: "skills/frontend"}, {Name: "pdf", Path: "skills/pdf"}}
+	pin = func(_ context.Context, s skill.Skill) (skill.Pinned, error) {
+		p := skill.Pinned{Skill: s, Commit: commit1}
+		switch {
+		case s.Find != "":
+			i := slices.IndexFunc(found, func(f skill.Found) bool { return skill.SameName(f.Name, s.Find) })
+			if i < 0 {
+				return p, errors.New("no skill named " + s.Find)
+			}
+			p.Path, p.Find = found[i].Path, ""
+			p.Name = cmp.Or(s.Name, found[i].Name)
+		case s.Path == "":
+			return p, &skill.Choice{Source: s.Git, Names: []string{"docx", "frontend-design", "pdf"}}
+		}
+		p.Name = cmp.Or(p.Name, path.Base(p.Path))
+		return p, nil
+	}
+	skillsIn = func(_ context.Context, s skill.Skill) (skill.Pinned, []skill.Found, error) {
+		return skill.Pinned{Skill: s, Commit: commit1}, found, nil
+	}
+}
+
+func TestPinForAddChoosesSkillsAsNpxSkills(t *testing.T) {
+	fakeRepo(t)
+	pick := func([]string) (string, error) { return "pdf", nil }
+	for _, tc := range []struct {
+		source string
+		o      addOptions
+		ask    func([]string) (string, error)
+		want   []string // name=path
+	}{
+		{"org/repo@frontend-design", addOptions{}, nil, []string{"frontend-design=skills/frontend"}},
+		{"org/repo", addOptions{skills: []string{"pdf"}}, nil, []string{"pdf=skills/pdf"}},
+		{"https://github.com/org/repo", addOptions{skills: []string{"Frontend Design"}}, nil, []string{"frontend-design=skills/frontend"}},
+		{"org/repo", addOptions{skills: []string{"pdf", "docx"}}, nil, []string{"pdf=skills/pdf", "docx=skills/docx"}},
+		{"org/repo@pdf", addOptions{skills: []string{"docx"}}, nil, []string{"pdf=skills/pdf", "docx=skills/docx"}},
+		{"org/repo", addOptions{all: true}, nil, []string{"docx=skills/docx", "frontend-design=skills/frontend", "pdf=skills/pdf"}},
+		{"org/repo", addOptions{skills: []string{"*"}}, nil, []string{"docx=skills/docx", "frontend-design=skills/frontend", "pdf=skills/pdf"}},
+		// On a terminal, airo asks which skill of several.
+		{"org/repo", addOptions{}, pick, []string{"pdf=skills/pdf"}},
+		{"org/repo", addOptions{skills: []string{"pdf"}, rename: "papers"}, nil, []string{"papers=skills/pdf"}},
+		{"papers=org/repo@pdf", addOptions{}, nil, []string{"papers=skills/pdf"}},
+		{"org/repo/skills/pdf", addOptions{}, nil, []string{"pdf=skills/pdf"}},
+	} {
+		s, err := skill.Parse(tc.source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pinned, err := pinForAdd(context.Background(), s, tc.o, tc.ask)
+		var got []string
+		for _, p := range pinned {
+			got = append(got, p.Name+"="+p.Path)
+		}
+		if err != nil || !slices.Equal(got, tc.want) {
+			t.Errorf("add %s %+v = %v, %v, want %v", tc.source, tc.o, got, err, tc.want)
+		}
+	}
+
+	for _, tc := range []struct {
+		source string
+		o      addOptions
+		want   string
+	}{
+		// Without a terminal to ask on, a source of several skills names them.
+		{"org/repo", addOptions{}, "choose one with --skill NAME, or add them all with --all: docx, frontend-design, pdf"},
+		{"org/repo", addOptions{skills: []string{"pdf", "nope"}}, "has no skill named nope"},
+		{"org/repo", addOptions{all: true, rename: "papers"}, "names one skill"},
+		{"org/repo", addOptions{skills: []string{"pdf"}, rename: "Bad_Name"}, "cannot name a skill"},
+		{"org/repo", addOptions{skills: []string{"nope"}}, "no skill named nope"},
+	} {
+		s, err := skill.Parse(tc.source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pinForAdd(context.Background(), s, tc.o, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("add %s %+v = %v, want an error with %q", tc.source, tc.o, err, tc.want)
+		}
+	}
+}
+
+func TestAddPutsSeveralSkillsInOneChange(t *testing.T) {
+	fakeRepo(t)
+	ctx := context.Background()
+	c := fake.NewClientBuilder().WithObjects(agentWithSkills(nil, nil)).Build()
+	skillsOf := func() []any {
+		a, err := getAgent(ctx, c, "team", "my-agent")
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries, _ := inlineSkills(a)
+		return entries
+	}
+	var out bytes.Buffer
+	if err := ignoreNoStatus(addSkill(ctx, &out, c, "team", "my-agent", "org/repo", addOptions{skills: []string{"pdf", "docx"}}, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if entries := skillsOf(); len(entries) != 2 || entryName(entries[0]) != "pdf" || entryName(entries[1]) != "docx" {
+		t.Errorf("skills = %v, want pdf and docx", entries)
+	}
+	// One name the agent has refuses the whole add.
+	err := addSkill(ctx, &out, c, "team", "my-agent", "org/repo", addOptions{skills: []string{"frontend-design", "docx"}}, 0)
+	if err == nil || !strings.Contains(err.Error(), "has a skill named docx") {
+		t.Errorf("add = %v, want an error for a name the agent has", err)
+	}
+	if entries := skillsOf(); len(entries) != 2 {
+		t.Errorf("a refused add left skills %v", entries)
 	}
 }

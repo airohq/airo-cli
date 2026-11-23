@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -34,14 +36,20 @@ import (
 // again. The name is the platform's, not a component's.
 const skillVersionsAnnotation = "airohq.dev/skill-versions"
 
-// pin resolves a skill to an immutable version. Tests replace it.
-var pin = skill.Resolver{Client: &http.Client{Timeout: 30 * time.Second}}.Pin
+var resolver = skill.Resolver{Client: &http.Client{Timeout: 30 * time.Second}}
+
+// pin resolves a skill to an immutable version, and skillsIn lists the
+// skills of a source. Tests replace them.
+var (
+	pin      = resolver.Pin
+	skillsIn = resolver.Skills
+)
 
 // pinSkills reads and pins the sources of --skill.
 func pinSkills(ctx context.Context, args []string) ([]skill.Pinned, error) {
 	var pinned []skill.Pinned
 	for _, arg := range args {
-		p, err := parseAndPin(ctx, arg, pinned)
+		p, err := parseAndPin(ctx, arg, pinned, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -50,21 +58,125 @@ func pinSkills(ctx context.Context, args []string) ([]skill.Pinned, error) {
 	return pinned, nil
 }
 
-func parseAndPin(ctx context.Context, arg string, others []skill.Pinned) (skill.Pinned, error) {
+// parseAndPin reads and pins a source. For a source of several skills it
+// asks for one, when ask is not nil.
+func parseAndPin(ctx context.Context, arg string, others []skill.Pinned, ask func([]string) (string, error)) (skill.Pinned, error) {
 	s, err := skill.Parse(arg)
 	if err != nil {
 		return skill.Pinned{}, err
 	}
-	p, err := pin(ctx, s)
+	p, err := pinChosen(ctx, s, ask)
 	if err != nil {
 		return skill.Pinned{}, err
 	}
-	for _, other := range others {
-		if other.Name == p.Name {
-			return skill.Pinned{}, fmt.Errorf("two skills are named %s: name one with NAME=SOURCE", p.Name)
+	return p, sameNames(append(others, p))
+}
+
+// pinChosen pins a skill. For a source of several skills it asks for one,
+// when ask is not nil, and returns the *skill.Choice otherwise.
+func pinChosen(ctx context.Context, s skill.Skill, ask func([]string) (string, error)) (skill.Pinned, error) {
+	p, err := pin(ctx, s)
+	var choice *skill.Choice
+	if ask == nil || !errors.As(err, &choice) {
+		return p, err
+	}
+	if s.Find, err = ask(choice.Names); err != nil {
+		return p, err
+	}
+	return pin(ctx, s)
+}
+
+// sameNames returns an error when two of the skills have one name.
+func sameNames(pinned []skill.Pinned) error {
+	seen := map[string]bool{}
+	for _, p := range pinned {
+		if seen[p.Name] {
+			return fmt.Errorf("two skills are named %s: name one with NAME=SOURCE", p.Name)
+		}
+		seen[p.Name] = true
+	}
+	return nil
+}
+
+// addOptions are the flags of add that choose skills, as npx skills add
+// takes them.
+type addOptions struct {
+	// skills are names of skills in the source, or * for all.
+	skills []string
+	// all adds every skill of the source.
+	all bool
+	// rename names the one skill added.
+	rename string
+}
+
+// pinForAdd pins the skills of a source that add adds: the ones o names,
+// all of them, or the one the source names. For a source of several skills
+// it asks for one, when ask is not nil.
+func pinForAdd(ctx context.Context, s skill.Skill, o addOptions, ask func([]string) (string, error)) ([]skill.Pinned, error) {
+	if o.rename != "" {
+		if err := skill.ValidName(o.rename); err != nil {
+			return nil, err
+		}
+		s.Name = o.rename
+	}
+	names := o.skills
+	if s.Find != "" {
+		names = append([]string{s.Find}, names...)
+	}
+	all := o.all || slices.Contains(names, "*")
+	var pinned []skill.Pinned
+	switch {
+	case !all && len(names) <= 1:
+		if len(names) == 1 {
+			s.Find = names[0]
+		}
+		p, err := pinChosen(ctx, s, ask)
+		var choice *skill.Choice
+		if errors.As(err, &choice) {
+			return nil, fmt.Errorf("%s holds %d skills: choose one with --skill NAME, or add them all with --all: %s", choice.Source, len(choice.Names), strings.Join(choice.Names, ", "))
+		}
+		if err != nil {
+			return nil, err
+		}
+		pinned = append(pinned, p)
+	case s.Name != "":
+		return nil, errors.New("a name given with NAME=SOURCE or --rename names one skill: add the others one by one")
+	default:
+		// One listing finds them all, since GitHub limits how often airo
+		// may list a repository.
+		s.Find = ""
+		at, found, err := skillsIn(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		chosen := found
+		if !all {
+			chosen = nil
+			for _, name := range names {
+				i := slices.IndexFunc(found, func(f skill.Found) bool { return skill.SameName(f.Name, name) })
+				if i < 0 {
+					return nil, fmt.Errorf("%s has no skill named %s", at.Location(), name)
+				}
+				chosen = append(chosen, found[i])
+			}
+		}
+		if len(chosen) == 0 {
+			return nil, fmt.Errorf("%s has no SKILL.md", at.Location())
+		}
+		for _, f := range chosen {
+			one := s
+			one.Path = f.Path
+			if skill.ValidName(f.Name) == nil {
+				one.Name = f.Name
+			}
+			p, err := pin(ctx, one)
+			if err != nil {
+				return nil, err
+			}
+			pinned = append(pinned, p)
 		}
 	}
-	return p, nil
+	return pinned, sameNames(pinned)
 }
 
 // askSkills asks for skill sources until an empty answer.
@@ -79,7 +191,7 @@ func askSkills(ctx context.Context, w *wizard.Wizard) ([]skill.Pinned, error) {
 		if err != nil || answer == "" {
 			return pinned, err
 		}
-		p, err := parseAndPin(ctx, answer, pinned)
+		p, err := parseAndPin(ctx, answer, pinned, func(names []string) (string, error) { return w.Pick("Skill", names) })
 		if err != nil {
 			w.Problem(err)
 			continue
@@ -290,50 +402,88 @@ func listSkills(ctx context.Context, out, errOut io.Writer, c client.Client, ns,
 	return tw.Flush()
 }
 
-// addSkill pins a source and adds it to the Agent.
-func addSkill(ctx context.Context, out io.Writer, c client.Client, ns, agent, arg string, timeout time.Duration) error {
-	p, err := parseAndPin(ctx, arg, nil)
+// addSkill pins the skills of a source and adds them to the Agent.
+func addSkill(ctx context.Context, out io.Writer, c client.Client, ns, agent, arg string, o addOptions, timeout time.Duration) error {
+	s, err := skill.Parse(arg)
 	if err != nil {
 		return err
 	}
-	return addPinned(ctx, out, c, ns, agent, p, timeout)
+	pinned, err := pinForAdd(ctx, s, o, nil)
+	if err != nil {
+		return err
+	}
+	return addPinned(ctx, out, c, ns, agent, pinned, timeout)
 }
 
-// askSkill asks for a skill source until one pins.
-func askSkill(ctx context.Context, w *wizard.Wizard) (skill.Pinned, error) {
+// askSkills asks for a skill source until its skills pin.
+func askSource(ctx context.Context, w *wizard.Wizard, o addOptions) ([]skill.Pinned, error) {
 	for {
 		answer, err := w.Required("Skill source")
 		if err != nil {
-			return skill.Pinned{}, err
+			return nil, err
 		}
-		p, err := parseAndPin(ctx, answer, nil)
+		s, err := skill.Parse(answer)
 		if err != nil {
 			w.Problem(err)
 			continue
 		}
-		w.Note(fmt.Sprintf("  %s at %s", p.Name, p.Pin()))
-		return p, nil
+		pinned, err := pinForAdd(ctx, s, o, func(names []string) (string, error) { return w.Pick("Skill", names) })
+		if err != nil {
+			w.Problem(err)
+			continue
+		}
+		for _, p := range pinned {
+			w.Note(fmt.Sprintf("  %s at %s", p.Name, p.Pin()))
+		}
+		return pinned, nil
 	}
 }
 
-// addPinned adds a pinned skill to the Agent.
-func addPinned(ctx context.Context, out io.Writer, c client.Client, ns, agent string, p skill.Pinned, timeout time.Duration) error {
+// addPinned adds pinned skills to the Agent.
+func addPinned(ctx context.Context, out io.Writer, c client.Client, ns, agent string, pinned []skill.Pinned, timeout time.Duration) error {
 	a, err := changeSkills(ctx, c, ns, agent, func(a *unstructured.Unstructured, entries []any) ([]any, error) {
-		for _, entry := range entries {
-			if entryName(entry) == p.Name {
-				return nil, fmt.Errorf("agent %s has a skill named %s: upgrade it with airo agent skill upgrade %s --agent %s, or name the new one with NAME=SOURCE", agent, p.Name, p.Name, agent)
-			}
-		}
 		v := versions(a)
-		v[p.Name] = p.Version
-		return append(entries, skillEntry(p)), setVersions(a, v)
+		for _, p := range pinned {
+			for _, entry := range entries {
+				if entryName(entry) == p.Name {
+					return nil, fmt.Errorf("agent %s has a skill named %s: upgrade it with airo agent skill upgrade %s --agent %s, or name the new one with NAME=SOURCE", agent, p.Name, p.Name, agent)
+				}
+			}
+			v[p.Name] = p.Version
+			entries = append(entries, skillEntry(p))
+		}
+		return entries, setVersions(a, v)
 	})
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Added skill %s to agent %s/%s\n", p.Name, ns, agent)
-	fmt.Fprintf(out, "  source:   %s\n", p)
+	for _, p := range pinned {
+		fmt.Fprintf(out, "Added skill %s to agent %s/%s\n", p.Name, ns, agent)
+		fmt.Fprintf(out, "  source:   %s\n", p)
+	}
 	return finish(ctx, out, c, a, timeout)
+}
+
+// listSource prints the skills a source holds, as npx skills add --list.
+func listSource(ctx context.Context, out, errOut io.Writer, arg string) error {
+	s, err := skill.Parse(arg)
+	if err != nil {
+		return err
+	}
+	at, found, err := skillsIn(ctx, s)
+	if err != nil {
+		return err
+	}
+	if len(found) == 0 {
+		return fmt.Errorf("%s has no SKILL.md", at.Location())
+	}
+	fmt.Fprintf(errOut, "Skills in %s at %s\n", at.Location(), at.Commit)
+	tw := tabwriter.NewWriter(out, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tPATH")
+	for _, f := range found {
+		fmt.Fprintf(tw, "%s\t%s\n", f.Name, cmp.Or(f.Path, "."))
+	}
+	return tw.Flush()
 }
 
 // upgradeSkill pins the skill again: at version when it is given, or else
@@ -515,7 +665,7 @@ func target(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.Co
 
 // addWizard asks for the source of a skill, then for the Agent unless agent
 // names it, and adds the skill.
-func addWizard(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, agent string) error {
+func addWizard(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, agent string, o addOptions) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	c, ns, err := connect(flags)
@@ -537,7 +687,7 @@ func addWizard(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, agent s
 			return err
 		}
 	}
-	p, err := askSkill(ctx, w)
+	pinned, err := askSource(ctx, w, o)
 	if err != nil {
 		return err
 	}
@@ -546,7 +696,7 @@ func addWizard(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, agent s
 			return err
 		}
 	}
-	return addPinned(ctx, cmd.OutOrStdout(), c, ns, agent, p, readyTimeout)
+	return addPinned(ctx, cmd.OutOrStdout(), c, ns, agent, pinned, readyTimeout)
 }
 
 func newSkillCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
@@ -559,12 +709,21 @@ func newSkillCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 
 A skill's source is a Git repository or an OCI image:
 
+  OWNER/REPO[@SKILL]                            a GitHub repository
   https://github.com/OWNER/REPO/tree/REF/PATH   a GitHub page
   https://HOST/REPO[//PATH][@VERSION]           any Git host
   oci://IMAGE[:TAG|@sha256:DIGEST][//PATH]      an image
 
-NAME=SOURCE names the skill. The name is otherwise the last directory of
-the path, or the repository's. The cluster fetches skills without
+Add takes the sources and flags of npx skills add, so a command from a
+skill's page works with npx replaced by airo agent:
+
+  npx skills add anthropics/skills@frontend-design
+  airo agent skills add anthropics/skills@frontend-design
+
+In a GitHub repository, airo finds a skill by the name in its SKILL.md, and
+asks which one to add when the source holds several. NAME=SOURCE or
+--rename names the skill in the Agent. The name is otherwise the one in its
+SKILL.md, or its directory's. The cluster fetches skills without
 credentials, so a repository must be public.
 
 The Agent holds only immutable versions: airo pins a branch or a tag to its
@@ -574,7 +733,9 @@ version it was added with, or at --version.
 Every verb acts on the Agent named with --agent (-a). Unlike airo chat, it
 has no default agent, because the verbs change the Agent: without --agent,
 airo asks on a terminal and fails elsewhere.`,
-		Example: `  airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf --agent reviewer
+		Example: `  airo agent skill add anthropics/skills@frontend-design --agent reviewer
+  airo agent skill add https://github.com/anthropics/skills --skill pdf --skill docx -a reviewer
+  airo agent skill add https://github.com/anthropics/skills/tree/main/skills/pdf -a reviewer
   airo agent skill add docs=https://git.example.com/team/skills//docs@v1.2 -a reviewer
   airo agent skill list -a reviewer
   airo agent skill upgrade pdf -a reviewer
@@ -600,39 +761,97 @@ airo asks on a terminal and fails elsewhere.`,
 	}
 
 	list := &cobra.Command{
-		Use:   "list --agent NAME",
-		Short: "List the agent's skills",
-		Args:  cobra.NoArgs,
+		Use:     "list --agent NAME",
+		Aliases: []string{"ls"},
+		Short:   "List the agent's skills",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return run(cmd, func(ctx context.Context, t skillTarget) error {
 				return listSkills(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), t.c, t.ns, t.agent)
 			})
 		},
 	}
+	var o addOptions
+	var listOnly bool
 	add := &cobra.Command{
-		Use:   "add SOURCE --agent NAME",
-		Short: "Add a skill to the agent, pinned to its current version",
+		Use:     "add SOURCE --agent NAME",
+		Aliases: []string{"a"},
+		Short:   "Add a skill to the agent, pinned to its current version",
 		Long: `Add pins a skill's source to an immutable version and adds it to the
-Agent. Without SOURCE, airo asks for the source on a terminal, and then for
-the agent unless --agent names it.`,
+Agent. It takes the sources and flags of npx skills add:
+
+  OWNER/REPO                 a GitHub repository: airo asks which skill
+  OWNER/REPO@SKILL           the skill named SKILL in its SKILL.md
+  OWNER/REPO@v1.2.3          a repository at a version, or a full commit
+  OWNER/REPO/PATH            the skill, or skills, under PATH
+  OWNER/REPO#REF[@SKILL]     at a branch, a tag or a commit
+  github:OWNER/REPO, gitlab:OWNER/REPO, git@HOST:OWNER/REPO
+
+A URL takes #REF[@SKILL] too. airo finds a skill by name only in a GitHub
+repository. On another host, give the skill's directory. A local directory
+does not work, because the cluster fetches the skill.
+
+Without SOURCE, airo asks for the source on a terminal, and then for the
+agent unless --agent names it.`,
+		Example: `  airo agent skills add anthropics/skills@frontend-design -a reviewer
+  airo agent skills add https://github.com/TheBushidoCollective/han --skill kubernetes-resources -a reviewer
+  airo agent skills add anthropics/skills --skill pdf --skill docx -a reviewer
+  airo agent skills add anthropics/skills --list`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return addWizard(cmd, flags, agent)
+			if listOnly {
+				if len(args) == 0 {
+					return errors.New("give the SOURCE to list the skills of")
+				}
+				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+				defer stop()
+				return listSource(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0])
 			}
-			// A source airo cannot read fails before the cluster is asked.
-			if _, err := skill.Parse(args[0]); err != nil {
+			if len(args) == 0 {
+				return addWizard(cmd, flags, agent, o)
+			}
+			s, err := skill.Parse(args[0])
+			if err != nil {
 				return err
 			}
-			return run(cmd, func(ctx context.Context, t skillTarget) error {
-				return addSkill(ctx, cmd.OutOrStdout(), t.c, t.ns, t.agent, args[0], readyTimeout)
-			})
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			// The skills pin before the agent is asked for, so that a
+			// source airo cannot use fails first.
+			var ask func([]string) (string, error)
+			if ui.Interactive(cmd.InOrStdin(), cmd.OutOrStdout()) && ui.IsTerminal(cmd.ErrOrStderr()) {
+				ask = func(names []string) (string, error) {
+					name, err := picker.One(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), "skill", names, -1)
+					if err == nil && name == "" {
+						err = errors.New("no skill chosen: name one with --skill")
+					}
+					return name, err
+				}
+			}
+			pinned, err := pinForAdd(ctx, s, o, ask)
+			if err != nil {
+				return err
+			}
+			t, err := target(ctx, cmd, flags, agent)
+			if err != nil {
+				return err
+			}
+			return addPinned(ctx, cmd.OutOrStdout(), t.c, t.ns, t.agent, pinned, readyTimeout)
 		},
 	}
+	add.Flags().StringArrayVar(&o.skills, "skill", nil, "the name of a skill in the source to add, or '*' for all; repeat for more")
+	add.Flags().BoolVar(&o.all, "all", false, "add every skill of the source")
+	add.Flags().StringVar(&o.rename, "rename", "", "the name of the skill in the agent")
+	add.Flags().BoolVarP(&listOnly, "list", "l", false, "list the skills of the source, and add none")
+	// npx skills add -y skips its questions. airo asks only for what is
+	// missing, so a command copied with -y works as it is.
+	add.Flags().BoolP("yes", "y", false, "")
+	_ = add.Flags().MarkHidden("yes")
 	var version string
 	upgrade := &cobra.Command{
-		Use:   "upgrade SKILL --agent NAME",
-		Short: "Pin a skill to the newest commit of its version, or to --version",
+		Use:     "upgrade SKILL --agent NAME",
+		Aliases: []string{"update"},
+		Short:   "Pin a skill to the newest commit of its version, or to --version",
 		Long: `Upgrade pins the skill again. Without --version it resolves the version the
 skill was added with: a branch moves to its newest commit, and a skill added
 without a version follows the default branch, or the image tag latest. A
@@ -647,9 +866,10 @@ commit, image tag or digest, and later upgrades follow it.`,
 	}
 	upgrade.Flags().StringVar(&version, "version", "", "the branch, tag, commit, image tag or digest to pin the skill to")
 	remove := &cobra.Command{
-		Use:   "remove SKILL --agent NAME",
-		Short: "Remove a skill from the agent",
-		Args:  cobra.ExactArgs(1),
+		Use:     "remove SKILL --agent NAME",
+		Aliases: []string{"rm"},
+		Short:   "Remove a skill from the agent",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(cmd, func(ctx context.Context, t skillTarget) error {
 				return removeSkill(ctx, cmd.OutOrStdout(), t.c, t.ns, t.agent, args[0], readyTimeout)
