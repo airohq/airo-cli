@@ -21,8 +21,11 @@ type localSandbox struct {
 }
 
 const (
-	defaultCodexSandbox         = "read-only"
-	defaultClaudePermissionMode = "plan"
+	// The container is the security boundary, so the coding agent's own
+	// sandbox and permission prompts are off by default. Codex's sandbox
+	// needs user namespaces, which a hardened container does not grant.
+	defaultCodexSandbox         = "danger-full-access"
+	defaultClaudePermissionMode = "bypassPermissions"
 )
 
 var localSandboxes = map[string]localSandbox{
@@ -32,14 +35,16 @@ var localSandboxes = map[string]localSandbox{
 		harnesses: map[string]string{
 			"codex": `Codex Harness Args:
   Default: --sandbox ` + defaultCodexSandbox + `
+  The container is the security boundary: Codex's own sandbox is off.
 
   Override the default or pass additional arguments after --.
-    -- --sandbox workspace-write`,
+    -- -c model_reasoning_effort=high`,
 			"claude": `Claude Harness Args:
   Default: --permission-mode ` + defaultClaudePermissionMode + `
+  The container is the security boundary: Claude asks no permissions.
 
   Override the default or pass additional arguments after --.
-    -- --permission-mode acceptEdits`,
+    -- --permission-mode plan`,
 		},
 	},
 }

@@ -750,14 +750,14 @@ Harness state stays in the engine volume. When reconnecting to a durable
 Agent, pass the directory again to use the same checkout.
 
 ```sh
-airo agent serve --workspace . -- --sandbox workspace-write
+airo agent serve --workspace .
 airo agent connect reviewer --workspace ../backend
 ```
 
 The container sandbox mounts the directory at `/work/workspace`. The engine
 must have access to the same resolved host path. On native Linux, grant the
-worker (UID/GID 10001) the filesystem access it needs. The harness's own
-permission mode also applies.
+worker (UID/GID 10001) the filesystem access it needs. The coding agent can
+change anything in that directory, so share only what it should work on.
 
 Place native coding-agent arguments after `--`. They apply to each fresh
 and resumed turn during this invocation. Put Airo settings such as `--image`
@@ -767,16 +767,16 @@ arguments (see the development image example below).
 ```sh
 airo agent serve --help
 airo agent serve --harness claude --help
-airo agent serve --idle-timeout 10s -- --sandbox workspace-write
+airo agent serve --idle-timeout 10s -- -c model_reasoning_effort=high
 airo agent connect reviewer --harness claude -- --permission-mode acceptEdits --disallowedTools=Bash
 ```
 
 Airo starts Codex with `codex exec --json --skip-git-repo-check -C <workspace>`
-and defaults to `--sandbox read-only`. On resume it supplies the session ID
+and defaults to `--sandbox danger-full-access`. On resume it supplies the session ID
 and passes the selected sandbox mode through Codex configuration. Airo starts
 Claude with `claude -p --output-format stream-json --verbose
 --include-partial-messages`, so its answer streams as it is written, and
-defaults to `--permission-mode plan`. Each Claude turn starts clean: it reads
+defaults to `--permission-mode bypassPermissions`. Each Claude turn starts clean: it reads
 the workspace's project settings but not yours, runs no hooks and connects to
 no MCP server (`--strict-mcp-config --setting-sources project`). Your own
 `--setting-sources`, `--settings` or `--mcp-config` after the separator bring
@@ -784,7 +784,32 @@ them back. On resume it adds `--resume <session>`. Both harnesses
 receive the prompt on stdin. An explicit native model
 option overrides a model supplied by the Agent for this invocation.
 
-Both `serve` and `connect` default to read-only Codex when you omit the coding-agent settings.
+#### The container is the security boundary
+
+Nobody is there to approve a step during a turn, so by default the coding
+agent runs every command and edit without asking: Codex with its own sandbox
+off and Claude with no permission prompts. What protects your machine is the
+worker container, which:
+
+- runs as the unprivileged user 10001 with all Linux capabilities dropped and
+  `no-new-privileges`
+- has a read-only root filesystem; it can write only to its engine volume
+  (`/work`), the `--workspace` directory you share, and `/tmp`
+- sees no other host files, and no host credentials except the coding agent's
+  own login
+- is limited to 4 GiB of memory, 2 CPUs and 512 processes
+
+The worker has network access, so the coding agent can reach the internet
+and send anything it can read there, including files in the shared
+workspace.
+
+Codex's own sandbox does not work inside the container: it needs Linux user
+namespaces, which the container's hardening denies, so with `--sandbox
+read-only` or `--sandbox workspace-write` every shell command fails. To limit
+what Claude does, pass another permission mode, such as
+`-- --permission-mode plan` or `-- --permission-mode acceptEdits`, or tool
+rules such as `--disallowedTools=Bash`.
+
 The first turn starts a worker container. After a turn finishes, the worker
 stays available for `--idle-timeout` (default `5m`). When that time elapses, the
 server removes the container. The next turn starts a new one with the same
@@ -810,12 +835,12 @@ To test a development branch, build from the matching harness checkout:
 
 ```sh
 docker build --target runner -t local/remote-harness:dev .
-airo agent connect reviewer --harness codex --sandbox container --image local/remote-harness:dev -- --sandbox workspace-write
+airo agent connect reviewer --harness codex --sandbox container --image local/remote-harness:dev
 ```
 
 With the default worker, both commands prepare credentials before serving turns.
 On the first interactive run, Codex prints a ChatGPT device code. For a Claude
-subscription, select Claude Code. Its default permission mode is `plan`.
+subscription, select Claude Code.
 
 ```sh
 airo agent serve --harness claude
