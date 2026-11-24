@@ -133,11 +133,12 @@ YAML
 
 For a ChatGPT subscription, unset `OPENAI_API_KEY` and `CODEX_API_KEY` in the
 serving terminal. Follow the device sign-in prompt on the first run. To use an API key, export either variable instead. On the first turn, the CLI pulls the released
-worker image from GHCR and uses its image ID until the server exits.
+worker image from GHCR and uses its image ID until the server exits. Codex
+runs without its own sandbox; the worker container is the security boundary
+(see the README's local sandbox settings).
 
 ```sh
-airo -n "$project" agent connect "$agent" --harness codex --sandbox container \
-  --codex-sandbox read-only -v
+airo -n "$project" agent connect "$agent" --harness codex --sandbox container -v
 ```
 
 In a second terminal, use the same namespace and Agent name.
