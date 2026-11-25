@@ -53,7 +53,7 @@ func TestServingWorkspaceLifetime(t *testing.T) {
 	cluster := fake.NewClientBuilder().WithObjects(a, peer).Build()
 	engine := workspaceVolumes{}
 	workspace := func() *temporaryWorkspace {
-		w := newTemporaryWorkspace(a, "relay", cluster, io.Discard)
+		w := newTemporaryWorkspace(a, "scope", cluster, io.Discard)
 		w.engine = engine
 		return w
 	}
@@ -65,10 +65,10 @@ func TestServingWorkspaceLifetime(t *testing.T) {
 	if len(engine) != 0 {
 		t.Fatal("info allocated a workspace")
 	}
-	for _, v := range []struct{ name, relay, agent, uid string }{
-		{"abandoned", "relay", "demo", "old"}, {"live", "relay", "busy", "live"}, {"unrelated", "another", "gone", "old"},
+	for _, v := range []struct{ name, scope, agent, uid string }{
+		{"abandoned", "scope", "demo", "old"}, {"live", "scope", "busy", "live"}, {"unrelated", "another", "gone", "old"},
 	} {
-		engine[v.name] = volume.Volume{Name: v.name, Labels: map[string]string{workspaceOwner: v.name, workspaceRelay: v.relay, workspaceAgent: v.agent, workspaceUID: v.uid}}
+		engine[v.name] = volume.Volume{Name: v.name, Labels: map[string]string{workspaceOwner: v.name, workspaceScopeLabel: v.scope, workspaceAgent: v.agent, workspaceUID: v.uid}}
 	}
 	engine["legacy"] = volume.Volume{Name: "legacy"}
 	for range 2 {

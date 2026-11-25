@@ -2,7 +2,6 @@ package tunnel
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,15 +12,11 @@ import (
 
 	"github.com/andydunstall/piko/client"
 	rbacv1 "k8s.io/api/rbac/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/rest"
 	kube "sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-// TemporaryAgentLabel marks a reserved relay policy and its short-lived Tunnel.
-const TemporaryAgentLabel = "airohq.dev/temporary-agent"
 
 // CallRule grants access to the caller endpoint of one project Tunnel.
 func CallRule(name string) rbacv1.PolicyRule {
@@ -47,8 +42,8 @@ func FindRunnerTunnel(ctx context.Context, c kube.Reader, ns, origin string) (Ru
 		if caller == "" || strings.TrimSuffix(caller, "/") != strings.TrimSuffix(origin, "/") {
 			continue
 		}
-		if t.GetLabels()[TemporaryAgentLabel] == "true" {
-			return RunnerTunnel{}, fmt.Errorf("temporary agent tunnel %s/%s is served by the command that created it", ns, t.GetName())
+		if owner := metav1.GetControllerOf(t); owner != nil {
+			return RunnerTunnel{}, fmt.Errorf("tunnel %s/%s is the relay of %s %s: connect to that %s instead", ns, t.GetName(), owner.Kind, owner.Name, owner.Kind)
 		}
 		if result.Name != "" {
 			return RunnerTunnel{}, fmt.Errorf("multiple tunnels in %s advertise %s", ns, origin)
@@ -92,38 +87,9 @@ func readRunnerTunnel(t *unstructured.Unstructured) (RunnerTunnel, error) {
 	return result, nil
 }
 
-// ErrTunnelInUse means another invocation or a persistent Tunnel owns this name.
-var ErrTunnelInUse = errors.New("tunnel already exists")
-
-// RunnerTunnelAvailable skips occupied relays before publishing a temporary
-// Agent. The subsequent Tunnel create arbitrates concurrent claims.
-func RunnerTunnelAvailable(ctx context.Context, c kube.Reader, ns, name string) (bool, error) {
-	t := build(ns, name, spec{})
-	err := c.Get(ctx, kube.ObjectKeyFromObject(t), t)
-	if apierrors.IsNotFound(err) {
-		return true, nil
-	}
-	return false, err
-}
-
-// CreateTemporaryRunnerTunnel creates the Agent's dependent Tunnel and waits for its URLs.
-func CreateTemporaryRunnerTunnel(ctx context.Context, c kube.Client, name, origin string, agent *unstructured.Unstructured) (RunnerTunnel, error) {
-	t, err := createAgentTunnel(ctx, c, agent, name, true)
-	if apierrors.IsAlreadyExists(err) {
-		return RunnerTunnel{}, ErrTunnelInUse
-	}
-	if err != nil {
-		return RunnerTunnel{}, err
-	}
-	if str(t, "status", "callerURL") != origin {
-		return RunnerTunnel{}, fmt.Errorf("temporary tunnel %s does not match its reserved Harness URL %s", kube.ObjectKeyFromObject(t), origin)
-	}
-	return readRunnerTunnel(t)
-}
-
 // CreateLocalAgentTunnel returns the private origin for the Agent's relay policy.
 func CreateLocalAgentTunnel(ctx context.Context, c kube.Client, agent *unstructured.Unstructured) (string, error) {
-	t, err := createAgentTunnel(ctx, c, agent, agent.GetName(), false)
+	t, err := createAgentTunnel(ctx, c, agent)
 	if err != nil {
 		return "", err
 	}
@@ -138,11 +104,8 @@ func CreateLocalAgentTunnel(ctx context.Context, c kube.Client, agent *unstructu
 	return origin, nil
 }
 
-func createAgentTunnel(ctx context.Context, c kube.Client, agent *unstructured.Unstructured, name string, temporary bool) (*unstructured.Unstructured, error) {
-	t := build(agent.GetNamespace(), name, spec{})
-	if temporary {
-		t.SetLabels(map[string]string{TemporaryAgentLabel: "true"})
-	}
+func createAgentTunnel(ctx context.Context, c kube.Client, agent *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	t := build(agent.GetNamespace(), agent.GetName(), spec{})
 	owner := metav1.NewControllerRef(agent, agent.GroupVersionKind())
 	owner.BlockOwnerDeletion = nil
 	t.SetOwnerReferences([]metav1.OwnerReference{*owner})

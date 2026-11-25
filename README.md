@@ -688,32 +688,38 @@ gets its skills there: change the template with `airo apply -f`.
 
 ### Serve an agent on your machine
 
-Run `airo agent serve` to create a temporary Agent and private Tunnel in a project
-with a [temporary relay configured](docs/remote-agent-demo.md#temporary-agents).
-Use `--name` to choose the temporary Agent's name, or omit it to generate one.
-The server prints `Created temporary agent NAME`. Use that name with
-`airo chat -a NAME` in another terminal in the same project. An existing
-Agent with that name causes creation to fail.
+Run `airo agent serve` to create a temporary local Agent in a project with
+the agents, tunnels and local-agents capabilities. Like `airo agent create
+--local`, it creates the Agent and then its own relay: a same-name private
+Tunnel, EgressPolicy and Harness, and a Role and RoleBinding for project
+sessions to call that Tunnel, each owned by the Agent. Use `--name` to choose
+the name, a DNS label, or omit it to generate one. The server prints
+`Created temporary agent NAME`. Use that name with `airo chat -a NAME` in
+another terminal in the same project. An existing Agent with that name causes
+creation to fail. Without the local-agents capability, the project refuses
+the relay and the CLI deletes the Agent it created.
 
 ```sh
 airo agent serve --name demo
 ```
 
-Ctrl-C deletes the temporary Agent. Kubernetes then deletes its Tunnel.
+Ctrl-C deletes the temporary Agent. Kubernetes then deletes its relay.
 Running `airo agent delete NAME` triggers the same cascade. While serving,
 the CLI renews the Agent's `airohq.dev/expires` annotation every five minutes.
 If the process dies, the janitor can delete the Agent 15 minutes after the
 last renewal. Automatic Agent expiry requires the platform janitor to monitor
-`agents.api.kagent.dev`. Each relay serves one temporary Agent at a time. By default each `serve` invocation
+`agents.api.kagent.dev`. Several people can serve temporary Agents in one
+project at the same time. By default each `serve` invocation
 gets a fresh local workspace on its first turn, even when you use the same
 `--name`. Files and coding-agent history survive idle worker restarts during
 that invocation. Stopping `serve` removes its workspace volume. After a hard
-kill, a later first turn on the same relay and engine can reclaim the volume
-once its Agent is gone. Provider credentials can be reused across invocations.
+kill, a later first turn in the same project and engine can reclaim the
+volume once its Agent is gone. Provider credentials can be reused across invocations.
 
 ### Connect this machine to a durable Agent
 
-For a durable Agent, use `--local` in a project with agents and tunnels enabled. The CLI
+For a durable Agent, use `--local` in a project with the agents, tunnels and
+local-agents capabilities. The CLI
 creates the Agent first, then its same-name private Tunnel, EgressPolicy and
 Harness, and the Role and RoleBinding for project sessions to call this Tunnel.
 Each child has the Agent as its sole owner. The Role is named after the Agent UID
