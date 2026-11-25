@@ -56,6 +56,9 @@ type options struct {
 	output string
 }
 
+// Sessions belong to agents (DESIGN.md#capabilities-and-solutions).
+var needsAgents = ui.Requirements{Capabilities: []string{"agents"}}
+
 // NewCommand returns the session command.
 func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
@@ -77,6 +80,7 @@ Without --agent, each command asks every agent of the project.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
+	ui.Require(needsAgents, cmd)
 	verb := func(use, short string, args cobra.PositionalArgs, output bool, run func(context.Context, *cobra.Command, *agent.API, options, []string) error) {
 		var o options
 		c := &cobra.Command{
@@ -98,6 +102,7 @@ Without --agent, each command asks every agent of the project.`,
 		if output {
 			c.Flags().StringVarP(&o.output, "output", "o", "", "print everything as yaml or json")
 		}
+		ui.Require(needsAgents, c)
 		cmd.AddCommand(c)
 	}
 	verb("list", "List your sessions in the project, newest first", cobra.NoArgs, true,

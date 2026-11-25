@@ -38,6 +38,14 @@ var tunnelGVK = schema.GroupVersionKind{Group: "tunnels.airohq.dev", Version: "v
 
 const callerAuthNone = "none"
 
+// The Tenant capabilities the tunnel commands need
+// (DESIGN.md#capabilities-and-solutions).
+var (
+	needsTunnels = ui.Requirements{Capabilities: []string{"tunnels"}}
+	// --no-auth adds this.
+	needsOpenTunnels = ui.Requirements{Capabilities: []string{"open-tunnels"}}
+)
+
 // NewCommand returns the tunnel command.
 func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	var (
@@ -81,9 +89,11 @@ minutes. A Tunnel made with airo tunnel create is used as it is and stays.`,
 	}
 	cmd.Flags().StringVar(&name, "name", "", "name of the Tunnel (default: <your username>-<port>)")
 	cmd.Flags().BoolVar(&public, "public", false, "make the tunnel reachable from the internet too")
-	cmd.Flags().BoolVar(&noAuth, "no-auth", false, "let callers in without a token")
+	cmd.Flags().BoolVar(&noAuth, "no-auth", false, needsOpenTunnels.Flag("let callers in without a token"))
+	create := newCreateCommand(flags)
+	ui.Require(needsTunnels, cmd, create)
 	generic.AddBasic(cmd, generic.Commands(flags, cmd.Name())...)
-	ui.AddCommandGroup(cmd, "tunnel", "Tunnel Commands", newCreateCommand(flags))
+	ui.AddCommandGroup(cmd, "tunnel", "Tunnel Commands", create)
 	return cmd
 }
 
@@ -146,7 +156,7 @@ Omit NAME on a terminal to choose the name, visibility and authentication.`,
 		},
 	}
 	cmd.Flags().BoolVar(&public, "public", false, "make the tunnel reachable from the internet too")
-	cmd.Flags().BoolVar(&noAuth, "no-auth", false, "let callers in without a token")
+	cmd.Flags().BoolVar(&noAuth, "no-auth", false, needsOpenTunnels.Flag("let callers in without a token"))
 	return cmd
 }
 

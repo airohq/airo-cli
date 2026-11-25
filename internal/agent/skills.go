@@ -1033,6 +1033,8 @@ It takes the sources of add.`,
 	search.Flags().StringVar(&so.Owner, "owner", "", "keep the skills of this GitHub owner, such as anthropics")
 	search.Flags().StringVar(&source, "source", "", "list the skills of this source, such as OWNER/REPO, instead of searching "+searchIn.Name())
 	search.Flags().IntVar(&so.Limit, "limit", searchLimit, "the most skills to show")
+	// search reads only a public directory, so it needs no capability.
+	ui.Require(needsAgents, list, add, upgrade, remove)
 	cmd.AddCommand(list, search, add, upgrade, remove)
 	return cmd
 }

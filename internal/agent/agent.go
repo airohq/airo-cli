@@ -50,6 +50,15 @@ const runtimeBYO = "byo"
 // Agent's runtime first, which takes longer than a Tunnel's URLs.
 const readyTimeout = 3 * time.Minute
 
+// The Tenant capabilities the agent commands need
+// (DESIGN.md#capabilities-and-solutions).
+var (
+	needsAgents      = ui.Requirements{Capabilities: []string{"agents"}}
+	needsLocalAgents = ui.Requirements{Capabilities: []string{"agents", "tunnels", "local-agents"}}
+	// --local adds these to agent create.
+	needsLocalRelay = ui.Requirements{Capabilities: []string{"tunnels", "local-agents"}}
+)
+
 // NewCommand returns the agent resource commands.
 func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	cmd := &cobra.Command{
@@ -67,9 +76,13 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			return fmt.Errorf("unknown agent verb %q: see airo agent --help for verbs, or use airo chat to send a prompt", args[0])
 		},
 	}
+	create, update := newCreateCommand(flags), newUpdateCommand(flags)
+	serve, connect := newServeCommand(flags), newConnectCommand(flags)
+	ui.Require(needsAgents, cmd, create, update)
+	ui.Require(needsLocalAgents, serve, connect)
 	generic.AddBasic(cmd, generic.Commands(flags, cmd.Name())...)
-	ui.AddCommandGroup(cmd, "agent", "Agent Commands", newCreateCommand(flags), newUpdateCommand(flags), newSkillCommand(flags))
-	ui.AddCommandGroup(cmd, "local", "Local Run Commands", newServeCommand(flags), newConnectCommand(flags))
+	ui.AddCommandGroup(cmd, "agent", "Agent Commands", create, update, newSkillCommand(flags))
+	ui.AddCommandGroup(cmd, "local", "Local Run Commands", serve, connect)
 	return cmd
 }
 
@@ -155,7 +168,7 @@ Tools and the other fields of an Agent go in a file, for airo apply -f.`,
 	cmd.Flags().StringVar(&o.description, "description", "", "what the agent is for, in a line")
 	cmd.Flags().StringVar(&o.model, "model", "", "name of the ModelConfig to use (default: the project's only one, or its default)")
 	cmd.Flags().StringVar(&o.harness, "harness", "", "name of the Harness to run on (default: the project's only one, or its default)")
-	cmd.Flags().BoolVar(&o.local, "local", false, "create a durable Agent with a dedicated relay for airo agent connect")
+	cmd.Flags().BoolVar(&o.local, "local", false, needsLocalRelay.Flag("create a durable Agent with a dedicated relay for airo agent connect"))
 	cmd.MarkFlagsMutuallyExclusive("local", "harness")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
 	cmd.Flags().StringArrayVar(&o.skills, "skill", nil, "a skill's source, such as https://github.com/OWNER/REPO/tree/main/PATH; repeat for more")
