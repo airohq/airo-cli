@@ -80,6 +80,7 @@ annotation ` + defaultAnnotation + `: "true", then asks.`,
 	cmd.Flags().BoolVarP(&o.cont, "continue", "c", false, "continue your last session with the agent from this machine")
 	cmd.Flags().StringVarP(&o.resume, "resume", "r", "", "continue the session with this ID")
 	cmd.MarkFlagsMutuallyExclusive("continue", "resume")
+	ui.Require(needsAgents, cmd)
 	return cmd
 }
 

@@ -194,6 +194,8 @@ makes either command exit nonzero.
 ## Tenant details
 
 `airo tenant` lists your tenant's solutions and capabilities in separate tables.
+A command that needs some of them starts its help, and its section below,
+with `Required capabilities:` or `Required solutions:`.
 The command uses the selected tenant, or your sole membership on an older sign-in.
 Use `airo tenant --name NAME` to inspect another tenant for one command.
 Platform admins can use the same flag to inspect a tenant by name.
@@ -271,6 +273,8 @@ shares a name with an Airo command. `airo apply` is a
 server-side apply with the field manager `airo`.
 
 ## Chat
+
+Required capabilities: agents
 
 **`airo chat` sends a prompt to an agent of your project and prints the
 answer as it arrives.** The prompt starts a new session. If you used
@@ -453,6 +457,8 @@ admin.
 
 ## Agent
 
+Required capabilities: agents
+
 Run `airo agent` or `airo agents` to see the resource commands. To inspect an
 agent, use `airo agent get NAME`. To talk to it, use `airo chat -a NAME`.
 
@@ -564,6 +570,8 @@ Skills change with [`airo agent skill`](#skills). Setting values the agent
 already has changes nothing, and says so.
 
 ### Skills
+
+Required capabilities: agents, except for `search`
 
 **`airo agent skill` lists, adds, upgrades and removes an agent's skills.**
 Each verb but `search` acts on the agent named with `--agent` (`-a`). Unlike `airo chat`,
@@ -688,6 +696,8 @@ gets its skills there: change the template with `airo apply -f`.
 
 ### Serve an agent on your machine
 
+Required capabilities: agents, tunnels, local-agents
+
 Run `airo agent serve` to create a temporary local Agent in a project with
 the agents, tunnels and local-agents capabilities. Like `airo agent create
 --local`, it creates the Agent and then its own relay: a same-name private
@@ -717,6 +727,8 @@ kill, a later first turn in the same project and engine can reclaim the
 volume once its Agent is gone. Provider credentials can be reused across invocations.
 
 ### Connect this machine to a durable Agent
+
+Required capabilities: agents, tunnels, local-agents
 
 For a durable Agent, use `--local` in a project with the agents, tunnels and
 local-agents capabilities. The CLI
@@ -893,6 +905,8 @@ runner settings and execution boundary.
 
 ## Session
 
+Required capabilities: agents
+
 **`airo session` shows your sessions with the agents of your project.** A
 session is a conversation with one agent. `airo chat` starts one and prints
 its ID.
@@ -970,8 +984,10 @@ is a note on standard error, and the rest is printed.
 
 ## Tunnel
 
+Required capabilities: tunnels
+
 **`airo tunnel` gives a local port a URL in your project until you stop it**,
-like ngrok. The tenant needs tunnels turned on.
+like ngrok.
 
 ```sh
 airo tunnel 3000                       # reachable from the cluster, with a token
@@ -990,7 +1006,7 @@ Tunnel my-project/sam-3000 forwards to localhost:3000
 | `PORT` or `HOST:PORT` | required | The local address to forward to. A port means `localhost` |
 | `--name` | `<your username>-<port>` | The Tunnel's name, the first part of its URL |
 | `--public` | off | Make the tunnel reachable from the internet too (`spec.public`) |
-| `--no-auth` | off | Let callers in without a token (`spec.callerAuth: none`). The tenant needs open tunnels turned on |
+| `--no-auth` | off | Let callers in without a token (`spec.callerAuth: none`). Required capabilities: open-tunnels |
 
 **The command creates a Tunnel, serves it, and deletes it on exit.** The
 Tunnel it creates has only the fields the flags set, and an expiry:

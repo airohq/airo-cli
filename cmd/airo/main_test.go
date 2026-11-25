@@ -127,6 +127,43 @@ func TestGroupedNounsGroupEveryVerb(t *testing.T) {
 	walk(newRoot())
 }
 
+// Commands behind a Tenant capability name it at the top of their help, and
+// basic commands name none (DESIGN.md#capabilities-and-solutions).
+func TestHelpNamesRequiredCapabilities(t *testing.T) {
+	want := map[string]string{
+		"airo agent":               "agents",
+		"airo agent create":        "agents",
+		"airo agent update":        "agents",
+		"airo agent skill list":    "agents",
+		"airo agent skill add":     "agents",
+		"airo agent skill upgrade": "agents",
+		"airo agent skill remove":  "agents",
+		"airo agent serve":         "agents, tunnels, local-agents",
+		"airo agent connect":       "agents, tunnels, local-agents",
+		"airo chat":                "agents",
+		"airo session":             "agents",
+		"airo session list":        "agents",
+		"airo session view":        "agents",
+		"airo session cancel":      "agents",
+		"airo tunnel":              "tunnels",
+		"airo tunnel create":       "tunnels",
+	}
+	var walk func(*cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		got := ""
+		if line, _, _ := strings.Cut(cmd.Long, "\n"); strings.HasPrefix(line, "Required capabilities: ") {
+			got = strings.TrimPrefix(line, "Required capabilities: ")
+		}
+		if got != want[cmd.CommandPath()] {
+			t.Errorf("%s requires %q in its help, want %q", cmd.CommandPath(), got, want[cmd.CommandPath()])
+		}
+		for _, child := range cmd.Commands() {
+			walk(child)
+		}
+	}
+	walk(newRoot())
+}
+
 func TestLocalAgentFlagErrors(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
