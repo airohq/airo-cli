@@ -151,11 +151,12 @@ else.** A tenant turns on features with the labels
 `airo tenant` lists. A command, or a flag such as `airo agent create
 --local`, that only works with some of them names all of them:
 
-- **The help starts with them.** The first line of the long help is
-  `Requires the agents, tunnels and local-agents capabilities.`, or
-  `Requires the adlc solution.`, followed by an empty line. A flag that adds a
-  requirement names it in its own description, such as `(requires the
-  local-agents capability)`.
+- **The help starts with them.** The long help opens with
+  `Required capabilities: agents, tunnels, local-agents`, then
+  `Required solutions: adlc` when there are any, each list in the order the
+  feature builds on them, followed by an empty line. A flag that adds a
+  requirement names it in its own description, such as `(required
+  capabilities: local-agents)`.
 - **The README names them** in the command's section, in the same words.
 - **The command checks them before it changes anything.** It reads the
   labels of the project's Tenant. When one is missing, it stops with an error
