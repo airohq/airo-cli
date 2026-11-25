@@ -14,21 +14,20 @@ import (
 	"github.com/moby/moby/client"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 	kube "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
-	workspaceOwner = "airohq.dev/temporary-workspace"
-	workspaceRelay = "airohq.dev/relay-uid"
-	workspaceAgent = "airohq.dev/agent-name"
-	workspaceUID   = "airohq.dev/agent-uid"
+	workspaceOwner      = "airohq.dev/temporary-workspace"
+	workspaceScopeLabel = "airohq.dev/workspace-scope"
+	workspaceAgent      = "airohq.dev/agent-name"
+	workspaceUID        = "airohq.dev/agent-uid"
 )
 
 // A serving process owns one volume across all its turns and idle worker restarts.
 // It allocates the volume on the first turn.
 type temporaryWorkspace struct {
-	name, relay, namespace, agent, uid string
+	name, scope, namespace, agent, uid string
 	cluster                            kube.Reader
 	out                                io.Writer
 
@@ -45,9 +44,9 @@ type volumeEngine interface {
 	VolumeRemove(context.Context, string, client.VolumeRemoveOptions) (client.VolumeRemoveResult, error)
 }
 
-func newTemporaryWorkspace(a *unstructured.Unstructured, relay types.UID, cluster kube.Reader, out io.Writer) *temporaryWorkspace {
+func newTemporaryWorkspace(a *unstructured.Unstructured, scope string, cluster kube.Reader, out io.Writer) *temporaryWorkspace {
 	return &temporaryWorkspace{
-		name: "airo-serve-" + rand.Text(), relay: string(relay), namespace: a.GetNamespace(),
+		name: "airo-serve-" + rand.Text(), scope: scope, namespace: a.GetNamespace(),
 		agent: a.GetName(), uid: string(a.GetUID()), cluster: cluster, out: out,
 	}
 }
@@ -81,7 +80,7 @@ func (s *temporaryWorkspace) prepare(ctx context.Context) error {
 		s.engine = e
 	}
 	s.reap(ctx)
-	labels := map[string]string{workspaceOwner: s.name, workspaceRelay: s.relay, workspaceAgent: s.agent, workspaceUID: s.uid}
+	labels := map[string]string{workspaceOwner: s.name, workspaceScopeLabel: s.scope, workspaceAgent: s.agent, workspaceUID: s.uid}
 	result, err := s.engine.VolumeCreate(ctx, client.VolumeCreateOptions{Name: s.name, Labels: labels})
 	if err != nil {
 		return err
@@ -93,13 +92,14 @@ func (s *temporaryWorkspace) prepare(ctx context.Context) error {
 	return nil
 }
 
-// A hard kill can leave a volume. Before reusing this relay, check its old
-// volumes against their Agent UIDs. An idle but still live session keeps its files.
+// A hard kill can leave a volume. Before creating one, check the old volumes
+// of this project on this cluster against their Agent UIDs. An idle but still
+// live session keeps its files.
 func (s *temporaryWorkspace) reap(ctx context.Context) {
-	if s.relay == "" {
+	if s.scope == "" {
 		return
 	}
-	result, err := s.engine.VolumeList(ctx, client.VolumeListOptions{Filters: make(client.Filters).Add("label", workspaceRelay+"="+s.relay)})
+	result, err := s.engine.VolumeList(ctx, client.VolumeListOptions{Filters: make(client.Filters).Add("label", workspaceScopeLabel+"="+s.scope)})
 	if err != nil {
 		fmt.Fprintf(s.out, "Checking for expired workspaces: %v\n", err)
 		return
@@ -107,7 +107,7 @@ func (s *temporaryWorkspace) reap(ctx context.Context) {
 	for _, v := range result.Items {
 		owner := v.Labels[workspaceUID]
 		agent := v.Labels[workspaceAgent]
-		if owner == "" || owner == s.uid || agent == "" || v.Labels[workspaceOwner] != v.Name || v.Labels[workspaceRelay] != s.relay {
+		if owner == "" || owner == s.uid || agent == "" || v.Labels[workspaceOwner] != v.Name || v.Labels[workspaceScopeLabel] != s.scope {
 			continue
 		}
 		a := &unstructured.Unstructured{}

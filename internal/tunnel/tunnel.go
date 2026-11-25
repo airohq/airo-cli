@@ -18,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -273,8 +274,8 @@ func ensure(ctx context.Context, c client.Client, ns, name string, want spec) (*
 	if err != nil {
 		return nil, false, fmt.Errorf("tunnel %s/%s: %w", ns, name, err)
 	}
-	if t.GetLabels()[TemporaryAgentLabel] == "true" {
-		return nil, false, fmt.Errorf("tunnel %s/%s is serving a temporary agent: choose another tunnel name", ns, name)
+	if owner := metav1.GetControllerOf(t); owner != nil {
+		return nil, false, fmt.Errorf("tunnel %s/%s is the relay of %s %s: choose another tunnel name", ns, name, owner.Kind, owner.Name)
 	}
 	isPublic, _, _ := unstructured.NestedBool(t.Object, "spec", "public")
 	isNoAuth := str(t, "spec", "callerAuth") == callerAuthNone

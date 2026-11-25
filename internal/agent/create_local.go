@@ -90,6 +90,9 @@ func provisionLocalRelay(ctx context.Context, c client.Client, a *unstructured.U
 		obj.SetOwnerReferences([]metav1.OwnerReference{*owner})
 		if err := c.Create(ctx, obj); err != nil {
 			kind, _ := c.GroupVersionKindFor(obj)
+			if apierrors.IsForbidden(err) {
+				return fmt.Errorf("project %s does not allow local agents: ask a tenant administrator to enable the local-agents capability: %w", ns, err)
+			}
 			return fmt.Errorf("create %s %s/%s for local Agent: %w", kind.Kind, ns, obj.GetName(), err)
 		}
 	}

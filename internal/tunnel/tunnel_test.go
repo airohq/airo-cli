@@ -3,8 +3,12 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -154,24 +158,29 @@ func TestExtendMovesTheExpiryForward(t *testing.T) {
 	}
 }
 
-func TestTemporaryRunnerDoesNotAdoptAnExistingTunnel(t *testing.T) {
+func TestAgentTunnelDoesNotAdoptAnExistingTunnel(t *testing.T) {
 	obj := existing(false, "kubernetes")
 	obj.SetUID("another-owner")
+	agent := &unstructured.Unstructured{}
+	agent.SetAPIVersion("api.kagent.dev/v1alpha3")
+	agent.SetKind("Agent")
+	agent.SetNamespace(obj.GetNamespace())
+	agent.SetName(obj.GetName())
+	agent.SetUID("agent-uid")
 	c := fake.NewClientBuilder().WithObjects(obj).Build()
-	_, err := CreateTemporaryRunnerTunnel(t.Context(), c, obj.GetName(), "unused", obj)
-	if !errors.Is(err, ErrTunnelInUse) {
+	if _, err := CreateLocalAgentTunnel(t.Context(), c, agent); !apierrors.IsAlreadyExists(err) {
 		t.Fatal(err)
 	}
 	got := obj.DeepCopy()
 	if err := c.Get(t.Context(), client.ObjectKeyFromObject(obj), got); err != nil {
 		t.Fatal(err)
 	}
-	if got.GetUID() != obj.GetUID() || len(got.GetAnnotations()) != 0 {
+	if got.GetUID() != obj.GetUID() || len(got.GetAnnotations()) != 0 || len(got.GetOwnerReferences()) != 0 {
 		t.Fatal("existing Tunnel was changed")
 	}
 }
 
-func TestTemporaryRunnerTunnelCreatedWithAgentOwner(t *testing.T) {
+func TestAgentTunnelCreatedWithAgentOwner(t *testing.T) {
 	agent := &unstructured.Unstructured{}
 	agent.SetAPIVersion("api.kagent.dev/v1alpha3")
 	agent.SetKind("Agent")
@@ -193,17 +202,22 @@ func TestTemporaryRunnerTunnelCreatedWithAgentOwner(t *testing.T) {
 			return stop
 		},
 	}).Build()
-	_, err := CreateTemporaryRunnerTunnel(t.Context(), c, "relay", "unused", agent)
+	_, err := CreateLocalAgentTunnel(t.Context(), c, agent)
 	if !errors.Is(err, stop) {
 		t.Fatal(err)
 	}
 }
 
-func TestPortForwardLeavesTemporaryAgentTunnelAlone(t *testing.T) {
+func TestAgentRelayTunnelIsNotAdopted(t *testing.T) {
+	controller := true
 	obj := existing(false, "kubernetes")
-	obj.SetLabels(map[string]string{TemporaryAgentLabel: "true"})
+	obj.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "api.kagent.dev/v1alpha3", Kind: "Agent", Name: "reviewer", UID: "agent-uid", Controller: &controller}})
+	obj.Object["status"] = map[string]any{"callerURL": "http://relay.team.svc.cluster.local", "clientURL": "https://relay.example"}
 	c := fake.NewClientBuilder().WithObjects(obj).Build()
-	if _, _, err := ensure(t.Context(), c, obj.GetNamespace(), obj.GetName(), spec{}); err == nil {
-		t.Fatal("port forward adopted a temporary agent Tunnel")
+	if _, _, err := ensure(t.Context(), c, obj.GetNamespace(), obj.GetName(), spec{}); err == nil || !strings.Contains(err.Error(), "relay of Agent reviewer") {
+		t.Fatalf("port forward adopted an Agent's relay Tunnel: %v", err)
+	}
+	if _, err := FindRunnerTunnel(t.Context(), c, obj.GetNamespace(), "http://relay.team.svc.cluster.local"); err == nil || !strings.Contains(err.Error(), "relay of Agent reviewer") {
+		t.Fatalf("shared relay lookup served an Agent's relay Tunnel: %v", err)
 	}
 }

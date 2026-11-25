@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -34,15 +35,20 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		Long:    "Run a temporary Agent with a fresh workspace or share a host directory with --workspace. Ctrl-C deletes the Agent and its temporary volume. Files in a shared directory stay on the host. The container sandbox prompts for subscription sign-in on the first run.",
 		Example: "  airo agent serve\n  airo agent serve --name demo\n  airo agent serve --workspace .",
 		Args: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("name") && name == "" {
-				return errors.New("--name needs a temporary Agent name")
+			if cmd.Flags().Changed("name") {
+				if name == "" {
+					return errors.New("--name needs a temporary Agent name")
+				}
+				if problems := validation.IsDNS1123Label(name); len(problems) != 0 {
+					return fmt.Errorf("a temporary Agent shares its Tunnel name, which must be a DNS label: %s", strings.Join(problems, ", "))
+				}
 			}
 			return cobra.NoArgs(cmd, args)
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "temporary Agent name (default: generate a name)")
-	return localRunnerCommand(cmd, flags, func(ctx context.Context, c client.Client, ns string, args []string, serve serveAgent) error {
-		return serveTemporary(ctx, c, ns, name, cmd.ErrOrStderr(), serve)
+	return localRunnerCommand(cmd, flags, func(ctx context.Context, c client.Client, ns, scope string, args []string, serve serveAgent) error {
+		return serveTemporary(ctx, c, ns, name, scope, cmd.ErrOrStderr(), serve)
 	})
 }
 
@@ -59,7 +65,7 @@ func newConnectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			return nil
 		},
 	}
-	return localRunnerCommand(cmd, flags, func(ctx context.Context, c client.Client, ns string, names []string, serve serveAgent) error {
+	return localRunnerCommand(cmd, flags, func(ctx context.Context, c client.Client, ns, _ string, names []string, serve serveAgent) error {
 		name := names[0]
 		t, err := agentTunnel(ctx, c, ns, name)
 		if err != nil {
@@ -71,7 +77,7 @@ func newConnectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 
 type serveAgent func(ctx context.Context, message string, target tunnel.RunnerTunnel, workspace *temporaryWorkspace) error
 
-func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, start func(context.Context, client.Client, string, []string, serveAgent) error) *cobra.Command {
+func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, start func(ctx context.Context, c client.Client, ns, scope string, args []string, serve serveAgent) error) *cobra.Command {
 	var defaults supervisor.Options
 	validate := cmd.Args
 	bindLocalFlags(cmd, &defaults)
@@ -110,7 +116,7 @@ func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 		if err := defaults.PrepareCredentials(ctx, "airo", terminal, out); err != nil {
 			return fmt.Errorf("prepare %s credentials: %w", defaults.Harness, err)
 		}
-		return start(ctx, c, ns, positionals, func(ctx context.Context, message string, t tunnel.RunnerTunnel, workspace *temporaryWorkspace) error {
+		return start(ctx, c, ns, workspaceScope(cfg.Host, ns), positionals, func(ctx context.Context, message string, t tunnel.RunnerTunnel, workspace *temporaryWorkspace) error {
 			return serveRunner(ctx, t.Namespace, t.UID, workspace, defaults, out, func(ctx context.Context, h http.Handler) error {
 				fmt.Fprintln(out, message)
 				return t.ServeHTTP(ctx, out, cfg, h)
@@ -118,6 +124,13 @@ func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 		})
 	}
 	return cmd
+}
+
+// workspaceScope names one project on one cluster, so a temporary workspace
+// left by a killed process is checked only against the cluster that knows it.
+func workspaceScope(host, ns string) string {
+	sum := sha256.Sum256([]byte(host + "\x00" + ns))
+	return hex.EncodeToString(sum[:8])
 }
 
 func agentTunnel(ctx context.Context, c client.Reader, ns, name string) (tunnel.RunnerTunnel, error) {

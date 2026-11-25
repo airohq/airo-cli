@@ -220,7 +220,7 @@ func TestTemporaryAgentOwnsOnlyItsNewResources(t *testing.T) {
 	c := fake.NewClientBuilder().WithObjects(existing).Build()
 	stopped := errors.New("serve failed")
 	var key client.ObjectKey
-	err := withTemporaryAgent(t.Context(), c, "team", "", "relay", io.Discard, func(_ context.Context, a *unstructured.Unstructured) error {
+	err := withTemporaryAgent(t.Context(), c, "team", "", io.Discard, func(_ context.Context, a *unstructured.Unstructured) error {
 		name := a.GetName()
 		key = client.ObjectKey{Namespace: "team", Name: name}
 		got := &unstructured.Unstructured{}
@@ -231,8 +231,9 @@ func TestTemporaryAgentOwnsOnlyItsNewResources(t *testing.T) {
 		refs := got.GetOwnerReferences()
 		policies, _, _ := unstructured.NestedSlice(got.Object, "spec", "egressPolicyRefs")
 		if !strings.HasPrefix(name, "local-agent-") || len(refs) != 0 || got.GetAnnotations()[expiry.Annotation] == "" ||
-			detailString(got.Object, "spec", "harnessRef", "name") != "relay" ||
-			!reflect.DeepEqual(policies, []any{map[string]any{"name": "relay"}}) {
+			got.GetLabels()[localAgentLabel] != "true" ||
+			detailString(got.Object, "spec", "harnessRef", "name") != name ||
+			!reflect.DeepEqual(policies, []any{map[string]any{"name": name}}) {
 			t.Fatalf("unexpected temporary Agent: %+v", got)
 		}
 		return stopped
@@ -253,12 +254,12 @@ func TestNamedTemporaryAgentCanReuseReleasedName(t *testing.T) {
 	ctx := t.Context()
 	c := fake.NewClientBuilder().Build()
 	for range 2 {
-		err := withTemporaryAgent(ctx, c, "team", "demo", "relay", io.Discard, func(_ context.Context, a *unstructured.Unstructured) error {
+		err := withTemporaryAgent(ctx, c, "team", "demo", io.Discard, func(_ context.Context, a *unstructured.Unstructured) error {
 			name := a.GetName()
 			if name != "demo" {
 				t.Fatalf("got name %q", name)
 			}
-			err := withTemporaryAgent(ctx, c, "team", name, "relay", io.Discard, func(context.Context, *unstructured.Unstructured) error {
+			err := withTemporaryAgent(ctx, c, "team", name, io.Discard, func(context.Context, *unstructured.Unstructured) error {
 				t.Fatal("served an existing Agent")
 				return nil
 			})
@@ -277,16 +278,108 @@ func TestNamedTemporaryAgentCanReuseReleasedName(t *testing.T) {
 	}
 }
 
+// relayBase is a project's default Harness, which supplies a local relay's
+// worker pool and snapshot location.
+func relayBase() *unstructured.Unstructured {
+	base := harness("base", "claude")
+	base.Object["spec"].(map[string]any)["substrate"] = map[string]any{
+		"workerPoolRef": map[string]any{"name": "pool"}, "snapshotPolicy": map[string]any{"location": "gs://snapshots/team"},
+	}
+	return base
+}
+
+func TestTemporaryServeProvisionsAnAgentOwnedRelay(t *testing.T) {
+	const name = "reviewer"
+	const origin = "http://reviewer.team.svc.cluster.local"
+	var kinds []string
+	c := fake.NewClientBuilder().WithObjects(relayBase()).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			gvk, err := c.GroupVersionKindFor(obj)
+			if err != nil {
+				return err
+			}
+			kinds = append(kinds, gvk.Kind)
+			switch gvk.Kind {
+			case "Agent":
+				obj.SetUID("agent-uid")
+			case "Tunnel":
+				obj.SetUID("tunnel-uid")
+				obj.(*unstructured.Unstructured).Object["status"] = map[string]any{
+					"callerURL": origin, "clientURL": "https://reviewer.example",
+					"conditions": []any{map[string]any{"type": "Ready", "status": "True"}},
+				}
+			}
+			if gvk.Kind != "Agent" {
+				refs := obj.GetOwnerReferences()
+				if len(refs) != 1 || refs[0].UID != "agent-uid" || refs[0].Controller == nil || !*refs[0].Controller {
+					t.Fatalf("%s is not owned by the temporary Agent: %+v", gvk.Kind, refs)
+				}
+			}
+			return c.Create(ctx, obj, opts...)
+		},
+	}).Build()
+	var served tunnel.RunnerTunnel
+	err := serveTemporary(t.Context(), c, "team", name, "scope", io.Discard, func(_ context.Context, _ string, target tunnel.RunnerTunnel, w *temporaryWorkspace) error {
+		served = target
+		if w == nil || w.scope != "scope" || w.agent != name {
+			t.Fatalf("unexpected workspace: %+v", w)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if served.Name != name || served.UID != "tunnel-uid" {
+		t.Fatalf("served %+v", served)
+	}
+	want := []string{"Agent", "Tunnel", "EgressPolicy", "Role", "RoleBinding", "Harness"}
+	if !reflect.DeepEqual(kinds, want) {
+		t.Fatalf("created %v, want %v", kinds, want)
+	}
+	a := resource(agentGVK, name, nil)
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(a), a); !apierrors.IsNotFound(err) {
+		t.Fatalf("Agent after exit: %v", err)
+	}
+}
+
+func TestTemporaryServeWithoutLocalAgentsCapability(t *testing.T) {
+	c := fake.NewClientBuilder().WithObjects(relayBase()).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			gvk, err := c.GroupVersionKindFor(obj)
+			if err != nil {
+				return err
+			}
+			switch gvk.Kind {
+			case "Tunnel":
+				obj.SetUID("tunnel-uid")
+				obj.(*unstructured.Unstructured).Object["status"] = map[string]any{
+					"callerURL": "http://demo.team.svc.cluster.local", "clientURL": "https://demo.example",
+					"conditions": []any{map[string]any{"type": "Ready", "status": "True"}},
+				}
+			case "EgressPolicy":
+				return apierrors.NewForbidden(gvk.GroupVersion().WithResource("egresspolicies").GroupResource(), obj.GetName(), errors.New("no grant"))
+			}
+			return c.Create(ctx, obj, opts...)
+		},
+	}).Build()
+	err := serveTemporary(t.Context(), c, "team", "demo", "scope", io.Discard, func(context.Context, string, tunnel.RunnerTunnel, *temporaryWorkspace) error {
+		t.Fatal("served without a relay")
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "local-agents capability") {
+		t.Fatalf("expected the missing capability to be named: %v", err)
+	}
+	a := resource(agentGVK, "demo", nil)
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(a), a); !apierrors.IsNotFound(err) {
+		t.Fatalf("Agent left after a refused relay: %v", err)
+	}
+}
+
 func TestTemporaryServeInterruptDeletesOnlyAgent(t *testing.T) {
 	ctx, interrupt := context.WithCancel(t.Context())
 	defer interrupt()
-	h := resource(harnessGVK, "relay", map[string]any{"env": []any{
-		map[string]any{"name": "REMOTE_HARNESS_URL", "value": "http://relay.team.svc.cluster.local"},
-	}})
-	policy := resource(egressPolicyGVK, "relay", nil)
-	policy.SetLabels(map[string]string{tunnel.TemporaryAgentLabel: "true"})
 	var child client.Object
-	c := fake.NewClientBuilder().WithObjects(h, policy).WithInterceptorFuncs(interceptor.Funcs{
+	c := fake.NewClientBuilder().WithObjects(relayBase()).WithInterceptorFuncs(interceptor.Funcs{
 		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 			err := c.Create(ctx, obj, opts...)
 			if err == nil && obj.GetObjectKind().GroupVersionKind().Kind == "Tunnel" {
@@ -296,7 +389,7 @@ func TestTemporaryServeInterruptDeletesOnlyAgent(t *testing.T) {
 			return err
 		},
 	}).Build()
-	if err := serveTemporary(ctx, c, "team", "reviewer", io.Discard, nil); !errors.Is(err, context.Canceled) {
+	if err := serveTemporary(ctx, c, "team", "reviewer", "scope", io.Discard, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("interrupt returned %v", err)
 	}
 	a := resource(agentGVK, "reviewer", nil)

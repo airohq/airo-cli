@@ -5,70 +5,46 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/airohq/airo-cli/internal/expiry"
-	"github.com/airohq/airo-cli/internal/tunnel"
 )
 
 var egressPolicyGVK = agentGVK.GroupVersion().WithKind("EgressPolicy")
 
-func serveTemporary(ctx context.Context, c client.Client, ns, name string, out io.Writer, serve serveAgent) error {
-	policies := &unstructured.UnstructuredList{}
-	policies.SetGroupVersionKind(egressPolicyGVK.GroupVersion().WithKind("EgressPolicyList"))
-	if err := c.List(ctx, policies, client.InNamespace(ns), client.MatchingLabels{tunnel.TemporaryAgentLabel: "true"}); err != nil {
+// serveTemporary runs a local Agent that exists only while this command runs.
+// The Agent owns its whole relay, as one made with agent create --local does,
+// so deleting it, on Ctrl-C or by the janitor after its expiry, removes all.
+func serveTemporary(ctx context.Context, c client.Client, ns, name, scope string, out io.Writer, serve serveAgent) error {
+	substrate, err := localSubstrate(ctx, c, ns)
+	if err != nil {
 		return err
 	}
-	if len(policies.Items) == 0 {
-		return fmt.Errorf("project %s has no relay for temporary agents: ask a project administrator to configure a remote Harness and its EgressPolicy labelled %s=true, or connect to an existing Agent with airo agent connect NAME", ns, tunnel.TemporaryAgentLabel)
-	}
-	sort.Slice(policies.Items, func(i, j int) bool { return policies.Items[i].GetName() < policies.Items[j].GetName() })
-	for _, policy := range policies.Items {
-		relay := policy.GetName()
-		available, err := tunnel.RunnerTunnelAvailable(ctx, c, ns, relay)
+	return withTemporaryAgent(ctx, c, ns, name, out, func(ctx context.Context, a *unstructured.Unstructured) error {
+		if err := provisionLocalRelay(ctx, c, a, substrate); err != nil {
+			return err
+		}
+		t, err := resolveAgentTunnel(ctx, c, a)
 		if err != nil {
 			return err
 		}
-		if !available {
-			continue
-		}
-		h := &unstructured.Unstructured{}
-		h.SetGroupVersionKind(harnessGVK)
-		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: relay}, h); err != nil {
-			return fmt.Errorf("read temporary agent Harness %s/%s: %w", ns, relay, err)
-		}
-		origin, err := remoteOrigin(h)
-		if err != nil {
-			return err
-		}
-		err = withTemporaryAgent(ctx, c, ns, name, relay, out, func(ctx context.Context, a *unstructured.Unstructured) error {
-			t, err := tunnel.CreateTemporaryRunnerTunnel(ctx, c, relay, origin, a)
-			if err != nil {
-				return err
-			}
-			workspace := newTemporaryWorkspace(a, h.GetUID(), c, out)
-			return serve(ctx, "Created temporary agent "+a.GetName(), t, workspace)
-		})
-		// Retry only a clean reservation conflict. A joined cleanup error
-		// means this attempt may have left an Agent behind.
-		if err != tunnel.ErrTunnelInUse {
-			return err
-		}
-	}
-	return fmt.Errorf("all temporary agent tunnels in project %s are in use; stop the other server or wait for a relay to become available", ns)
+		workspace := newTemporaryWorkspace(a, scope, c, out)
+		return serve(ctx, "Created temporary agent "+a.GetName(), t, workspace)
+	})
 }
 
-func withTemporaryAgent(ctx context.Context, c client.Client, ns, name, relay string, out io.Writer, serve func(context.Context, *unstructured.Unstructured) error) (err error) {
-	a := build(ns, name, options{harness: relay, prompt: "You are a helpful coding assistant."})
-	a.Object["spec"].(map[string]any)["egressPolicyRefs"] = relayPolicies(relay)
+func withTemporaryAgent(ctx context.Context, c client.Client, ns, name string, out io.Writer, serve func(context.Context, *unstructured.Unstructured) error) (err error) {
+	// The relay's resources share the Agent's name, so it is chosen here
+	// rather than by the API server's generateName.
 	if name == "" {
-		a.SetGenerateName("local-agent-")
+		name = "local-agent-" + utilrand.String(5)
 	}
+	a := build(ns, name, options{local: true, harness: name, prompt: "You are a helpful coding assistant."})
 	a.SetAnnotations(map[string]string{expiry.Annotation: expiry.Deadline()})
 	if err := c.Create(ctx, a); err != nil {
 		return fmt.Errorf("create temporary agent in project %s: %w", ns, err)
