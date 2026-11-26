@@ -76,6 +76,7 @@ func NewTenantCommand(flags *genericclioptions.ConfigFlags, selection *Selection
 			verb.Short = "List tenants you can see"
 		}
 	}
+	generic.Own(cmd, schema.GroupKind{Group: tenantResource.Group, Kind: "Tenant"})
 	generic.AddBasic(cmd, verbs...)
 	return cmd
 }

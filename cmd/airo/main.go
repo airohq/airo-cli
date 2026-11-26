@@ -24,13 +24,19 @@ import (
 var version string
 
 func main() {
-	if err := newRoot().Execute(); err != nil {
+	if err := newRootFor(os.Args[1:]).Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
 // newRoot returns the airo command with every command below it.
 func newRoot() *cobra.Command {
+	root, _ := build()
+	return root
+}
+
+// build returns the airo command and the kubeconfig flags its commands use.
+func build() (*cobra.Command, *genericclioptions.ConfigFlags) {
 	// Scope is resolved before constructing the resource client.
 	flags := genericclioptions.NewConfigFlags(false)
 	root := &cobra.Command{
@@ -105,7 +111,7 @@ supports list, get, describe, edit and delete.`,
 	root.SetHelpCommandGroupID("other")
 	root.AddCommand(login.NewCredentialCommand())
 	login.SetUpCompletion(root, flags, &selection)
-	return root
+	return root, flags
 }
 
 // buildVersion is the release's version, or what go install recorded: the

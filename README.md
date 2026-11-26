@@ -297,7 +297,11 @@ agent list`, and the same holds for `airo sessions` and `airo tunnels`.
 
 **A kind takes the names kubectl takes**: `agent`, `agents`, a short name, or
 `agents.api.kagent.dev` when two groups have the same kind or a resource
-shares a name with an Airo command. `airo apply` is a
+shares a name with an Airo command. The short names come from the cluster,
+as for kubectl: `airo mc list` lists ModelConfigs. A name of a kind that
+has an airo command runs that command, so `airo tunnels.tunnels.airohq.dev
+list` is `airo tunnel list`, and so is a short name the Tunnel kind gets.
+`airo apply` is a
 server-side apply with the field manager `airo`.
 
 ### See what a command would do

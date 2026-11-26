@@ -81,6 +81,7 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	serve, connect := newServeCommand(flags), newConnectCommand(flags)
 	ui.Require(needsAgents, cmd, create, update)
 	ui.Require(needsLocalAgents, serve, connect)
+	generic.Own(cmd, agentGVK.GroupKind())
 	generic.AddBasic(cmd, generic.Commands(flags, cmd.Name())...)
 	ui.AddCommandGroup(cmd, "agent", "Agent Commands", create, update, newSkillCommand(flags))
 	ui.AddCommandGroup(cmd, "local", "Local Run Commands", serve, connect)

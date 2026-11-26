@@ -63,6 +63,14 @@ in an Agent, is not a kind in the cluster.
 
 - **Take the short form people use elsewhere**, such as kubectl's short
   names and `kubectx`. Do not invent one.
+- **A kind's short names are its CRD's `shortNames`**, not airo's. kubectl,
+  k9s and airo then share them, and a new one needs no new airo. A noun
+  with its own command marks the kind it owns (`generic.Own`), and every
+  name the cluster gives that kind runs the command: `airo ag list` is
+  `airo agent list` once the Agent CRD names `ag`. The cluster is asked only
+  for a first word that is no command, so other commands cost nothing.
+- **Hard-code a short form only for what is no kind**, such as `ctx` for
+  `airo context`.
 - **A noun without a known short form has none.**
 - **The README and the help use the long form**, and name the short one
   once.

@@ -99,6 +99,7 @@ minutes. A Tunnel made with airo tunnel create is used as it is and stays.`,
 	cmd.Flags().BoolVar(&noAuth, "no-auth", false, needsOpenTunnels.Flag("let callers in without a token"))
 	create := newCreateCommand(flags)
 	ui.Require(needsTunnels, cmd, create)
+	generic.Own(cmd, tunnelGVK.GroupKind())
 	generic.AddBasic(cmd, generic.Commands(flags, cmd.Name())...)
 	ui.AddCommandGroup(cmd, "tunnel", "Tunnel Commands", create)
 	return cmd
