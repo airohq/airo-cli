@@ -221,3 +221,22 @@ func TestAgentRelayTunnelIsNotAdopted(t *testing.T) {
 		t.Fatalf("shared relay lookup served an Agent's relay Tunnel: %v", err)
 	}
 }
+
+// The operator's refusal of an open URL ends the wait at once and names the
+// capability that allows it.
+func TestWaitReadyExplainsARefusedOpenTunnel(t *testing.T) {
+	obj := existing(false, "none")
+	obj.Object["status"] = map[string]any{"conditions": []any{map[string]any{
+		"type": "Ready", "status": "False", "reason": reasonUnauthenticatedCallersNotAllowed,
+		"message": "callerAuth is none, but the TunnelServer doesn't set allowUnauthenticatedCallers",
+	}}}
+	c := fake.NewClientBuilder().WithObjects(obj).Build()
+	start := time.Now()
+	err := waitReady(context.Background(), c, obj)
+	if err == nil || !strings.Contains(err.Error(), "project team does not allow tunnels without caller authentication: ask a tenant administrator to enable the open-tunnels capability: tunnel team/my-app is not ready: callerAuth is none") {
+		t.Fatalf("err = %v", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("waitReady waited for its timeout")
+	}
+}

@@ -195,7 +195,11 @@ makes either command exit nonzero.
 
 `airo tenant` lists your tenant's solutions and capabilities in separate tables.
 A command that needs some of them starts its help, and its section below,
-with `Required capabilities:` or `Required solutions:`.
+with `Required capabilities:` or `Required solutions:`. The cluster enforces
+them. When it refuses such a command, the error names the capability to ask a
+tenant administrator for and keeps the cluster's own message, for example
+`project acme-web does not allow agents: ask a tenant administrator to enable
+the agents capability: …`.
 The command uses the selected tenant, or your sole membership on an older sign-in.
 Use `airo tenant --name NAME` to inspect another tenant for one command.
 Platform admins can use the same flag to inspect a tenant by name.

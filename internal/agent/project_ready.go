@@ -42,9 +42,9 @@ func chatProject(ctx context.Context, c client.Client, ns string, out io.Writer)
 		}
 		if !time.Now().Before(deadline) {
 			if apierrors.IsNotFound(err) {
-				return nil, fmt.Errorf("project %s has no agent endpoint", ns)
+				return nil, noEndpoint(ns)
 			}
-			return cm, err
+			return cm, needsAgents.Explain(ns, "agents", err)
 		}
 		if out != nil {
 			fmt.Fprintf(out, "Waiting for project %s to provision its agents.\n", ns)

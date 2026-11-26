@@ -430,7 +430,7 @@ func list(ctx context.Context, c client.Client, ns string, k choice) ([]unstruct
 			// A cluster whose kinds differ from what this version knows.
 			return nil, fmt.Errorf("the cluster does not serve %s in %s: agents may be turned off, or this airo does not match the cluster, update it", k.gvk.Kind, k.gvk.GroupVersion())
 		}
-		return nil, fmt.Errorf("list the %s of %s: %w", k.plural, ns, err)
+		return nil, needsAgents.Explain(ns, "agents", fmt.Errorf("list the %s of %s: %w", k.plural, ns, err))
 	}
 	return list.Items, nil
 }
