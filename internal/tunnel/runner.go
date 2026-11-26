@@ -16,6 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/rest"
 	kube "sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/airohq/airo-cli/internal/dryrun"
 )
 
 // CallRule grants access to the caller endpoint of one project Tunnel.
@@ -87,11 +89,23 @@ func readRunnerTunnel(t *unstructured.Unstructured) (RunnerTunnel, error) {
 	return result, nil
 }
 
+// DryRunOrigin stands in for the caller URL of the Tunnel name in a dry run.
+func DryRunOrigin(name string) string {
+	return "https://" + name + ".tunnel.invalid"
+}
+
 // CreateLocalAgentTunnel returns the private origin for the Agent's relay policy.
 func CreateLocalAgentTunnel(ctx context.Context, c kube.Client, agent *unstructured.Unstructured) (string, error) {
 	t, err := createAgentTunnel(ctx, c, agent)
 	if err != nil {
 		return "", err
+	}
+	if dryrun.Is(c) {
+		// The cluster gives a Tunnel its URL once it exists, and a dry run's
+		// never does: the reserved .invalid domain stands in.
+		origin := DryRunOrigin(t.GetName())
+		dryrun.Note(c, fmt.Sprintf("the cluster gives Tunnel %s its URL once it exists: %s stands in for it", t.GetName(), origin))
+		return origin, nil
 	}
 	if _, err := readRunnerTunnel(t); err != nil {
 		return "", err
@@ -111,6 +125,9 @@ func createAgentTunnel(ctx context.Context, c kube.Client, agent *unstructured.U
 	t.SetOwnerReferences([]metav1.OwnerReference{*owner})
 	if err := c.Create(ctx, t); err != nil {
 		return nil, fmt.Errorf("create tunnel %s: %w", kube.ObjectKeyFromObject(t), err)
+	}
+	if dryrun.Is(c) {
+		return t, nil
 	}
 	uid := t.GetUID()
 	if err := waitReady(ctx, c, t); err != nil {

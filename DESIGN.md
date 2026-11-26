@@ -142,21 +142,34 @@ tunnel 3000` serves a local port. A bare `airo agent` shows its resource command
   singular noun as the flag.** In `airo agent create --harness claude`,
   `--harness` selects the harness named `claude`. Use the same flag wherever
   another command refers to that resource.
-- **A command that creates resources takes `--dry-run`, and shows them with
-  `-o yaml` or `-o json`.** People think of a command in terms of the
-  resources it makes, and a dry run shows them what it means in the
-  Kubernetes API, most of all where one command makes several, as
-  `airo agent create --local` does. The flag is kubectl's and `airo
-  create`'s: `--dry-run=server` sends each resource with the API's dry run, so
-  the cluster's defaults and admission checks show and a refusal is the one
-  the real run would get. `--dry-run=client` builds them without sending
-  them. A dry run reads what the command reads, such as the project's
-  default harness, asks what it would ask, and writes nothing that persists.
-  Without `-o` it says what it would create, a line per resource, as
-  `kind/name`. With `-o yaml` or `-o json` it prints the resources as the
-  command would send them, in the order it would create them: one object, or
-  a `List` of several. A command that would then hold a connection, such as
-  `airo tunnel` or `airo agent serve`, stops after printing.
+- **A command that creates or changes resources takes `--dry-run`, and shows
+  them with `-o yaml` or `-o json`,** as kubectl's `create`, `patch` and
+  `set` do. People think of a command in terms of the resources it makes or
+  changes, and a dry run shows them what it means in the Kubernetes API:
+  most of all where one command makes several, as `airo agent create
+  --local` does, or where a change lands in a field the person did not name,
+  as `airo agent skill add` pins a skill in the Agent's spec. The flag is
+  kubectl's and `airo create`'s: `--dry-run=server` sends each write with
+  the API's dry run, so the cluster's defaults and admission checks show and
+  a refusal is the one the real run would get. `--dry-run=client` builds the
+  resources without sending them. A dry run reads what the command reads,
+  such as the project's default harness or the Agent it changes, asks what
+  it would ask, and writes nothing that persists. Without `-o` it says what
+  it would do, a line per resource as kubectl prints it, such as
+  `agent.api.kagent.dev/reviewer created (server dry run)`. With `-o yaml`
+  or `-o json` it prints each resource as it would be after the command, in
+  the order the command writes them: one object, or a `List` of several.
+  `-o` without `--dry-run` is an error. A command that would then wait or
+  hold a connection, such as `airo tunnel` or `airo agent serve`, stops
+  after printing. `edit` has no dry run, as kubectl's has none: the editor
+  shows the change before it is saved. A command builds its writes on the
+  `internal/dryrun` client, so that one flag covers them all.
+- **A dry run says where it differs from the real run**, in a note on
+  standard error. A value only the cluster gives a resource once it exists,
+  such as a Tunnel's URL, has a stand-in under the reserved `.invalid`
+  domain. A resource that refers to another of the same dry run, as a
+  RoleBinding refers to its Role, is one the server cannot check, because
+  the other does not exist: it is shown as the command would send it.
 - **Tab completes every name that exists**, as kubectl's completion does: an
   argument such as `NAME`, and a flag that names a resource, completes from a
   list in the selected tenant and project (`generic.Names`). The

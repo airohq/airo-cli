@@ -141,6 +141,33 @@ func TestNamesComplete(t *testing.T) {
 	walk(newRoot())
 }
 
+// Every command that creates or changes resources takes --dry-run and -o
+// (DESIGN.md#arguments-and-flags). edit has none, as kubectl's has none.
+func TestWritesHaveADryRun(t *testing.T) {
+	writes := map[string]bool{
+		"airo agent create": true, "airo agent update": true, "airo agent serve": true,
+		"airo agent skill add": true, "airo agent skill upgrade": true, "airo agent skill remove": true,
+		"airo project create": true, "airo tunnel": true, "airo tunnel create": true,
+		"airo create": true, "airo agent delete": true, "airo project delete": true,
+		"airo tenant delete": true, "airo tunnel delete": true,
+		"airo": true, // for airo KIND delete NAME
+	}
+	var walk func(*cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		dry := cmd.Flags().Lookup("dry-run") != nil
+		if dry != writes[cmd.CommandPath()] {
+			t.Errorf("%s has --dry-run: %t, want %t", cmd.CommandPath(), dry, writes[cmd.CommandPath()])
+		}
+		if dry && cmd.Flags().Lookup("output") == nil {
+			t.Errorf("%s has --dry-run without -o", cmd.CommandPath())
+		}
+		for _, child := range cmd.Commands() {
+			walk(child)
+		}
+	}
+	walk(newRoot())
+}
+
 // The help shows only the commands of a group once a noun has groups, so
 // a verb added without one would be missing from it.
 func TestGroupedNounsGroupEveryVerb(t *testing.T) {

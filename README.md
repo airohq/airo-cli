@@ -300,6 +300,40 @@ agent list`, and the same holds for `airo sessions` and `airo tunnels`.
 shares a name with an Airo command. `airo apply` is a
 server-side apply with the field manager `airo`.
 
+### See what a command would do
+
+**Every command that creates or changes resources takes `--dry-run`**, as
+kubectl's do: `agent create`, `agent update`, `agent serve`, `agent skill
+add`, `upgrade` and `remove`, `project create`, `tunnel` and `tunnel
+create`. Add `-o yaml` or `-o json` to see the resources themselves, as the
+command would send them, in the order it would create them. It is a way to
+learn what a command means in Kubernetes terms:
+
+```console
+$ airo agent create laptop --local --prompt "You code." --dry-run=server
+agent.api.kagent.dev/laptop created (server dry run)
+tunnel.tunnels.airohq.dev/laptop created (server dry run)
+egresspolicy.api.kagent.dev/laptop created (server dry run)
+role.rbac.authorization.k8s.io/airo-local-call-0b047738-… created (server dry run)
+rolebinding.rbac.authorization.k8s.io/laptop created (server dry run)
+harness.api.kagent.dev/laptop created (server dry run)
+
+$ airo agent skill add anthropics/skills@pdf -a reviewer --dry-run=server -o yaml
+```
+
+`--dry-run=server` has the cluster check each write without keeping it, so
+you see the API's defaults, the labels the platform adds, and the refusal
+the real run would get, such as a full project quota. `--dry-run=client`
+sends nothing. Either way the command still reads what it needs, such as the
+project's default harness, and asks what it would ask. It stops before it
+would wait or serve.
+
+Where a dry run differs from the real run, a note on standard error says so.
+A Tunnel's URL, which the cluster gives a Tunnel once it exists, stands in
+as `https://NAME.tunnel.invalid`. A resource that refers to another one of
+the same dry run, as a RoleBinding refers to its Role, cannot be checked by
+the cluster, so it is shown as airo would send it.
+
 ## Chat
 
 Required capabilities: agents

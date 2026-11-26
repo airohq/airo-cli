@@ -25,6 +25,7 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/dryrun"
 	"github.com/airohq/airo-cli/internal/expiry"
 	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/ui"
@@ -52,6 +53,7 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		name   string
 		public bool
 		noAuth bool
+		dry    *dryrun.Options
 	)
 	cmd := &cobra.Command{
 		Use:     "tunnel PORT|HOST:PORT",
@@ -88,9 +90,10 @@ minutes. A Tunnel made with airo tunnel create is used as it is and stays.`,
 			if err != nil {
 				return err
 			}
-			return needsTunnels.Explain(ns, "tunnels", run(ctx, cmd.OutOrStdout(), flags, name, to, want))
+			return needsTunnels.Explain(ns, "tunnels", run(ctx, cmd.OutOrStdout(), flags, dry, name, to, want))
 		},
 	}
+	dry = dryrun.AddFlags(cmd)
 	cmd.Flags().StringVar(&name, "name", "", "name of the Tunnel (default: <your username>-<port>)")
 	cmd.Flags().BoolVar(&public, "public", false, "make the tunnel reachable from the internet too")
 	cmd.Flags().BoolVar(&noAuth, "no-auth", false, needsOpenTunnels.Flag("let callers in without a token"))
@@ -105,6 +108,7 @@ minutes. A Tunnel made with airo tunnel create is used as it is and stays.`,
 // and a URL that other people and manifests can rely on.
 func newCreateCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	var public, noAuth bool
+	var dry *dryrun.Options
 	cmd := &cobra.Command{
 		Use:   "create [NAME]",
 		Short: "Create a Tunnel that stays until you delete it",
@@ -147,9 +151,13 @@ Omit NAME on a terminal to choose the name, visibility and authentication.`,
 			if err != nil {
 				return err
 			}
+			c = dry.Client(c)
 			t := build(ns, name, spec{public: &public, noAuth: &noAuth})
 			if err := c.Create(cmd.Context(), t); err != nil {
 				return needsTunnels.Explain(ns, "tunnels", err)
+			}
+			if done, err := dryrun.Finish(c); done {
+				return err
 			}
 			if err := waitReady(cmd.Context(), c, t); err != nil {
 				return err
@@ -161,6 +169,7 @@ Omit NAME on a terminal to choose the name, visibility and authentication.`,
 	}
 	cmd.Flags().BoolVar(&public, "public", false, "make the tunnel reachable from the internet too")
 	cmd.Flags().BoolVar(&noAuth, "no-auth", false, needsOpenTunnels.Flag("let callers in without a token"))
+	dry = dryrun.AddFlags(cmd)
 	return cmd
 }
 
@@ -201,7 +210,7 @@ type spec struct {
 	noAuth *bool
 }
 
-func run(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlags, name, to string, want spec) error {
+func run(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlags, dry *dryrun.Options, name, to string, want spec) error {
 	cfg, err := flags.ToRESTConfig()
 	if err != nil {
 		return err
@@ -214,6 +223,7 @@ func run(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlag
 	if err != nil {
 		return err
 	}
+	c = dry.Client(c)
 
 	t, created, err := ensure(ctx, c, ns, name, want)
 	if err != nil {
@@ -228,6 +238,10 @@ func run(ctx context.Context, out io.Writer, flags *genericclioptions.ConfigFlag
 		if err := expiry.Extend(ctx, c, t); err != nil {
 			return fmt.Errorf("extend tunnel %s/%s: %w", ns, name, err)
 		}
+	}
+	// A dry run ends before the command waits for the Tunnel and serves it.
+	if done, err := dryrun.Finish(c); done {
+		return err
 	}
 	if temporary {
 		defer func() {

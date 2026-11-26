@@ -15,6 +15,7 @@ coding agents and people changing this repository; keep it short.
 | `internal/skill` | Skill sources as `--skill` takes them, pinned to a Git commit or an image digest |
 | `internal/registry` | Public directories of skills that `airo agent skill search` asks, such as skills.sh |
 | `internal/wizard` | Terminal prompts for resource creation |
+| `internal/dryrun` | `--dry-run` and `-o` of the commands that create or change resources: a client that records writes |
 | `internal/picker` | The picker every command shows for a choice from a list |
 | `internal/bearer` | The signed-in person's token, for a call to a component's own API |
 | `internal/ui` | Terminal detection, colour roles and Markdown rendering shared by commands |

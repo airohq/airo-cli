@@ -19,6 +19,7 @@ import (
 	"k8s.io/kubectl/pkg/cmd/util/editor"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/dryrun"
 	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/ui"
 	"github.com/airohq/airo-cli/internal/wizard"
@@ -50,6 +51,7 @@ func (ch changes) none() bool {
 
 func newUpdateCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	var o options
+	var dry *dryrun.Options
 	cmd := &cobra.Command{
 		Use:   "update [NAME]",
 		Short: "Change an agent's instructions, description, harness or model",
@@ -81,6 +83,7 @@ airo agent edit NAME.`,
 			if err != nil {
 				return err
 			}
+			c = dry.Client(c)
 			var name string
 			if len(args) == 1 {
 				name = args[0]
@@ -122,6 +125,7 @@ airo agent edit NAME.`,
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
 	cmd.ValidArgsFunction = generic.FirstArg(CompleteAgents(flags))
 	completeAgentRefs(cmd, flags)
+	dry = dryrun.AddFlags(cmd)
 	return cmd
 }
 
@@ -332,6 +336,9 @@ func update(ctx context.Context, out io.Writer, c client.Client, ns, name string
 	if !changed {
 		fmt.Fprintf(out, "Agent %s/%s is unchanged\n", ns, name)
 		return nil
+	}
+	if done, err := dryrun.Finish(c); done {
+		return err
 	}
 	after, _ := settingsOf(a)
 	fmt.Fprintf(out, "Updated agent %s/%s\n", ns, name)

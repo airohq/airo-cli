@@ -21,7 +21,9 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/dryrun"
 	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/picker"
 	"github.com/airohq/airo-cli/internal/ui"
@@ -62,23 +64,35 @@ func NewProjectCommand(flags *genericclioptions.ConfigFlags, selection *Selectio
 		}
 		return projects, err
 	}
-	create := func(ctx context.Context, name string) error {
-		r, _, err := namespaces()
-		if err != nil {
-			return err
-		}
+	var dry *dryrun.Options
+	// send creates the project with c, which records it in a dry run.
+	send := func(ctx context.Context, c client.Client, name string) error {
 		ns := &unstructured.Unstructured{}
-		ns.SetAPIVersion("v1")
-		ns.SetKind("Namespace")
+		ns.SetGroupVersionKind(projectResource.GroupVersion().WithKind("Namespace"))
 		ns.SetName(name)
 		if selection.Tenant != "" {
 			ns.SetLabels(map[string]string{tenantLabel: selection.Tenant})
 		}
-		_, err = r.Create(ctx, ns, metav1.CreateOptions{})
+		err := c.Create(ctx, ns)
 		if selection.Tenant == "" && apierrors.IsForbidden(err) && strings.Contains(err.Error(), tenantLabel) {
 			return fmt.Errorf("%w: choose the owner with --tenant NAME", err)
 		}
 		return err
+	}
+	newClient := func() (client.Client, error) {
+		cfg, err := flags.ToRESTConfig()
+		if err != nil {
+			return nil, err
+		}
+		c, err := client.New(cfg, client.Options{})
+		return dry.Client(c), err
+	}
+	create := func(ctx context.Context, name string) error {
+		c, err := newClient()
+		if err != nil {
+			return err
+		}
+		return send(ctx, c, name)
 	}
 	// The project airo login chooses at a first sign-in.
 	defaultOf := func(ctx context.Context) (string, error) {
@@ -151,7 +165,7 @@ previous project. Pass --project NAME to another command for a one-time choice.`
 		verb.PreRunE = checkNamed
 		generic.AddBasic(cmd, verb)
 	}
-	ui.AddCommandGroup(cmd, "project", "Project Commands", &cobra.Command{
+	createCmd := &cobra.Command{
 		Use:   "create NAME",
 		Short: "Create a project",
 		Long: `Create makes a new project, a namespace of the platform. The platform
@@ -161,13 +175,27 @@ tenant's name, and how many projects you may have.`,
   airo project acme-web       # then work in it`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if dry.Active() {
+				// A dry run's project never appears, so nothing waits for it.
+				c, err := newClient()
+				if err != nil {
+					return err
+				}
+				if err := send(cmd.Context(), c, args[0]); err != nil {
+					return err
+				}
+				_, err = dryrun.Finish(c)
+				return err
+			}
 			switchTo := "airo project " + args[0]
 			if cmd.Flags().Changed("tenant") {
 				switchTo = "airo tenant " + selection.Tenant + " --project " + args[0]
 			}
 			return createProject(cmd.Context(), cmd.OutOrStdout(), args[0], create, list, time.Minute, switchTo)
 		},
-	})
+	}
+	dry = dryrun.AddFlags(createCmd)
+	ui.AddCommandGroup(cmd, "project", "Project Commands", createCmd)
 	deleteCmd := generic.NewDeleteCommand(flags, projectResource.Resource, func(cmd *cobra.Command, name string) error {
 		contextName := *flags.Context
 		if selection.Tenant != "" {
