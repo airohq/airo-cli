@@ -63,6 +63,17 @@ in an Agent, is not a kind in the cluster.
 
 - **Take the short form people use elsewhere**, such as kubectl's short
   names and `kubectx`. Do not invent one.
+- **A kind's short names are its CRD's `shortNames`**, not airo's. kubectl,
+  k9s and airo then share them, and a new one needs no new airo. A noun
+  with its own command marks the kind it owns (`generic.Own`), and every
+  name the cluster gives that kind runs the command: `airo ag list` is
+  `airo agent list` once the Agent CRD names `ag`. The cluster is asked only
+  for a first word that is no command, so other commands cost nothing.
+- **People find short names where kubectl users look**: `airo
+  api-resources`, and the `Aliases:` of the command's help, which asks the
+  cluster quietly as a completion does. The root's help asks nothing.
+- **Hard-code a short form only for what is no kind**, such as `ctx` for
+  `airo context`.
 - **A noun without a known short form has none.**
 - **The README and the help use the long form**, and name the short one
   once.
@@ -142,6 +153,49 @@ tunnel 3000` serves a local port. A bare `airo agent` shows its resource command
   singular noun as the flag.** In `airo agent create --harness claude`,
   `--harness` selects the harness named `claude`. Use the same flag wherever
   another command refers to that resource.
+- **A command that creates or changes resources takes `--dry-run`, and shows
+  them with `-o yaml` or `-o json`,** as kubectl's `create`, `patch` and
+  `set` do. People think of a command in terms of the resources it makes or
+  changes, and a dry run shows them what it means in the Kubernetes API:
+  most of all where one command makes several, as `airo agent create
+  --local` does, or where a change lands in a field the person did not name,
+  as `airo agent skill add` pins a skill in the Agent's spec. The flag is
+  kubectl's and `airo create`'s: `--dry-run=server` sends each write with
+  the API's dry run, so the cluster's defaults and admission checks show and
+  a refusal is the one the real run would get. `--dry-run=client` builds the
+  resources without sending them. A dry run reads what the command reads,
+  such as the project's default harness or the Agent it changes, asks what
+  it would ask, and writes nothing that persists. Without `-o` it says what
+  it would do, a line per resource as kubectl prints it, such as
+  `agent.api.kagent.dev/reviewer created (server dry run)`. With `-o yaml`
+  or `-o json` it prints each resource as it would be after the command, in
+  the order the command writes them: one object, or a `List` of several.
+  `-o` without `--dry-run` is an error. A command that would then wait or
+  hold a connection, such as `airo tunnel` or `airo agent serve`, stops
+  after printing. `edit` has no dry run, as kubectl's has none: the editor
+  shows the change before it is saved. A command builds its writes on the
+  `internal/dryrun` client, so that one flag covers them all.
+- **A dry run says where it differs from the real run**, in a note on
+  standard error. A value only the cluster gives a resource once it exists,
+  such as a Tunnel's URL, has a stand-in under the reserved `.invalid`
+  domain. A resource that refers to another of the same dry run, as a
+  RoleBinding refers to its Role, is one the server cannot check, because
+  the other does not exist: it is shown as the command would send it.
+- **Tab completes every name that exists**, as kubectl's completion does: an
+  argument such as `NAME`, and a flag that names a resource, completes from a
+  list in the selected tenant and project (`generic.Names`). The
+  kubeconfig's contexts and fixed choices complete without the network. A
+  name for something new, as with `create NAME`, does not complete. A
+  completion takes its scope from the kubeconfig and flags alone, caps each
+  request at five seconds, and never starts a sign-in. When it fails, it
+  offers nothing, and the command explains when it runs. What belongs to one
+  agent, such as its skills or a session to resume, completes from the agent
+  `--agent` names or the project's only one, and otherwise not at all. A
+  name from another agent would not exist in the one named later. An empty
+  completion makes the shell beep, which is the signal: airo prints none.
+- **The root's help lists no flags**, as kubectl's does: they are the flags
+  of `airo KIND VERB`, which that verb's help shows. `airo options` lists the
+  global flags.
 
 ## Capabilities and solutions
 

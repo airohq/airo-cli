@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/airohq/airo-cli/internal/agent"
+	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/ui"
 )
 
@@ -99,6 +100,11 @@ Without --agent, each command asks every agent of the project.`,
 			},
 		}
 		c.Flags().StringVarP(&o.agent, "agent", "a", "", "name of the Agent (default: every agent of the project)")
+		generic.CompleteFlag(c, "agent", agent.CompleteAgents(flags))
+		if strings.Contains(use, "SESSION") {
+			// Without --agent, the command finds the session with any agent.
+			c.ValidArgsFunction = CompleteSessions(flags, false)
+		}
 		if output {
 			c.Flags().StringVarP(&o.output, "output", "o", "", "print everything as yaml or json")
 		}

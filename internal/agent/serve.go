@@ -23,6 +23,8 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/dryrun"
+	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/tunnel"
 	"github.com/airohq/airo-cli/internal/ui"
 )
@@ -47,8 +49,9 @@ func newServeCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "temporary Agent name (default: generate a name)")
+	dry := dryrun.AddFlags(cmd)
 	return localRunnerCommand(cmd, flags, func(ctx context.Context, c client.Client, ns, scope string, args []string, serve serveAgent) error {
-		return serveTemporary(ctx, c, ns, name, scope, cmd.ErrOrStderr(), serve)
+		return serveTemporary(ctx, dry.Client(c), ns, name, scope, cmd.ErrOrStderr(), serve)
 	})
 }
 
@@ -64,6 +67,7 @@ func newConnectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			}
 			return nil
 		},
+		ValidArgsFunction: generic.FirstArg(CompleteAgents(flags)),
 	}
 	return localRunnerCommand(cmd, flags, func(ctx context.Context, c client.Client, ns, _ string, names []string, serve serveAgent) error {
 		name := names[0]
@@ -113,8 +117,11 @@ func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 		if ui.Interactive(cmd.InOrStdin(), out) {
 			terminal, _ = cmd.InOrStdin().(*os.File)
 		}
-		if err := defaults.PrepareCredentials(ctx, "airo", terminal, out); err != nil {
-			return fmt.Errorf("prepare %s credentials: %w", defaults.Harness, err)
+		// A dry run serves nothing, so it needs no credentials.
+		if !dryrun.Requested(cmd) {
+			if err := defaults.PrepareCredentials(ctx, "airo", terminal, out); err != nil {
+				return fmt.Errorf("prepare %s credentials: %w", defaults.Harness, err)
+			}
 		}
 		return start(ctx, c, ns, workspaceScope(cfg.Host, ns), positionals, func(ctx context.Context, message string, t tunnel.RunnerTunnel, workspace *temporaryWorkspace) error {
 			return serveRunner(ctx, t.Namespace, t.UID, workspace, defaults, out, func(ctx context.Context, h http.Handler) error {

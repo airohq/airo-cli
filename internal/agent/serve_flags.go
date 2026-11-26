@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/ui"
 )
 
@@ -69,6 +70,16 @@ func bindLocalFlags(cmd *cobra.Command, opts *supervisor.Options) {
 		panic(err)
 	}
 	cmd.Annotations["helpHint"] = "Pass --sandbox and/or --harness with --help to see flags for that combination."
+	generic.CompleteFlag(cmd, "sandbox", func(prefix string) []string {
+		return generic.WithPrefix(slices.Collect(maps.Keys(localSandboxes)), prefix)
+	})
+	generic.CompleteFlag(cmd, "harness", func(prefix string) []string {
+		var names []string
+		for _, sandbox := range localSandboxes {
+			names = append(names, slices.Collect(maps.Keys(sandbox.harnesses))...)
+		}
+		return generic.WithPrefix(names, prefix)
+	})
 }
 
 // selectLocalFlags applies the same scope to help and to explicit flag validation.

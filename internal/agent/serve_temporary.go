@@ -12,6 +12,7 @@ import (
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/dryrun"
 	"github.com/airohq/airo-cli/internal/expiry"
 )
 
@@ -27,6 +28,9 @@ func serveTemporary(ctx context.Context, c client.Client, ns, name, scope string
 	}
 	return withTemporaryAgent(ctx, c, ns, name, out, func(ctx context.Context, a *unstructured.Unstructured) error {
 		if err := provisionLocalRelay(ctx, c, a, substrate); err != nil {
+			return err
+		}
+		if done, err := dryrun.Finish(c); done {
 			return err
 		}
 		t, err := resolveAgentTunnel(ctx, c, a)
@@ -48,6 +52,10 @@ func withTemporaryAgent(ctx context.Context, c client.Client, ns, name string, o
 	a.SetAnnotations(map[string]string{expiry.Annotation: expiry.Deadline()})
 	if err := c.Create(ctx, a); err != nil {
 		return fmt.Errorf("create temporary agent in project %s: %w", ns, err)
+	}
+	if dryrun.Is(c) {
+		// Nothing persists, so nothing expires or needs deleting.
+		return serve(ctx, a)
 	}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)

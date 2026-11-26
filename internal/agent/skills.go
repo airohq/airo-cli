@@ -25,6 +25,8 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/dryrun"
+	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/picker"
 	"github.com/airohq/airo-cli/internal/registry"
 	"github.com/airohq/airo-cli/internal/skill"
@@ -477,6 +479,9 @@ func addPinned(ctx context.Context, out io.Writer, c client.Client, ns, agent st
 	if err != nil {
 		return err
 	}
+	if done, err := dryrun.Finish(c); done {
+		return err
+	}
 	for _, p := range pinned {
 		fmt.Fprintf(out, "Added skill %s to agent %s/%s\n", p.Name, ns, agent)
 		fmt.Fprintf(out, "  source:   %s\n", p)
@@ -678,6 +683,9 @@ func upgradeSkill(ctx context.Context, out io.Writer, c client.Client, ns, agent
 	if err != nil {
 		return err
 	}
+	if done, err := dryrun.Finish(c); done {
+		return err
+	}
 	fmt.Fprintf(out, "Upgraded skill %s on agent %s/%s\n", name, ns, agent)
 	fmt.Fprintf(out, "  from:     %s\n", old)
 	fmt.Fprintf(out, "  to:       %s\n", next)
@@ -696,6 +704,9 @@ func removeSkill(ctx context.Context, out io.Writer, c client.Client, ns, agent,
 		return append(entries[:i], entries[i+1:]...), setVersions(a, v)
 	})
 	if err != nil {
+		return err
+	}
+	if done, err := dryrun.Finish(c); done {
 		return err
 	}
 	fmt.Fprintf(out, "Removed skill %s from agent %s/%s\n", name, ns, agent)
@@ -790,13 +801,14 @@ func target(ctx context.Context, cmd *cobra.Command, flags *genericclioptions.Co
 
 // addWizard asks for the source of a skill, then for the Agent unless agent
 // names it, and adds the skill.
-func addWizard(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, agent string, o addOptions) error {
+func addWizard(cmd *cobra.Command, flags *genericclioptions.ConfigFlags, dry *dryrun.Options, agent string, o addOptions) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	c, ns, err := connect(flags)
 	if err != nil {
 		return err
 	}
+	c = dry.Client(c)
 	header := fmt.Sprintf("Adding a skill to an agent in project %s", ui.Text(ns))
 	if agent != "" {
 		header = fmt.Sprintf("Adding a skill to agent %s/%s", ui.Text(ns), ui.Text(agent))
@@ -875,6 +887,8 @@ without --agent, airo asks on a terminal and fails elsewhere.`,
 		},
 	}
 
+	// dry holds --dry-run and -o of the verbs that change the Agent.
+	dry := map[*cobra.Command]*dryrun.Options{}
 	// run resolves the Agent, then runs the verb until Ctrl-C.
 	run := func(cmd *cobra.Command, verb func(ctx context.Context, t skillTarget) error) error {
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -883,6 +897,7 @@ without --agent, airo asks on a terminal and fails elsewhere.`,
 		if err != nil {
 			return err
 		}
+		t.c = dry[cmd].Client(t.c)
 		return verb(ctx, t)
 	}
 
@@ -924,7 +939,7 @@ agent unless --agent names it.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return addWizard(cmd, flags, agent, o)
+				return addWizard(cmd, flags, dry[cmd], agent, o)
 			}
 			s, err := skill.Parse(args[0])
 			if err != nil {
@@ -952,7 +967,7 @@ agent unless --agent names it.`,
 			if err != nil {
 				return err
 			}
-			return addPinned(ctx, cmd.OutOrStdout(), t.c, t.ns, t.agent, pinned, readyTimeout)
+			return addPinned(ctx, cmd.OutOrStdout(), dry[cmd].Client(t.c), t.ns, t.agent, pinned, readyTimeout)
 		},
 	}
 	add.Flags().StringArrayVar(&o.skills, "skill", nil, "the name of a skill in the source to add, or '*' for all; repeat for more")
@@ -991,9 +1006,15 @@ commit, image tag or digest, and later upgrades follow it.`,
 			})
 		},
 	}
+	upgrade.ValidArgsFunction = completeSkills(flags)
+	remove.ValidArgsFunction = completeSkills(flags)
 	// Each verb holds --agent itself, so that its help lists the flag.
 	for _, verb := range []*cobra.Command{list, add, upgrade, remove} {
 		verb.Flags().StringVarP(&agent, "agent", "a", "", "name of the Agent to change; asked on a terminal when not given")
+		generic.CompleteFlag(verb, "agent", CompleteAgents(flags))
+		if verb != list {
+			dry[verb] = dryrun.AddFlags(verb)
+		}
 	}
 	// search changes no agent, so it has no --agent.
 	var source string

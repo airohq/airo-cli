@@ -23,6 +23,7 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/dryrun"
 	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/skill"
 	"github.com/airohq/airo-cli/internal/ui"
@@ -80,6 +81,7 @@ func NewCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	serve, connect := newServeCommand(flags), newConnectCommand(flags)
 	ui.Require(needsAgents, cmd, create, update)
 	ui.Require(needsLocalAgents, serve, connect)
+	generic.Own(cmd, agentGVK.GroupKind())
 	generic.AddBasic(cmd, generic.Commands(flags, cmd.Name())...)
 	ui.AddCommandGroup(cmd, "agent", "Agent Commands", create, update, newSkillCommand(flags))
 	ui.AddCommandGroup(cmd, "local", "Local Run Commands", serve, connect)
@@ -99,6 +101,7 @@ type options struct {
 
 func newCreateCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 	var o options
+	var dry *dryrun.Options
 	cmd := &cobra.Command{
 		Use:   "create [NAME]",
 		Short: "Create an agent from a prompt",
@@ -160,7 +163,7 @@ Tools and the other fields of an Agent go in a file, for airo apply -f.`,
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return create(ctx, cmd.OutOrStdout(), c, ns, name, o, w, readyTimeout)
+			return create(ctx, cmd.OutOrStdout(), dry.Client(c), ns, name, o, w, readyTimeout)
 		},
 	}
 	cmd.Flags().StringVar(&o.prompt, "prompt", "", "the agent's system prompt")
@@ -172,6 +175,8 @@ Tools and the other fields of an Agent go in a file, for airo apply -f.`,
 	cmd.MarkFlagsMutuallyExclusive("local", "harness")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
 	cmd.Flags().StringArrayVar(&o.skills, "skill", nil, "a skill's source, such as https://github.com/OWNER/REPO/tree/main/PATH; repeat for more")
+	completeAgentRefs(cmd, flags)
+	dry = dryrun.AddFlags(cmd)
 	return cmd
 }
 
@@ -266,6 +271,9 @@ func create(ctx context.Context, out io.Writer, c client.Client, ns, name string
 		if err := provisionLocalRelay(ctx, c, a, substrate); err != nil {
 			return err
 		}
+	}
+	if done, err := dryrun.Finish(c); done {
+		return err
 	}
 	fmt.Fprintf(out, "Created agent %s/%s\n", ns, name)
 	if r := harnessRuntime; r != "" {

@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/dryrun"
 	"github.com/airohq/airo-cli/internal/tunnel"
 )
 
@@ -63,6 +64,9 @@ func provisionLocalRelay(ctx context.Context, c client.Client, a *unstructured.U
 	// The project admission policy reserves this role name for a single
 	// Tunnel call grant. It cannot resolve to an unrelated existing Role.
 	roleName := "airo-local-call-" + string(a.GetUID())
+	if a.GetUID() == "" {
+		dryrun.Note(c, "the API server gives the Agent its UID, which ends the Role's name: --dry-run=server shows it")
+	}
 	policy := &unstructured.Unstructured{}
 	policy.SetGroupVersionKind(egressPolicyGVK)
 	policy.Object["spec"] = map[string]any{"destinations": []any{map[string]any{

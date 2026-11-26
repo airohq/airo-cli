@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
+	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/picker"
 	"github.com/airohq/airo-cli/internal/ui"
 )
@@ -46,7 +47,8 @@ cluster's, are not listed and not switched to.`,
   airo context list
   airo context set --server https://api.example.com
   airo ctx -               # ctx is short for context`,
-		Args: cobra.MaximumNArgs(1),
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: generic.FirstArg(completeContexts(flags)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := newPreviousStore()
 			if err != nil {
@@ -79,6 +81,8 @@ cluster's, are not listed and not switched to.`,
 		Long:    "Remove the named Airo context. If it is current, clear the selection. Its cluster and user entries stay in the kubeconfig.",
 		Example: "  airo context delete customer",
 		Args:    cobra.ExactArgs(1),
+
+		ValidArgsFunction: generic.FirstArg(completeContexts(flags)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			access := flags.ToRawKubeConfigLoader().ConfigAccess()
 			cfg, err := access.GetStartingConfig()
@@ -128,7 +132,8 @@ and a new sign-in is made with airo login.`,
   airo context set -n acme-web                # work in another project from now on
   airo context set customer --certificate-authority ca.crt
   airo context set --issuer https://login.example.com/ --client-id abc123`,
-		Args: cobra.MaximumNArgs(1),
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: generic.FirstArg(completeContexts(flags)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := *flags.Context
 			if len(args) == 1 {

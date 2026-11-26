@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -335,6 +336,21 @@ func TestTokenUsesTheCacheAndRefreshes(t *testing.T) {
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
 		t.Errorf("cache file mode = %v, %v; want 0600", info.Mode(), err)
+	}
+
+	// Without a prompt, as for a shell completion, a refresh still works,
+	// and an expired sign-in fails at once instead of starting a new one.
+	if err := save(path, tokens{IDToken: jwt(time.Now().Add(-time.Minute)), RefreshToken: "old-refresh"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, err := o.token(context.Background(), nil); err != nil || got != fresh {
+		t.Fatalf("token without a prompt = %q, %v; want the refreshed one", got, err)
+	}
+	if err := save(path, tokens{IDToken: jwt(time.Now().Add(-time.Minute))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := o.token(context.Background(), nil); !errors.Is(err, errSignInNeeded) {
+		t.Errorf("token without a prompt or refresh token: %v, want %v", err, errSignInNeeded)
 	}
 }
 

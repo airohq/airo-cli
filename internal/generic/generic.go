@@ -28,12 +28,14 @@ func AddResourceHandler(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 	runDelete := deleteRunner(cmd, flags, nil)
 	runEdit := editRunner(cmd, flags)
 	cmd.Args = cobra.ArbitraryArgs
+	cmd.ValidArgsFunction = completeKindWords(flags)
 	// airo KIND -h shows the kind's verbs, as airo agent -h shows its own,
 	// not the help of airo.
 	rootHelp := cmd.HelpFunc()
 	cmd.SetHelpFunc(func(c *cobra.Command, args []string) {
 		words := c.Flags().Args()
 		if c != cmd || len(words) == 0 {
+			clusterAliases(c, flags)
 			rootHelp(c, args)
 			return
 		}
@@ -128,6 +130,9 @@ func describeRunner(cmd *cobra.Command, flags *genericclioptions.ConfigFlags) fu
 func ReadCommands(flags *genericclioptions.ConfigFlags, resource string) []*cobra.Command {
 	newRead := func(use, short string, args cobra.PositionalArgs) *cobra.Command {
 		cmd := &cobra.Command{Use: use, Short: short, Args: args}
+		if use != "list" {
+			cmd.ValidArgsFunction = FirstArg(Names(flags, resource, nil))
+		}
 		o := addReadFlags(cmd)
 		cmd.RunE = func(cmd *cobra.Command, names []string) error {
 			return read(cmd, flags, o, append([]string{resource}, names...))
@@ -138,6 +143,8 @@ func ReadCommands(flags *genericclioptions.ConfigFlags, resource string) []*cobr
 		Use:   "describe NAME",
 		Short: "Describe a resource and its related events",
 		Args:  cobra.ExactArgs(1),
+
+		ValidArgsFunction: FirstArg(Names(flags, resource, nil)),
 	}
 	runDescribe := describeRunner(describeCmd, flags)
 	describeCmd.RunE = func(_ *cobra.Command, args []string) error {

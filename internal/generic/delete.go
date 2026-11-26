@@ -18,6 +18,8 @@ func NewDeleteCommand(flags *genericclioptions.ConfigFlags, resource string, aft
 		Use:   "delete NAME",
 		Short: "Delete one named resource",
 		Args:  cobra.ExactArgs(1),
+
+		ValidArgsFunction: FirstArg(Names(flags, resource, nil)),
 	}
 	run := deleteRunner(cmd, flags, afterDelete)
 	cmd.RunE = func(_ *cobra.Command, args []string) error {

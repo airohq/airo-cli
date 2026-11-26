@@ -24,13 +24,19 @@ import (
 var version string
 
 func main() {
-	if err := newRoot().Execute(); err != nil {
+	if err := newRootFor(os.Args[1:]).Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
 // newRoot returns the airo command with every command below it.
 func newRoot() *cobra.Command {
+	root, _ := build()
+	return root
+}
+
+// build returns the airo command and the kubeconfig flags its commands use.
+func build() (*cobra.Command, *genericclioptions.ConfigFlags) {
 	// Scope is resolved before constructing the resource client.
 	flags := genericclioptions.NewConfigFlags(false)
 	root := &cobra.Command{
@@ -38,7 +44,8 @@ func newRoot() *cobra.Command {
 		Short: "Work with the Airo platform from your machine",
 		Long: `Work with the Airo platform from your machine.
 
-Use a resource's singular or plural name. Every resource kind in the cluster
+Use a resource's singular or plural name, or the short name the cluster
+gives it: airo api-resources lists them. Every resource kind in the cluster
 supports list, get, describe, edit and delete.`,
 		Example: `  airo login                     # See 'airo login -h' for first-time setup
   airo project list              # List projects in your tenant
@@ -84,8 +91,15 @@ supports list, get, describe, edit and delete.`,
 	)
 	addGroup("advanced", "Advanced Commands", generic.NewApplyCommand(flags, selection.CheckProject), generic.NewCreateCommand(flags, selection.CheckProject))
 	root.SetCompletionCommandGroupID("advanced")
+	chat := agent.NewChatCommand(flags)
+	// Sessions are internal/session's, which builds on internal/agent. Chat
+	// talks to one agent, so --resume completes the sessions with that one.
+	if err := chat.RegisterFlagCompletionFunc("resume", session.CompleteSessions(flags, true)); err != nil {
+		panic(err)
+	}
 	addGroup("other", "Other Commands",
-		agent.NewChatCommand(flags),
+		generic.NewAPIResourcesCommand(flags),
+		chat,
 		newOptionsCommand(),
 		&cobra.Command{
 			Use:   "version",
@@ -98,7 +112,8 @@ supports list, get, describe, edit and delete.`,
 	)
 	root.SetHelpCommandGroupID("other")
 	root.AddCommand(login.NewCredentialCommand())
-	return root
+	login.SetUpCompletion(root, flags, &selection)
+	return root, flags
 }
 
 // buildVersion is the release's version, or what go install recorded: the

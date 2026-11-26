@@ -26,9 +26,33 @@ airo --version
 ```
 
 Homebrew installs shell completions for zsh, Bash, fish and PowerShell.
-In a new shell with completion enabled, type `airo ` and press Tab for
-commands, `airo agent ` and Tab for agent verbs, or `airo --` and Tab for
-flags. For shell setup, see [Homebrew's completion guide](https://docs.brew.sh/Shell-Completion).
+In a new shell with completion enabled, Tab completes commands, flags and
+the names of what exists, as kubectl's completion does:
+
+```sh
+airo <Tab>                  # commands, and the kinds the cluster serves
+airo agent describe <Tab>   # the agents of the current project
+airo chat --agent <Tab>     # the same, for a flag
+airo --project <Tab>        # the projects of the current tenant
+airo tenant <Tab>           # your tenants
+airo configmaps get <Tab>   # names of any kind
+airo session view <Tab>     # your sessions, newest first, with the first prompt
+airo agent skill remove --agent reviewer <Tab>   # the agent's skills
+```
+
+A skill, and a session for `airo chat --resume`, belongs to one agent: these
+complete from the agent `--agent` names, or from the project's only agent.
+With several agents and no `--agent`, Tab offers nothing and the shell beeps,
+because a name from one agent would not exist in another named later.
+
+Names come from the cluster as you, in the tenant and project the command
+would use, including `--tenant` and `--project` typed earlier on the line.
+A completion waits at most five seconds and never starts a sign-in: when
+your sign-in has expired, Tab offers no names until you run `airo login`.
+For shell setup, see [Homebrew's completion guide](https://docs.brew.sh/Shell-Completion).
+After `go install`, load the completion yourself, for example with
+`source <(airo completion zsh)` in `~/.zshrc`; `airo completion -h` covers
+the other shells.
 
 The binaries are also on the [releases](https://github.com/airohq/airo-cli/releases) page.
 
@@ -273,8 +297,49 @@ agent list`, and the same holds for `airo sessions` and `airo tunnels`.
 
 **A kind takes the names kubectl takes**: `agent`, `agents`, a short name, or
 `agents.api.kagent.dev` when two groups have the same kind or a resource
-shares a name with an Airo command. `airo apply` is a
+shares a name with an Airo command. The short names come from the cluster,
+as for kubectl: `airo mc list` lists ModelConfigs. A name of a kind that
+has an airo command runs that command, so `airo tunnels.tunnels.airohq.dev
+list` is `airo tunnel list`, and so is a short name the Tunnel kind gets.
+`airo api-resources` lists every kind with its short names and the airo
+command that owns it, and a command's help names its kind's short names:
+`airo tenant -h` shows `Aliases: tenant, tenants, tnt`.
+`airo apply` is a
 server-side apply with the field manager `airo`.
+
+### See what a command would do
+
+**Every command that creates or changes resources takes `--dry-run`**, as
+kubectl's do: `agent create`, `agent update`, `agent serve`, `agent skill
+add`, `upgrade` and `remove`, `project create`, `tunnel` and `tunnel
+create`. Add `-o yaml` or `-o json` to see the resources themselves, as the
+command would send them, in the order it would create them. It is a way to
+learn what a command means in Kubernetes terms:
+
+```console
+$ airo agent create laptop --local --prompt "You code." --dry-run=server
+agent.api.kagent.dev/laptop created (server dry run)
+tunnel.tunnels.airohq.dev/laptop created (server dry run)
+egresspolicy.api.kagent.dev/laptop created (server dry run)
+role.rbac.authorization.k8s.io/airo-local-call-0b047738-… created (server dry run)
+rolebinding.rbac.authorization.k8s.io/laptop created (server dry run)
+harness.api.kagent.dev/laptop created (server dry run)
+
+$ airo agent skill add anthropics/skills@pdf -a reviewer --dry-run=server -o yaml
+```
+
+`--dry-run=server` has the cluster check each write without keeping it, so
+you see the API's defaults, the labels the platform adds, and the refusal
+the real run would get, such as a full project quota. `--dry-run=client`
+sends nothing. Either way the command still reads what it needs, such as the
+project's default harness, and asks what it would ask. It stops before it
+would wait or serve.
+
+Where a dry run differs from the real run, a note on standard error says so.
+A Tunnel's URL, which the cluster gives a Tunnel once it exists, stands in
+as `https://NAME.tunnel.invalid`. A resource that refers to another one of
+the same dry run, as a RoleBinding refers to its Role, cannot be checked by
+the cluster, so it is shown as airo would send it.
 
 ## Chat
 
