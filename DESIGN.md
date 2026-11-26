@@ -142,6 +142,21 @@ tunnel 3000` serves a local port. A bare `airo agent` shows its resource command
   singular noun as the flag.** In `airo agent create --harness claude`,
   `--harness` selects the harness named `claude`. Use the same flag wherever
   another command refers to that resource.
+- **A command that creates resources takes `--dry-run`, and shows them with
+  `-o yaml` or `-o json`.** People think of a command in terms of the
+  resources it makes, and a dry run shows them what it means in the
+  Kubernetes API, most of all where one command makes several, as
+  `airo agent create --local` does. The flag is kubectl's and `airo
+  create`'s: `--dry-run=server` sends each resource with the API's dry run, so
+  the cluster's defaults and admission checks show and a refusal is the one
+  the real run would get. `--dry-run=client` builds them without sending
+  them. A dry run reads what the command reads, such as the project's
+  default harness, asks what it would ask, and writes nothing that persists.
+  Without `-o` it says what it would create, a line per resource, as
+  `kind/name`. With `-o yaml` or `-o json` it prints the resources as the
+  command would send them, in the order it would create them: one object, or
+  a `List` of several. A command that would then hold a connection, such as
+  `airo tunnel` or `airo agent serve`, stops after printing.
 - **Tab completes every name that exists**, as kubectl's completion does: an
   argument such as `NAME`, and a flag that names a resource, completes from a
   list in the selected tenant and project (`generic.Names`). The
