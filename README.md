@@ -36,7 +36,14 @@ airo chat --agent <Tab>     # the same, for a flag
 airo --project <Tab>        # the projects of the current tenant
 airo tenant <Tab>           # your tenants
 airo configmaps get <Tab>   # names of any kind
+airo session view <Tab>     # your sessions, newest first, with the first prompt
+airo agent skill remove --agent reviewer <Tab>   # the agent's skills
 ```
+
+A skill, and a session for `airo chat --resume`, belongs to one agent: these
+complete from the agent `--agent` names, or from the project's only agent.
+With several agents and no `--agent`, Tab offers nothing and the shell beeps,
+because a name from one agent would not exist in another named later.
 
 Names come from the cluster as you, in the tenant and project the command
 would use, including `--tenant` and `--project` typed earlier on the line.

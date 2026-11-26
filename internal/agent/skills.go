@@ -992,6 +992,8 @@ commit, image tag or digest, and later upgrades follow it.`,
 			})
 		},
 	}
+	upgrade.ValidArgsFunction = completeSkills(flags)
+	remove.ValidArgsFunction = completeSkills(flags)
 	// Each verb holds --agent itself, so that its help lists the flag.
 	for _, verb := range []*cobra.Command{list, add, upgrade, remove} {
 		verb.Flags().StringVarP(&agent, "agent", "a", "", "name of the Agent to change; asked on a terminal when not given")

@@ -84,8 +84,14 @@ supports list, get, describe, edit and delete.`,
 	)
 	addGroup("advanced", "Advanced Commands", generic.NewApplyCommand(flags, selection.CheckProject), generic.NewCreateCommand(flags, selection.CheckProject))
 	root.SetCompletionCommandGroupID("advanced")
+	chat := agent.NewChatCommand(flags)
+	// Sessions are internal/session's, which builds on internal/agent. Chat
+	// talks to one agent, so --resume completes the sessions with that one.
+	if err := chat.RegisterFlagCompletionFunc("resume", session.CompleteSessions(flags, true)); err != nil {
+		panic(err)
+	}
 	addGroup("other", "Other Commands",
-		agent.NewChatCommand(flags),
+		chat,
 		newOptionsCommand(),
 		&cobra.Command{
 			Use:   "version",

@@ -149,7 +149,11 @@ tunnel 3000` serves a local port. A bare `airo agent` shows its resource command
   name for something new, as with `create NAME`, does not complete. A
   completion takes its scope from the kubeconfig and flags alone, caps each
   request at five seconds, and never starts a sign-in. When it fails, it
-  offers nothing, and the command explains when it runs.
+  offers nothing, and the command explains when it runs. What belongs to one
+  agent, such as its skills or a session to resume, completes from the agent
+  `--agent` names or the project's only one, and otherwise not at all. A
+  name from another agent would not exist in the one named later. An empty
+  completion makes the shell beep, which is the signal: airo prints none.
 - **The root's help lists no flags**, as kubectl's does: they are the flags
   of `airo KIND VERB`, which that verb's help shows. `airo options` lists the
   global flags.
