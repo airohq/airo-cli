@@ -154,7 +154,7 @@ func (s *Selection) Resolve(cmd *cobra.Command, args []string, flags *genericcli
 		return err
 	}
 	switch top.Name() {
-	case "whoami", "tenant", "project":
+	case "whoami", "tenant", "project", "api-resources":
 		// Tenant and project operations can run before the first project exists.
 		return nil
 	}

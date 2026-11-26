@@ -301,6 +301,9 @@ shares a name with an Airo command. The short names come from the cluster,
 as for kubectl: `airo mc list` lists ModelConfigs. A name of a kind that
 has an airo command runs that command, so `airo tunnels.tunnels.airohq.dev
 list` is `airo tunnel list`, and so is a short name the Tunnel kind gets.
+`airo api-resources` lists every kind with its short names and the airo
+command that owns it, and a command's help names its kind's short names:
+`airo tenant -h` shows `Aliases: tenant, tenants, tnt`.
 `airo apply` is a
 server-side apply with the field manager `airo`.
 

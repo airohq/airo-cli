@@ -44,7 +44,8 @@ func build() (*cobra.Command, *genericclioptions.ConfigFlags) {
 		Short: "Work with the Airo platform from your machine",
 		Long: `Work with the Airo platform from your machine.
 
-Use a resource's singular or plural name. Every resource kind in the cluster
+Use a resource's singular or plural name, or the short name the cluster
+gives it: airo api-resources lists them. Every resource kind in the cluster
 supports list, get, describe, edit and delete.`,
 		Example: `  airo login                     # See 'airo login -h' for first-time setup
   airo project list              # List projects in your tenant
@@ -97,6 +98,7 @@ supports list, get, describe, edit and delete.`,
 		panic(err)
 	}
 	addGroup("other", "Other Commands",
+		generic.NewAPIResourcesCommand(flags),
 		chat,
 		newOptionsCommand(),
 		&cobra.Command{

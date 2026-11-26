@@ -25,13 +25,9 @@ func Own(cmd *cobra.Command, kind schema.GroupKind) {
 // shortcut expander takes the short names from cached discovery. In a
 // completion, the request is quiet as every completion's is.
 func Owner(root *cobra.Command, flags *genericclioptions.ConfigFlags, word string, completing bool) *cobra.Command {
-	owners := map[string]*cobra.Command{}
 	for _, c := range root.Commands() {
 		if c.Name() == word || c.HasAlias(word) {
 			return nil
-		}
-		if k := c.Annotations[kindAnnotation]; k != "" {
-			owners[k] = c
 		}
 	}
 	if completing {
@@ -45,5 +41,5 @@ func Owner(root *cobra.Command, flags *genericclioptions.ConfigFlags, word strin
 	if err != nil {
 		return nil
 	}
-	return owners[m.GroupVersionKind.GroupKind().String()]
+	return owners(root)[m.GroupVersionKind.GroupKind().String()]
 }

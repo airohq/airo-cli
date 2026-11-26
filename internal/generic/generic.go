@@ -35,6 +35,7 @@ func AddResourceHandler(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 	cmd.SetHelpFunc(func(c *cobra.Command, args []string) {
 		words := c.Flags().Args()
 		if c != cmd || len(words) == 0 {
+			clusterAliases(c, flags)
 			rootHelp(c, args)
 			return
 		}

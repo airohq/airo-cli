@@ -69,6 +69,9 @@ in an Agent, is not a kind in the cluster.
   name the cluster gives that kind runs the command: `airo ag list` is
   `airo agent list` once the Agent CRD names `ag`. The cluster is asked only
   for a first word that is no command, so other commands cost nothing.
+- **People find short names where kubectl users look**: `airo
+  api-resources`, and the `Aliases:` of the command's help, which asks the
+  cluster quietly as a completion does. The root's help asks nothing.
 - **Hard-code a short form only for what is no kind**, such as `ctx` for
   `airo context`.
 - **A noun without a known short form has none.**

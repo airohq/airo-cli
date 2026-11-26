@@ -48,6 +48,14 @@ func TestShortNamesRunTheOwningCommand(t *testing.T) {
 		{"qualified name", []string{"tunnels.tunnels.airohq.dev", "-h"}, []string{"airo tunnel PORT|HOST:PORT"}, "is a kind the cluster serves"},
 		{"flags first", []string{"--project", "tun", "tun", "-h"}, []string{"airo tunnel PORT|HOST:PORT"}, "is a kind the cluster serves"},
 		{"kind without a command", []string{"wd", "-h"}, []string{"Widget is a kind the cluster serves"}, "Tunnel Commands:"},
+		{"help names the cluster's short names", []string{"tunnel", "-h"}, []string{"Aliases:\n  tunnel, tunnels, tun\n"}, "is a kind"},
+		{"api-resources", []string{"api-resources"}, []string{
+			"NAME         SHORTNAMES   COMMAND       APIVERSION                    IN PROJECT   KIND\n",
+			"tunnels      tun          airo tunnel   tunnels.airohq.dev/v1alpha1   true         Tunnel\n",
+			"widgets      wd                         example.test/v1               true         Widget\n",
+			// An Agent of another group is not airo agent's.
+			"agents                                  example.test/v1               true         Agent\n",
+		}, "airo agent"},
 		{"completion after a short name", []string{"__completeNoDesc", "tun", "cr"}, []string{"create\n"}, "is a kind"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
