@@ -158,26 +158,32 @@ else.** A tenant turns on features with the labels
   requirement names it in its own description, such as `(required
   capabilities: local-agents)`.
 - **The README names them** in the command's section, in the same words.
-- **The command checks them before it changes anything.** It reads the
-  labels of the project's Tenant. When one is missing, it stops with an error
-  that names the missing labels, the tenant and the project, and tells the
-  person to ask a tenant administrator: `project acme-web does not have the
-  local-agents capability of tenant acme: ask a tenant administrator to
-  enable it`. A Tenant it cannot read is not a refusal: the command goes on
-  and the cluster decides.
-- **The cluster decides, the check only explains.** The capability is
-  enforced by the grants and policies the platform gives the tenant, so
-  kubectl and other clients meet the same limits. A refusal from the cluster
-  that comes from a missing capability, such as Forbidden on a resource only
-  that capability grants, gets the same error as the check. A refusal for the
-  person's own permissions says that instead, with the verb and resource the
-  cluster named.
+- **The cluster decides, and the command does not check the labels.** The
+  platform enforces a capability with the grants and policies it gives the
+  tenant, so kubectl and other clients meet the same limits. Which labels
+  grant which permissions is the platform's to change, so the CLI never
+  reads the Tenant's labels to allow or refuse anything. The command sends
+  its requests, and the cluster refuses what the project may not do.
+- **The command explains a refusal with the same names.** A Forbidden on a
+  resource the feature needs becomes an error that names the project and the
+  required capabilities or solutions, as the help does, tells the person to
+  ask a tenant administrator, and keeps the cluster's own message: `project
+  acme-web does not allow local agents: ask a tenant administrator to enable
+  the local-agents capability: <the cluster's error>`. The person's own
+  permissions can cause the same refusal, and the cluster's message shows
+  which.
+- **A command may ask before it acts.** Where a refusal halfway would leave
+  work to undo, the command may ask the cluster with a SelfSubjectAccessReview
+  whether it may create the resources it is about to create, as `kubectl auth
+  can-i` does, and explain a "no" in the same way. It asks about its own
+  requests, never about labels.
 - **A command that fails halfway removes what it created**, as in
   [Cleanup](#cleanup).
 
 **Basic commands that work for every tenant say nothing about
 capabilities.** `airo login`, `airo project`, `list`, `get` and the other
-verbs every kind has need no line in the help and no check.
+verbs every kind has need no line in the help, and their refusals need no
+explanation beyond the cluster's.
 
 ## Output
 
