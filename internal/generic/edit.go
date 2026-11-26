@@ -25,6 +25,8 @@ func NewEditCommand(flags *genericclioptions.ConfigFlags, resource string) *cobr
   airo %[1]s edit NAME -o json
   EDITOR=nano airo %[1]s edit NAME`, resource),
 		Args: cobra.ExactArgs(1),
+
+		ValidArgsFunction: FirstArg(Names(flags, resource, nil)),
 	}
 	run := editRunner(cmd, flags)
 	cmd.RunE = func(_ *cobra.Command, args []string) error {

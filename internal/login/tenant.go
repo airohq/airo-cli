@@ -29,6 +29,8 @@ func NewTenantCommand(flags *genericclioptions.ConfigFlags, selection *Selection
 		Short:   "Switch tenants or show the selected tenant’s solutions and capabilities",
 		Example: "  airo tenant\n  airo tenant acme",
 		Args:    cobra.MaximumNArgs(1),
+
+		ValidArgsFunction: generic.FirstArg(completeTenants(flags)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name != "" {
 				if len(args) != 0 {
@@ -67,6 +69,7 @@ func NewTenantCommand(flags *genericclioptions.ConfigFlags, selection *Selection
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "name of the tenant to inspect (defaults to the selected tenant)")
+	generic.CompleteFlag(cmd, "name", completeTenants(flags))
 	verbs := generic.Commands(flags, cmd.Name())
 	for _, verb := range verbs {
 		if verb.Name() == "list" {

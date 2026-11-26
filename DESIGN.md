@@ -142,6 +142,17 @@ tunnel 3000` serves a local port. A bare `airo agent` shows its resource command
   singular noun as the flag.** In `airo agent create --harness claude`,
   `--harness` selects the harness named `claude`. Use the same flag wherever
   another command refers to that resource.
+- **Tab completes every name that exists**, as kubectl's completion does: an
+  argument such as `NAME`, and a flag that names a resource, completes from a
+  list in the selected tenant and project (`generic.Names`). The
+  kubeconfig's contexts and fixed choices complete without the network. A
+  name for something new, as with `create NAME`, does not complete. A
+  completion takes its scope from the kubeconfig and flags alone, caps each
+  request at five seconds, and never starts a sign-in. When it fails, it
+  offers nothing, and the command explains when it runs.
+- **The root's help lists no flags**, as kubectl's does: they are the flags
+  of `airo KIND VERB`, which that verb's help shows. `airo options` lists the
+  global flags.
 
 ## Capabilities and solutions
 

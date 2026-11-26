@@ -19,6 +19,7 @@ import (
 	"k8s.io/kubectl/pkg/cmd/util/editor"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/ui"
 	"github.com/airohq/airo-cli/internal/wizard"
 )
@@ -119,6 +120,8 @@ airo agent edit NAME.`,
 	cmd.Flags().StringVar(&o.harness, "harness", "", "name of the Harness to run on")
 	cmd.Flags().StringVar(&o.model, "model", "", `name of the ModelConfig to use; "" removes it`)
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
+	cmd.ValidArgsFunction = generic.FirstArg(CompleteAgents(flags))
+	completeAgentRefs(cmd, flags)
 	return cmd
 }
 

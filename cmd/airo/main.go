@@ -98,6 +98,7 @@ supports list, get, describe, edit and delete.`,
 	)
 	root.SetHelpCommandGroupID("other")
 	root.AddCommand(login.NewCredentialCommand())
+	login.SetUpCompletion(root, flags, &selection)
 	return root
 }
 

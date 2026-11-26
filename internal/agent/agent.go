@@ -172,6 +172,7 @@ Tools and the other fields of an Agent go in a file, for airo apply -f.`,
 	cmd.MarkFlagsMutuallyExclusive("local", "harness")
 	cmd.MarkFlagsMutuallyExclusive("prompt", "prompt-file")
 	cmd.Flags().StringArrayVar(&o.skills, "skill", nil, "a skill's source, such as https://github.com/OWNER/REPO/tree/main/PATH; repeat for more")
+	completeAgentRefs(cmd, flags)
 	return cmd
 }
 

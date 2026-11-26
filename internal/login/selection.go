@@ -149,31 +149,9 @@ func (s *Selection) Resolve(cmd *cobra.Command, args []string, flags *genericcli
 	if cmd == cmd.Root() && len(args) <= 1 {
 		return nil
 	}
-	cfg, err := flags.ToRawKubeConfigLoader().ConfigAccess().GetStartingConfig()
-	if err != nil {
+	cfg, base, created, explicit, err := s.fromKubeconfig(flags)
+	if err != nil || s.Tenant == "" {
 		return err
-	}
-	base := selectedContext(cfg, flags)
-	// Pin the sign-in for the entire request, including when another
-	// terminal switches the kubeconfig's current context mid-command.
-	*flags.Context = base
-	explicit := s.Tenant != ""
-	if !explicit {
-		s.Tenant, err = storedTenant(cfg.Contexts[base])
-		if err != nil || s.Tenant == "" {
-			return err
-		}
-	}
-	name, created, err := tenantContext(cfg, base, s.Tenant)
-	if err != nil {
-		return err
-	}
-	if !created {
-		*flags.Context = name
-	}
-	s.project = cfg.Contexts[name].Namespace
-	if *flags.Namespace != "" {
-		s.project = *flags.Namespace
 	}
 	switch top.Name() {
 	case "whoami", "tenant", "project":
@@ -212,6 +190,49 @@ func (s *Selection) Resolve(cmd *cobra.Command, args []string, flags *genericcli
 		return nil
 	}
 	return s.CheckProject(cmd.Context(), flags)
+}
+
+// fromKubeconfig chooses the sign-in's context, tenant and project from the
+// kubeconfig alone. It leaves the tenant empty when none is selected, and
+// reports whether the tenant's context is new and whether --tenant chose it.
+func (s *Selection) fromKubeconfig(flags *genericclioptions.ConfigFlags) (cfg *clientcmdapi.Config, base string, created, explicit bool, err error) {
+	cfg, err = flags.ToRawKubeConfigLoader().ConfigAccess().GetStartingConfig()
+	if err != nil {
+		return nil, "", false, false, err
+	}
+	base = selectedContext(cfg, flags)
+	// Pin the sign-in for the entire request, including when another
+	// terminal switches the kubeconfig's current context mid-command.
+	*flags.Context = base
+	explicit = s.Tenant != ""
+	if !explicit {
+		s.Tenant, err = storedTenant(cfg.Contexts[base])
+		if err != nil || s.Tenant == "" {
+			return cfg, base, false, false, err
+		}
+	}
+	name, created, err := tenantContext(cfg, base, s.Tenant)
+	if err != nil {
+		return nil, "", false, false, err
+	}
+	if !created {
+		*flags.Context = name
+	}
+	s.project = cfg.Contexts[name].Namespace
+	if *flags.Namespace != "" {
+		s.project = *flags.Namespace
+	}
+	return cfg, base, created, explicit, nil
+}
+
+// CompletionScope selects the context and project for a shell completion
+// from the kubeconfig alone, without the checks Resolve asks the cluster for.
+func (s *Selection) CompletionScope(flags *genericclioptions.ConfigFlags) error {
+	if _, _, _, _, err := s.fromKubeconfig(flags); err != nil || s.Tenant == "" {
+		return err
+	}
+	*flags.Namespace = s.project
+	return nil
 }
 
 // CheckProject verifies the effective namespace before a project-scoped operation.

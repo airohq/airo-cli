@@ -25,6 +25,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/picker"
 	"github.com/airohq/airo-cli/internal/registry"
 	"github.com/airohq/airo-cli/internal/skill"
@@ -994,6 +995,7 @@ commit, image tag or digest, and later upgrades follow it.`,
 	// Each verb holds --agent itself, so that its help lists the flag.
 	for _, verb := range []*cobra.Command{list, add, upgrade, remove} {
 		verb.Flags().StringVarP(&agent, "agent", "a", "", "name of the Agent to change; asked on a terminal when not given")
+		generic.CompleteFlag(verb, "agent", CompleteAgents(flags))
 	}
 	// search changes no agent, so it has no --agent.
 	var source string

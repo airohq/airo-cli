@@ -23,6 +23,7 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/tunnel"
 	"github.com/airohq/airo-cli/internal/ui"
 )
@@ -64,6 +65,7 @@ func newConnectCommand(flags *genericclioptions.ConfigFlags) *cobra.Command {
 			}
 			return nil
 		},
+		ValidArgsFunction: generic.FirstArg(CompleteAgents(flags)),
 	}
 	return localRunnerCommand(cmd, flags, func(ctx context.Context, c client.Client, ns, _ string, names []string, serve serveAgent) error {
 		name := names[0]

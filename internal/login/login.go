@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
+	"github.com/airohq/airo-cli/internal/generic"
 	"github.com/airohq/airo-cli/internal/picker"
 	"github.com/airohq/airo-cli/internal/ui"
 )
@@ -114,6 +115,7 @@ func readCA(file, data string) ([]byte, error) {
 // the kubeconfig. People do not run it.
 func NewCredentialCommand() *cobra.Command {
 	var o oidc
+	var noSignIn bool
 	cmd := &cobra.Command{
 		Use:    "credential",
 		Short:  "Print the signed-in person's token for kubectl (kubeconfig exec plugin)",
@@ -121,7 +123,15 @@ func NewCredentialCommand() *cobra.Command {
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// stdout is the credential, so the sign-in prompt goes to stderr.
-			id, exp, err := o.token(cmd.Context(), cmd.ErrOrStderr())
+			ctx, prompt := cmd.Context(), cmd.ErrOrStderr()
+			if noSignIn {
+				// A shell completion waits for this: refresh, but briefly.
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, generic.CompletionTimeout)
+				defer cancel()
+				prompt = nil
+			}
+			id, exp, err := o.token(ctx, prompt)
 			if err != nil {
 				return err
 			}
@@ -137,6 +147,7 @@ func NewCredentialCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.issuer, "issuer", "", "the OIDC issuer's URL")
 	cmd.Flags().StringVar(&o.clientID, "client-id", "", "the OIDC client ID")
 	cmd.Flags().StringVar(&o.session, "session", "", "the sign-in whose tokens to use: the context's name")
+	cmd.Flags().BoolVar(&noSignIn, strings.TrimPrefix(generic.NoSignInFlag, "--"), false, "fail instead of signing in, as a shell completion needs")
 	_ = cmd.MarkFlagRequired("issuer")
 	_ = cmd.MarkFlagRequired("client-id")
 	return cmd

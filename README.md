@@ -26,9 +26,26 @@ airo --version
 ```
 
 Homebrew installs shell completions for zsh, Bash, fish and PowerShell.
-In a new shell with completion enabled, type `airo ` and press Tab for
-commands, `airo agent ` and Tab for agent verbs, or `airo --` and Tab for
-flags. For shell setup, see [Homebrew's completion guide](https://docs.brew.sh/Shell-Completion).
+In a new shell with completion enabled, Tab completes commands, flags and
+the names of what exists, as kubectl's completion does:
+
+```sh
+airo <Tab>                  # commands, and the kinds the cluster serves
+airo agent describe <Tab>   # the agents of the current project
+airo chat --agent <Tab>     # the same, for a flag
+airo --project <Tab>        # the projects of the current tenant
+airo tenant <Tab>           # your tenants
+airo configmaps get <Tab>   # names of any kind
+```
+
+Names come from the cluster as you, in the tenant and project the command
+would use, including `--tenant` and `--project` typed earlier on the line.
+A completion waits at most five seconds and never starts a sign-in: when
+your sign-in has expired, Tab offers no names until you run `airo login`.
+For shell setup, see [Homebrew's completion guide](https://docs.brew.sh/Shell-Completion).
+After `go install`, load the completion yourself, for example with
+`source <(airo completion zsh)` in `~/.zshrc`; `airo completion -h` covers
+the other shells.
 
 The binaries are also on the [releases](https://github.com/airohq/airo-cli/releases) page.
 

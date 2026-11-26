@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func TestHelpAndGlobalOptions(t *testing.T) {
@@ -22,7 +23,8 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 				"Configuration Commands:", "  project ", "  status ", "  tenant ",
 				"Advanced Commands:", "  apply ", "  completion ",
 				"Other Commands:", "  chat ", "  help ", "  options ", "  version ", "airo options"},
-			[]string{"--kubeconfig", "modelconfig", "credential", "airo [command]\n"},
+			// Like kubectl's, the root's help lists no flags.
+			[]string{"--kubeconfig", "modelconfig", "credential", "airo [command]\n", "Flags:", "--output", "-h, --help"},
 		},
 		{
 			[]string{"agents", "list", "-h"},
@@ -110,6 +112,30 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Every command that takes the name of something that exists, and every flag
+// that names an Agent, a model, a harness or a selection, completes it on Tab.
+func TestNamesComplete(t *testing.T) {
+	var walk func(*cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		if words := strings.Fields(cmd.Use); len(words) > 1 && strings.Contains(words[1], "NAME") &&
+			!strings.HasPrefix(words[1], "[-") && cmd.Name() != "create" && cmd.ValidArgsFunction == nil {
+			t.Errorf("%s takes a NAME but does not complete it", cmd.CommandPath())
+		}
+		cmd.Flags().VisitAll(func(f *pflag.Flag) {
+			switch f.Name {
+			case "agent", "model", "harness", "sandbox", "project", "tenant", "context":
+				if _, ok := cmd.GetFlagCompletionFunc(f.Name); !ok {
+					t.Errorf("%s --%s does not complete", cmd.CommandPath(), f.Name)
+				}
+			}
+		})
+		for _, child := range cmd.Commands() {
+			walk(child)
+		}
+	}
+	walk(newRoot())
 }
 
 // The help shows only the commands of a group once a noun has groups, so

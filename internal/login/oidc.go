@@ -39,8 +39,12 @@ type tokens struct {
 // token handed to kubectl is still valid when the API server reads it.
 const expirySkew = time.Minute
 
+// errSignInNeeded is token's error when only a new sign-in would give one.
+var errSignInNeeded = errors.New("the sign-in has expired: sign in again with airo login")
+
 // token returns an ID token and its expiry: the cached one, a refreshed one,
-// or a new one after the person signs in.
+// or a new one after the person signs in. Without a prompt there is no
+// sign-in, and token fails with errSignInNeeded instead.
 func (o oidc) token(ctx context.Context, prompt io.Writer) (string, time.Time, error) {
 	path, err := o.cachePath()
 	if err != nil {
@@ -60,6 +64,9 @@ func (o oidc) token(ctx context.Context, prompt io.Writer) (string, time.Time, e
 // authenticate leaves the sign-in cache untouched until the caller has
 // verified the identity and the tenant selected for it.
 func (o oidc) authenticate(ctx context.Context, prompt io.Writer, refresh string) (tokens, time.Time, error) {
+	if refresh == "" && prompt == nil {
+		return tokens{}, time.Time{}, errSignInNeeded
+	}
 	cfg, err := o.config(ctx)
 	if err != nil {
 		return tokens{}, time.Time{}, err
@@ -70,6 +77,9 @@ func (o oidc) authenticate(ctx context.Context, prompt io.Writer, refresh string
 		// A refused refresh token, such as one older than its lifetime,
 		// falls through to signing in.
 		tok, _ = cfg.TokenSource(ctx, &oauth2.Token{RefreshToken: refresh}).Token()
+	}
+	if tok == nil && prompt == nil {
+		return tokens{}, time.Time{}, errSignInNeeded
 	}
 	if tok == nil {
 		if tok, err = signIn(ctx, cfg, prompt); err != nil {

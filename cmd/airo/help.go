@@ -10,8 +10,10 @@ func init() {
 	cobra.AddTemplateFunc("flagSections", ui.FlagSections)
 }
 
-// The root groups commands and shows the resource grammar. Subcommands keep
-// their own usage, aliases and flags. Global flags live under airo options.
+// The root groups commands and shows the resource grammar, and no flags, as
+// kubectl's does: its own flags are the read and write flags of airo KIND
+// VERB, which that verb's help shows. Subcommands keep their own usage,
+// aliases and flags. Global flags live under airo options.
 const usageTemplate = `Usage:{{if .HasParent}}{{if .Runnable}}
   {{.UseLine}}{{end}}{{if .HasAvailableSubCommands}}
   {{.CommandPath}} [command]{{end}}{{else}}
@@ -27,7 +29,7 @@ Examples:
   {{rpad .Name .NamePadding}} {{.Short}}{{end}}{{end}}{{end}}{{else}}
 
 Available Commands:{{range .Commands}}{{if .IsAvailableCommand}}
-  {{rpad .Name .NamePadding}} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{$flags := .LocalFlags}}{{if not .HasParent}}{{$flags = .LocalNonPersistentFlags}}{{end}}{{if $flags.HasAvailableFlags}}{{range flagSections . $flags}}
+  {{rpad .Name .NamePadding}} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{$flags := .LocalFlags}}{{if and .HasParent $flags.HasAvailableFlags}}{{range flagSections . $flags}}
 
 {{.Name}}:
 {{.FlagUsagesWrapped 80 | trimTrailingWhitespaces}}{{else}}

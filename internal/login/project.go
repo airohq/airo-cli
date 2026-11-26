@@ -109,7 +109,8 @@ previous project. Pass --project NAME to another command for a one-time choice.`
   airo project acme-web       # switch to the project acme-web
   airo project -              # switch back to the previous one
   airo project list`,
-		Args: cobra.MaximumNArgs(1),
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: generic.FirstArg(completeProjects(flags, selection)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := *flags.Namespace
 			if len(args) == 1 {
@@ -190,6 +191,12 @@ default project, as airo login chooses it.`
 	editCmd.PreRunE = checkNamed
 	editCmd.Example = "  airo project edit acme-web"
 	generic.AddBasic(cmd, editCmd, deleteCmd)
+	// Complete the tenant's projects, as list shows them.
+	for _, verb := range cmd.Commands() {
+		if verb.ValidArgsFunction != nil {
+			verb.ValidArgsFunction = generic.FirstArg(completeProjects(flags, selection))
+		}
+	}
 	return cmd
 }
 
