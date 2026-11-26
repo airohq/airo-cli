@@ -20,11 +20,14 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func agentNamed(name string, isDefault bool) *unstructured.Unstructured {
@@ -123,7 +126,7 @@ func TestEndpoint(t *testing.T) {
 	}
 
 	c = fake.NewClientBuilder().Build()
-	if _, err := endpoint(ctx, c, "team"); err == nil || !strings.Contains(err.Error(), "no agent endpoint; ask a platform admin") {
+	if _, err := endpoint(ctx, c, "team"); err == nil || !strings.Contains(err.Error(), "which the agents capability provides: ask a tenant administrator") {
 		t.Errorf("no ConfigMap: %v", err)
 	}
 }
@@ -778,5 +781,19 @@ func TestChatProjectDuringProvisioning(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A project the cluster refuses Agents in gets the capability's name, with
+// the cluster's message kept.
+func TestListExplainsARefusal(t *testing.T) {
+	c := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			return apierrors.NewForbidden(schema.GroupResource{Group: "api.kagent.dev", Resource: "agents"}, "", errors.New("no grant"))
+		},
+	}).Build()
+	_, err := list(context.Background(), c, "team", agents)
+	if err == nil || !strings.Contains(err.Error(), "project team does not allow agents: ask a tenant administrator to enable the agents capability: list the agents of team:") || !strings.Contains(err.Error(), "no grant") {
+		t.Fatalf("err = %v", err)
 	}
 }

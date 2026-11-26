@@ -275,12 +275,18 @@ func endpoint(ctx context.Context, c client.Client, ns string) (string, error) {
 	cm := &corev1.ConfigMap{}
 	err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: endpointConfigMap}, cm)
 	if apierrors.IsNotFound(err) {
-		return "", fmt.Errorf("this project has no agent endpoint; ask a platform admin (project %s has no ConfigMap %s)", ns, endpointConfigMap)
+		return "", noEndpoint(ns)
 	}
 	if err != nil {
-		return "", fmt.Errorf("read the agent endpoint of project %s: %w", ns, err)
+		return "", needsAgents.Explain(ns, "agents", fmt.Errorf("read the agent endpoint of project %s: %w", ns, err))
 	}
 	return endpointURL(cm)
+}
+
+// noEndpoint explains a project without the endpoint that the agents
+// capability gives each project.
+func noEndpoint(ns string) error {
+	return fmt.Errorf("project %s has no agent endpoint (ConfigMap %s), which the agents capability provides: ask a tenant administrator to enable it", ns, endpointConfigMap)
 }
 
 func endpointURL(cm *corev1.ConfigMap) (string, error) {

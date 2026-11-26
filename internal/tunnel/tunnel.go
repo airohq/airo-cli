@@ -84,7 +84,11 @@ minutes. A Tunnel made with airo tunnel create is used as it is and stays.`,
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return run(ctx, cmd.OutOrStdout(), flags, name, to, want)
+			ns, _, err := flags.ToRawKubeConfigLoader().Namespace()
+			if err != nil {
+				return err
+			}
+			return needsTunnels.Explain(ns, "tunnels", run(ctx, cmd.OutOrStdout(), flags, name, to, want))
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "name of the Tunnel (default: <your username>-<port>)")
@@ -145,7 +149,7 @@ Omit NAME on a terminal to choose the name, visibility and authentication.`,
 			}
 			t := build(ns, name, spec{public: &public, noAuth: &noAuth})
 			if err := c.Create(cmd.Context(), t); err != nil {
-				return err
+				return needsTunnels.Explain(ns, "tunnels", err)
 			}
 			if err := waitReady(cmd.Context(), c, t); err != nil {
 				return err
@@ -297,11 +301,16 @@ func ensure(ctx context.Context, c client.Client, ns, name string, want spec) (*
 	return t, false, nil
 }
 
+// reasonUnauthenticatedCallersNotAllowed is the Ready reason a Tunnel with
+// callerAuth none gets when its TunnelServer does not allow open URLs, which
+// the open-tunnels capability turns on (tunnel-operator API v1alpha1).
+const reasonUnauthenticatedCallersNotAllowed = "UnauthenticatedCallersNotAllowed"
+
 // waitReady reads the Tunnel into t until the operator has given it its URLs.
 func waitReady(ctx context.Context, c client.Client, t *unstructured.Unstructured) error {
 	var (
-		reason string
-		ready  bool
+		reason, why string
+		ready       bool
 	)
 	err := wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 30*time.Second, true, func(ctx context.Context) (bool, error) {
 		if err := c.Get(ctx, client.ObjectKeyFromObject(t), t); err != nil {
@@ -314,7 +323,13 @@ func waitReady(ctx context.Context, c client.Client, t *unstructured.Unstructure
 				continue
 			}
 			reason, _ = cond["message"].(string)
+			why, _ = cond["reason"].(string)
 			ready = cond["status"] == "True"
+			if why == reasonUnauthenticatedCallersNotAllowed {
+				// The operator refuses this until the tenant's server changes.
+				return false, needsOpenTunnels.Refused(t.GetNamespace(), "tunnels without caller authentication",
+					fmt.Errorf("tunnel %s/%s is not ready: %s", t.GetNamespace(), t.GetName(), reason))
+			}
 			return ready && str(t, "status", "clientURL") != "", nil
 		}
 		return false, nil
