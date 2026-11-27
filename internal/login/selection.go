@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -40,7 +42,8 @@ func storedTenant(c *clientcmdapi.Context) (string, error) {
 }
 
 // tenantContext finds or prepares the context in memory. Only commands that
-// persist a selection write this config back.
+// persist a selection write this config back. A new tenant context is named
+// after the tenant; airo login --context gives one another name.
 func tenantContext(cfg *clientcmdapi.Config, base, tenant string) (string, bool, error) {
 	if problems := validation.IsDNS1123Subdomain(tenant); len(problems) > 0 {
 		return "", false, fmt.Errorf("invalid tenant %q: %s", tenant, strings.Join(problems, ", "))
@@ -49,30 +52,50 @@ func tenantContext(cfg *clientcmdapi.Config, base, tenant string) (string, bool,
 	if source == nil {
 		return "", false, fmt.Errorf("select a sign-in with airo login")
 	}
-	for name, c := range cfg.Contexts {
-		if c.Cluster == source.Cluster && c.AuthInfo == source.AuthInfo {
-			saved, err := storedTenant(c)
-			if err != nil {
-				return "", false, err
-			}
-			if saved == tenant {
-				return name, false, nil
-			}
+	// The base first, for a context named with --context, then by name, so
+	// one kubeconfig always gives the same answer.
+	for _, name := range append([]string{base}, slices.Sorted(maps.Keys(cfg.Contexts))...) {
+		if !sameSignIn(cfg.Contexts[name], source) {
+			continue
+		}
+		saved, err := storedTenant(cfg.Contexts[name])
+		if err != nil {
+			return "", false, err
+		}
+		if saved == tenant {
+			return name, false, nil
 		}
 	}
-	name := url.PathEscape(source.Cluster) + "/" + url.PathEscape(source.AuthInfo) + "/" + tenant
-	if cfg.Contexts[name] != nil {
-		return "", false, fmt.Errorf("kubeconfig already contains an unrelated context named %q", name)
+	name := tenant
+	if c := cfg.Contexts[name]; c != nil && (!sameSignIn(c, source) || c.Extensions[tenantExtension] != nil) {
+		return "", false, fmt.Errorf("the kubeconfig already has a context named %q for another sign-in: keep tenant %s in a context of another name with airo login --context NAME --tenant %s", name, tenant, tenant)
 	}
+	// A context of this sign-in without a tenant, such as its first, now
+	// holds the tenant.
 	c := source.DeepCopy()
 	c.Namespace = tenant + defaultProjectSuffix
+	setTenant(c, tenant)
+	cfg.Contexts[name] = c
+	return name, true, nil
+}
+
+// legacyContextName is the name earlier releases gave a tenant's context.
+func legacyContextName(c *clientcmdapi.Context, tenant string) string {
+	return url.PathEscape(c.Cluster) + "/" + url.PathEscape(c.AuthInfo) + "/" + tenant
+}
+
+// sameSignIn reports whether a context is the same person at the same
+// platform as source.
+func sameSignIn(c, source *clientcmdapi.Context) bool {
+	return c != nil && c.Cluster == source.Cluster && c.AuthInfo == source.AuthInfo
+}
+
+func setTenant(c *clientcmdapi.Context, tenant string) {
 	if c.Extensions == nil {
 		c.Extensions = make(map[string]runtime.Object)
 	}
 	data, _ := json.Marshal(tenant)
 	c.Extensions[tenantExtension] = &runtime.Unknown{Raw: data}
-	cfg.Contexts[name] = c
-	return name, true, nil
 }
 
 // Selection belongs to one CLI invocation.

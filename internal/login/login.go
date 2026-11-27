@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"slices"
@@ -65,6 +66,11 @@ The first time, pass where the platform is: --server, --issuer, --client-id
 and the API server's certificate authority. The platform's admin gives you
 the values. They stay in the kubeconfig, so after that airo login signs you
 in again, for example to pick up a new role.
+
+Each of your tenants gets a context named after it, and with several, login
+asks which one to make current. Every login writes them again: a new tenant
+gets a context, and a tenant you lost loses its context. --context NAME
+keeps only the selected tenant, in the context NAME.
 
 Choose a tenant with --tenant and a project with --project. Switching tenants
 later reuses this sign-in and restores each tenant's project.`,
@@ -184,18 +190,26 @@ func run(ctx context.Context, in io.Reader, out, prompt io.Writer, flags *generi
 		return fmt.Errorf("signed in, but could not verify your identity: %w", err)
 	}
 
+	c, err := dynamic.NewForConfig(rc)
+	if err != nil {
+		return err
+	}
+	memberships := tenantsOf(user.Groups)
+	// --context names the one context to keep the sign-in in. Otherwise
+	// each of the person's tenants gets a context of its name.
+	explicit := *flags.Context != ""
+	if !explicit {
+		if name, err = writeTenantContexts(ctx, prompt, cfg, name, memberships, c); err != nil {
+			return err
+		}
+	}
 	saved, err := storedTenant(cfg.Contexts[name])
 	if err != nil {
 		return err
 	}
 	if tenant == "" {
-		memberships := tenantsOf(user.Groups)
 		if saved != "" && !slices.Contains(memberships, saved) {
 			// Admin access may come from grants outside customer groups.
-			c, err := dynamic.NewForConfig(rc)
-			if err != nil {
-				return err
-			}
 			err = checkTenant(ctx, c, saved)
 			switch {
 			case err == nil:
@@ -216,26 +230,30 @@ func run(ctx context.Context, in io.Reader, out, prompt io.Writer, flags *generi
 		}
 	}
 	if tenant != "" {
+		if explicit && saved != tenant {
+			// The named context now holds this tenant.
+			kctx := cfg.Contexts[name]
+			previous := kctx.DeepCopy()
+			setTenant(kctx, tenant)
+			if kctx.Namespace, err = firstProject(ctx, c, tenant, previous, tenant+defaultProjectSuffix); err != nil {
+				return err
+			}
+		}
 		if err := selectTenant(ctx, cfg, name, tenant, *flags.Namespace, rc); err != nil {
 			return err
 		}
 	} else {
-		if saved != "" {
-			// The last tenant was removed. Return to this account's sign-in.
-			source := cfg.Contexts[name]
-			for candidate, c := range cfg.Contexts {
-				if c.Cluster == source.Cluster && c.AuthInfo == source.AuthInfo && c.Extensions[tenantExtension] == nil {
-					name = candidate
-					break
-				}
-			}
-			if name == cfg.CurrentContext {
-				return errors.New("previous tenant unavailable: select a tenant with airo login --tenant NAME")
-			}
-			cfg.CurrentContext = name
+		if name, err = signInContext(cfg, name, explicit); err != nil {
+			return err
 		}
+		cfg.CurrentContext = name
 		if *flags.Namespace != "" {
 			cfg.Contexts[name].Namespace = *flags.Namespace
+		}
+	}
+	if !explicit {
+		if err := pruneContexts(ctx, cfg, cfg.CurrentContext, memberships, c); err != nil {
+			return err
 		}
 	}
 	path, err := o.cachePath()
@@ -250,29 +268,131 @@ func run(ctx context.Context, in io.Reader, out, prompt io.Writer, flags *generi
 	}
 	fmt.Fprintf(out, "Signed in as %s\n", user.Username)
 	writeSelection(out, tenant, cfg.Contexts[cfg.CurrentContext].Namespace)
+	fmt.Fprintf(out, "Context: %s\n", cfg.CurrentContext)
 	fmt.Fprintf(out, "  groups:    %s\n", strings.Join(user.Groups, ", "))
+	if !explicit && len(memberships) > 1 {
+		fmt.Fprintf(out, "Your tenants %s each have a context: switch with airo tenant NAME\n", strings.Join(memberships, ", "))
+	}
 	if _, err := exec.LookPath("airo"); err != nil {
 		fmt.Fprintln(prompt, "airo is not on your PATH. The kubeconfig runs it by name, so add it there.")
 	}
 	return nil
 }
 
+// chooseLoginTenant asks which tenant to work in when the person has several,
+// with the last one marked. Without a terminal it keeps the last one.
 func chooseLoginTenant(ctx context.Context, in io.Reader, prompt io.Writer, saved string, memberships []string) (string, error) {
 	switch {
-	case slices.Contains(memberships, saved):
-		return saved, nil
 	case len(memberships) == 0:
 		return "", nil
 	case len(memberships) == 1:
 		return memberships[0], nil
 	case !ui.Interactive(in, prompt):
+		if slices.Contains(memberships, saved) {
+			return saved, nil
+		}
 		return "", fmt.Errorf("choose a tenant with --tenant NAME: %s", strings.Join(memberships, ", "))
 	}
-	tenant, err := picker.One(ctx, in, prompt, "tenant", memberships, -1)
+	tenant, err := picker.One(ctx, in, prompt, "tenant", memberships, slices.Index(memberships, saved))
 	if err == nil && tenant == "" {
 		err = errors.New("tenant selection canceled")
 	}
 	return tenant, err
+}
+
+// writeTenantContexts keeps a context for each tenant the person belongs to,
+// named after the tenant. It returns the sign-in's context, which has a new
+// name when an earlier release named it.
+func writeTenantContexts(ctx context.Context, warn io.Writer, cfg *clientcmdapi.Config, base string, memberships []string, c dynamic.Interface) (string, error) {
+	source := cfg.Contexts[base]
+	// Earlier releases named a tenant's context cluster/user/tenant.
+	for _, name := range slices.Sorted(maps.Keys(cfg.Contexts)) {
+		kctx := cfg.Contexts[name]
+		tenant, err := storedTenant(kctx)
+		if !sameSignIn(kctx, source) || err != nil || tenant == "" || name != legacyContextName(kctx, tenant) || cfg.Contexts[tenant] != nil {
+			continue
+		}
+		cfg.Contexts[tenant] = kctx
+		delete(cfg.Contexts, name)
+		if base == name {
+			base = tenant
+		}
+		if cfg.CurrentContext == name {
+			cfg.CurrentContext = tenant
+		}
+	}
+	for _, tenant := range memberships {
+		name, created, err := tenantContext(cfg, base, tenant)
+		if err != nil {
+			fmt.Fprintf(warn, "No context for tenant %s: %v\n", tenant, err)
+			continue
+		}
+		if created {
+			kctx := cfg.Contexts[name]
+			if kctx.Namespace, err = firstProject(ctx, c, tenant, source, kctx.Namespace); err != nil {
+				return "", err
+			}
+		}
+	}
+	return base, nil
+}
+
+// signInContext returns a context of the sign-in without a tenant, for a
+// person who has none to work in. A context named with --context is the one.
+func signInContext(cfg *clientcmdapi.Config, name string, explicit bool) (string, error) {
+	source := cfg.Contexts[name]
+	if source.Extensions[tenantExtension] == nil {
+		return name, nil
+	}
+	if !explicit {
+		for _, other := range slices.Sorted(maps.Keys(cfg.Contexts)) {
+			if c := cfg.Contexts[other]; sameSignIn(c, source) && c.Extensions[tenantExtension] == nil {
+				return other, nil
+			}
+		}
+		// Name it as the sign-in's user, which has the name of its first
+		// context.
+		if cfg.Contexts[source.AuthInfo] != nil {
+			return "", errors.New("previous tenant unavailable: select a tenant with airo login --tenant NAME")
+		}
+		name = source.AuthInfo
+		cfg.Contexts[name] = source.DeepCopy()
+	}
+	kctx := cfg.Contexts[name]
+	delete(kctx.Extensions, tenantExtension)
+	kctx.Namespace = ""
+	return name, nil
+}
+
+// pruneContexts removes the sign-in's contexts that airo login no longer
+// keeps: a tenant's that the person can no longer read, and, once the person
+// has tenants, the context without a tenant.
+func pruneContexts(ctx context.Context, cfg *clientcmdapi.Config, current string, memberships []string, c dynamic.Interface) error {
+	source := cfg.Contexts[current]
+	for _, name := range slices.Sorted(maps.Keys(cfg.Contexts)) {
+		kctx := cfg.Contexts[name]
+		if name == current || !sameSignIn(kctx, source) {
+			continue
+		}
+		tenant, err := storedTenant(kctx)
+		switch {
+		case err != nil, slices.Contains(memberships, tenant):
+			continue
+		case tenant == "":
+			if len(memberships) > 0 {
+				delete(cfg.Contexts, name)
+			}
+			continue
+		}
+		// Admin access may come from grants outside customer groups.
+		switch err := checkTenant(ctx, c, tenant); {
+		case apierrors.IsForbidden(err), apierrors.IsNotFound(err):
+			delete(cfg.Contexts, name)
+		case err != nil:
+			return err
+		}
+	}
+	return nil
 }
 
 // prepare makes the context name in cfg a sign-in to the platform, with airo
@@ -285,7 +405,7 @@ func prepare(cfg *clientcmdapi.Config, name string, p platform) (string, oidc, e
 	// current one when it is the platform's, and not, say, a local cluster's.
 	base := cfg.CurrentContext
 	if _, err := oidcOf(cfg, base); err != nil {
-		base = defaultContext
+		base = lastSignIn(cfg)
 	}
 	if name == "" {
 		name = base
@@ -357,6 +477,31 @@ func prepare(cfg *clientcmdapi.Config, name string, p platform) (string, oidc, e
 	}
 	cfg.AuthInfos[kctx.AuthInfo] = execUser(o, origin)
 	return name, o, nil
+}
+
+// lastSignIn returns a context of the platform for when the current context
+// is not one: a tenant's context, named after the tenant, when there is no
+// context airo. The user airo, the first sign-in's, comes first.
+func lastSignIn(cfg *clientcmdapi.Config) string {
+	if _, err := oidcOf(cfg, defaultContext); err == nil {
+		return defaultContext
+	}
+	found := ""
+	for _, name := range slices.Sorted(maps.Keys(cfg.Contexts)) {
+		if _, err := oidcOf(cfg, name); err != nil {
+			continue
+		}
+		if cfg.Contexts[name].AuthInfo == defaultContext {
+			return name
+		}
+		if found == "" {
+			found = name
+		}
+	}
+	if found == "" {
+		return defaultContext
+	}
+	return found
 }
 
 // errNoContext is oidcOf's error for a name the kubeconfig does not have.
