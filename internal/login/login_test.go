@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -197,7 +199,8 @@ func TestPrepare(t *testing.T) {
 // The first airo login takes the platform from the flags. A second context
 // signs in someone else next to it, with their own tokens, and a customer
 // starts in the tenant's default project. -n replaces it, and a later airo
-// login keeps the namespace the person chose.
+// login keeps the namespace the person chose. --context keeps the tenant in
+// the context of that name.
 func TestRunSignsInTwoPeople(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
@@ -276,7 +279,7 @@ func TestRunSignsInTwoPeople(t *testing.T) {
 	}
 
 	out, cfg = login("customer", "", platform{})
-	if !strings.Contains(out, "Signed in as auth0:customer") || cfg.CurrentContext != "airo/customer/acme" {
+	if !strings.Contains(out, "Signed in as auth0:customer") || cfg.CurrentContext != "customer" {
 		t.Errorf("second login: %scurrent context %q", out, cfg.CurrentContext)
 	}
 	if got := cfg.Contexts[cfg.CurrentContext]; got.Cluster != "airo" || got.Namespace != "acme-default" {
@@ -297,7 +300,7 @@ func TestRunSignsInTwoPeople(t *testing.T) {
 	if _, cfg = login("customer", "acme-web", platform{}); cfg.Contexts[cfg.CurrentContext].Namespace != "acme-web" {
 		t.Errorf("login -n: namespace = %q, want acme-web", cfg.Contexts[cfg.CurrentContext].Namespace)
 	}
-	if _, cfg = login("", "", platform{}); cfg.CurrentContext != "airo/customer/acme" || cfg.Contexts[cfg.CurrentContext].Namespace != "acme-web" {
+	if _, cfg = login("", "", platform{}); cfg.CurrentContext != "customer" || cfg.Contexts[cfg.CurrentContext].Namespace != "acme-web" {
 		t.Errorf("login again: context %q, namespace %q; want the chosen acme-web to stay", cfg.CurrentContext, cfg.Contexts[cfg.CurrentContext].Namespace)
 	}
 }
@@ -374,5 +377,112 @@ func TestChooseLoginTenant(t *testing.T) {
 		if tt.wantError && !strings.Contains(err.Error(), "--tenant NAME: acme, beta") {
 			t.Errorf("missing noninteractive choices: %v", err)
 		}
+	}
+}
+
+// Without --context, airo login keeps a context for each of the person's
+// tenants, named after the tenant, and removes the sign-in's context without
+// a tenant. A later login selects again, renames an earlier release's
+// contexts and removes a tenant the person has lost.
+func TestRunWritesEachTenantsContext(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CACHE_HOME", dir)
+	t.Setenv("PATH", "") // no browser opens
+
+	id := jwt(time.Now().Add(time.Hour))
+	var idp *httptest.Server
+	idp = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			fmt.Fprintf(w, `{"device_authorization_endpoint":"%s/device","token_endpoint":"%s/token"}`, idp.URL, idp.URL)
+		case "/device":
+			fmt.Fprintf(w, `{"device_code":"d","user_code":"ABCD","verification_uri":"%s/activate","interval":1}`, idp.URL)
+		case "/token":
+			fmt.Fprintf(w, `{"access_token":"a","token_type":"Bearer","id_token":"%s","refresh_token":"r"}`, id)
+		}
+	}))
+	t.Cleanup(idp.Close)
+
+	tenants := []string{"acme", "beta"}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if tenant, ok := strings.CutPrefix(r.URL.Path, "/apis/capsule.clastix.io/v1beta2/tenants/"); ok {
+			if !slices.Contains(tenants, tenant) {
+				w.WriteHeader(http.StatusForbidden)
+				fmt.Fprint(w, `{"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Forbidden","code":403}`)
+				return
+			}
+			fmt.Fprintf(w, `{"apiVersion":"capsule.clastix.io/v1beta2","kind":"Tenant","metadata":{"name":%q}}`, tenant)
+			return
+		}
+		if ns, ok := strings.CutPrefix(r.URL.Path, "/api/v1/namespaces/"); ok {
+			tenant, _ := strings.CutSuffix(ns, "-default")
+			fmt.Fprintf(w, `{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q,"labels":{"capsule.clastix.io/tenant":%q}}}`, ns, tenant)
+			return
+		}
+		var groups []string
+		for _, tenant := range tenants {
+			groups = append(groups, `"customer:`+tenant+`"`)
+		}
+		fmt.Fprintf(w, `{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","status":{"userInfo":{"username":"auth0:me","groups":[%s]}}}`, strings.Join(groups, ","))
+	}))
+	t.Cleanup(api.Close)
+
+	kubeconfig := filepath.Join(dir, "config")
+	login := func(tenant string, p platform) (string, *clientcmdapi.Config, error) {
+		t.Helper()
+		flags := genericclioptions.NewConfigFlags(true)
+		flags.KubeConfig = &kubeconfig
+		var out bytes.Buffer
+		err := run(context.Background(), nil, &out, &bytes.Buffer{}, flags, p, tenant)
+		cfg, _ := clientcmd.LoadFromFile(kubeconfig)
+		return out.String(), cfg, err
+	}
+	contexts := func(cfg *clientcmdapi.Config) []string {
+		return slices.Sorted(maps.Keys(cfg.Contexts))
+	}
+
+	// Two tenants and no terminal: the person must choose.
+	if _, _, err := login("", platform{server: api.URL, issuer: idp.URL, clientID: "abc"}); err == nil || !strings.Contains(err.Error(), "--tenant NAME: acme, beta") {
+		t.Fatalf("first login without a choice: %v", err)
+	}
+	out, cfg, err := login("beta", platform{server: api.URL, issuer: idp.URL, clientID: "abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := contexts(cfg); !slices.Equal(got, []string{"acme", "beta"}) || cfg.CurrentContext != "beta" {
+		t.Errorf("first login: contexts %v, current %q; want acme and beta, current beta", got, cfg.CurrentContext)
+	}
+	for _, tenant := range tenants {
+		if got := cfg.Contexts[tenant]; got.Cluster != "airo" || got.AuthInfo != "airo" || got.Namespace != tenant+"-default" {
+			t.Errorf("context %s = %+v", tenant, got)
+		}
+	}
+	if !strings.Contains(out, "Context: beta") || !strings.Contains(out, "Your tenants acme, beta") {
+		t.Errorf("first login output:\n%s", out)
+	}
+
+	// Without a terminal, a later login keeps the last tenant.
+	if _, cfg, err = login("", platform{}); err != nil || cfg.CurrentContext != "beta" {
+		t.Errorf("login again: current %q, %v; want beta", cfg.CurrentContext, err)
+	}
+
+	// An earlier release's name is replaced by the tenant's.
+	cfg.Contexts["airo/airo/acme"] = cfg.Contexts["acme"]
+	delete(cfg.Contexts, "acme")
+	cfg.CurrentContext = "airo/airo/acme"
+	if err := clientcmd.WriteToFile(*cfg, kubeconfig); err != nil {
+		t.Fatal(err)
+	}
+	if _, cfg, err = login("", platform{}); err != nil || !slices.Equal(contexts(cfg), []string{"acme", "beta"}) || cfg.CurrentContext != "acme" {
+		t.Errorf("login with an earlier release's context: contexts %v, current %q, %v", contexts(cfg), cfg.CurrentContext, err)
+	}
+
+	// A tenant the person has lost loses its context.
+	tenants = []string{"acme"}
+	if _, cfg, err = login("", platform{}); err != nil || !slices.Equal(contexts(cfg), []string{"acme"}) || cfg.CurrentContext != "acme" {
+		t.Errorf("login after losing beta: contexts %v, current %q, %v", contexts(cfg), cfg.CurrentContext, err)
 	}
 }

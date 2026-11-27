@@ -86,18 +86,24 @@ and confirm the code ABCD-EFGH
 Signed in as auth0:abc123
 Tenant:  acme
 Project: acme-default
+Context: acme
   groups:    customer:acme
 ```
 
-Airo keeps tokens in your cache directory and refreshes them. Each tenant
-on the same platform and sign-in shares those credentials and remembers its
-own project in your kubeconfig. Keep `airo` on your `PATH` so kubectl can
-run the credential plugin. Use `KUBECONFIG` or `--kubeconfig` to select a file.
+**Each of your tenants gets a context named after it**, such as `acme`,
+and each context remembers its tenant's project. With more than one tenant,
+`airo login` asks which one to make current, with the last one marked. In
+scripts, use `airo login --tenant NAME`; without a terminal, a later login
+keeps the last tenant. Every `airo login` writes the contexts again: a new
+tenant gets one, and a tenant you can no longer read loses its context.
+`airo login --context NAME` instead keeps only the selected tenant, in the
+context `NAME`, for example to sign in as a second person. A platform admin
+without tenant memberships gets the context `airo` and selects a tenant with
+`airo tenant NAME`.
 
-On first login, Airo selects your sole tenant or asks you to choose from
-your memberships. In scripts, use `airo login --tenant NAME`. Later logins
-restore your selected tenant when you still have access. A platform admin
-can sign in first and then select a tenant with `airo tenant NAME`.
+Airo keeps tokens in your cache directory and refreshes them. The tenants'
+contexts share those credentials. Keep `airo` on your `PATH` so kubectl can
+run the credential plugin. Use `KUBECONFIG` or `--kubeconfig` to select a file.
 
 | Flag | The first sign-in's value |
 | --- | --- |

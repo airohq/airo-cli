@@ -120,7 +120,7 @@ func TestTenantProjectsAcrossInvocations(t *testing.T) {
 		{"agent list -o name", "acme-web-agent", false, false},
 		{"--tenant beta --project beta-default agent list -o name", "beta-default-agent", false, false},
 		{"--tenant beta --namespace beta-default agent list -o name", "beta-default-agent", false, false},
-		{"agent list --context platform/customer/beta -o name", "beta-api-agent", false, false},
+		{"agent list --context beta -o name", "beta-api-agent", false, false},
 		{"agent list --tenant beta --project acme-web", "unavailable in tenant beta", false, true},
 		{"project edit acme-web --tenant beta", "unavailable in tenant beta", false, true},
 		{"project delete acme-web --tenant beta", "unavailable in tenant beta", false, true},
