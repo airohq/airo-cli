@@ -88,6 +88,11 @@ func localRunnerCommand(cmd *cobra.Command, flags *genericclioptions.ConfigFlags
 	// Cobra normally handles --help before argument validation. Parse here so
 	// help and execution both use the final sandbox and harness selection.
 	cmd.DisableFlagParsing = true
+	positional := cmd.ValidArgsFunction
+	if positional == nil {
+		positional = cobra.NoFileCompletions
+	}
+	cmd.ValidArgsFunction = completeParsedFlags(positional)
 	var positionals []string
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		var err error
