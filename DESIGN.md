@@ -193,6 +193,12 @@ tunnel 3000` serves a local port. A bare `airo agent` shows its resource command
   `--agent` names or the project's only one, and otherwise not at all. A
   name from another agent would not exist in the one named later. An empty
   completion makes the shell beep, which is the signal: airo prints none.
+- **Tab offers files only where a path goes.** Cobra offers the directory's
+  files for an argument or flag without a completion; airo offers nothing
+  there, as kubectl does, so a new name or free text lists no files. A flag
+  that takes a path is in `pathFlags` and completes files or directories;
+  a test fails for any other argument or flag that would list files.
+  kubectl's global flags keep cobra's default, as in kubectl.
 - **The root's help lists no flags**, as kubectl's does: they are the flags
   of `airo KIND VERB`, which that verb's help shows. `airo options` lists the
   global flags.

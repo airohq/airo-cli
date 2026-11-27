@@ -45,6 +45,10 @@ complete from the agent `--agent` names, or from the project's only agent.
 With several agents and no `--agent`, Tab offers nothing and the shell beeps,
 because a name from one agent would not exist in another named later.
 
+Tab offers files only where a path goes, such as `--prompt-file` and
+`-f`, and directories for `--workspace`. A new name, as in `airo agent
+create <Tab>`, and free text, such as `--prompt`, offer nothing.
+
 Names come from the cluster as you, in the tenant and project the command
 would use, including `--tenant` and `--project` typed earlier on the line.
 A completion waits at most five seconds and never starts a sign-in: when

@@ -119,7 +119,7 @@ func TestHelpAndGlobalOptions(t *testing.T) {
 func TestNamesComplete(t *testing.T) {
 	var walk func(*cobra.Command)
 	walk = func(cmd *cobra.Command) {
-		if words := strings.Fields(cmd.Use); len(words) > 1 && cmd.Name() != "create" && cmd.ValidArgsFunction == nil {
+		if words := strings.Fields(cmd.Use); len(words) > 1 && cmd.Name() != "create" && offersNothing(cmd.ValidArgsFunction) {
 			// NAME, [NAME] and [NAME|-] take a name, [--name NAME] does not.
 			switch strings.Trim(words[1], "[]|-") {
 			case "NAME", "SKILL", "SESSION":
